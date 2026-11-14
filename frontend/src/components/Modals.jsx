@@ -122,6 +122,13 @@ function Sheet({ sheet }) {
   }, [])
 
   const close = () => closeSheet(sheet.id)
+  const mountedAt = useRef(Date.now())
+  const onBackdropClick = () => {
+    // Prevent mobile touch tap-through/ghost clicks from immediately closing the modal on open
+    if (Date.now() - mountedAt.current < 350) return
+    if (!sheet.locked) close()
+  }
+
   // Full screen, on black: a photo or video opened from a workout (WorkoutMedia.jsx). No
   // backdrop to tap, no drag to dismiss — the viewer has its own close button, and back closes
   // it like any sheet.
@@ -129,14 +136,14 @@ function Sheet({ sheet }) {
   if (sheet.kind === 'center') {
     return (
       <div>
-        <div className="mback" onClick={() => { if (!sheet.locked) close() }} />
+        <div className="mback" onClick={onBackdropClick} />
         <div className={'center' + (sheet.wide ? ' wide' : '')}>{sheet.render(close)}</div>
       </div>
     )
   }
   return (
     <div>
-      <div className="mback" onClick={() => { if (!sheet.locked) close() }} />
+      <div className="mback" onClick={onBackdropClick} />
       <div className="sheet" ref={ref} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}
         onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}>
         <div className="grab" />

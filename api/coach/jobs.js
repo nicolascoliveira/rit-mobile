@@ -22,6 +22,13 @@ import * as payloadLib from './core/payload.js';
 import { runPipeline } from './core/pipeline.js';
 import { extractJSON } from './core/parse.js';
 import { hashPlan } from './core/plan-hash.js';
+import {
+  getCoachDailySqlite,
+  bumpCoachDailySqlite,
+  getSqliteInstance,
+  readUserStateSqlite,
+  runInTransaction
+} from '../sqlite.js';
 import { buildPrompt } from './core/prompt.js';
 import { waitingProposal } from './core/pending.js';
 import { handleFor } from './handle.js';
@@ -83,11 +90,22 @@ export function clearUser(uid) {
   invalidateCohort();
 }
 
-/** Every profile with a state file — the population a cohort is drawn from. */
+/** Every profile with a state record (SQLite `user_states` or legacy file) — the population a cohort is drawn from. */
 export function listUserIds() {
+  if (!fs.existsSync(DATA)) return [];
+  const ids = new Set();
   try {
-    return fs.readdirSync(DATA).filter(f => /^state-[a-zA-Z0-9_-]+\.json$/.test(f)).map(f => f.slice(6, -5));
-  } catch { return []; }
+    const inst = getSqliteInstance(DATA);
+    for (const row of inst.db.prepare('SELECT user_id FROM user_states').all()) {
+      ids.add(row.user_id);
+    }
+  } catch { /* fallback to directory scan */ }
+  try {
+    for (const f of fs.readdirSync(DATA)) {
+      if (/^state-[a-zA-Z0-9_-]+\.json$/.test(f)) ids.add(f.slice(6, -5));
+    }
+  } catch { /* ignore */ }
+  return [...ids];
 }
 
 /* ---------- "compare with others" opt-in ----------
@@ -102,36 +120,37 @@ export function setShare(uid, share) {
 }
 
 export function readState(uid) {
-  try { return JSON.parse(fs.readFileSync(path.join(DATA, 'state-' + safe(uid) + '.json'), 'utf8')); }
-  catch { return null; }
+  try {
+    const st = readUserStateSqlite(DATA, uid);
+    return st || null;
+  } catch {
+    return null;
+  }
 }
 
 /* ---------- caps ---------- */
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
-function bumpDaily(uid) {
-  const rec = readUser(uid);
-  const d = todayISO();
-  const daily = rec.daily?.date === d ? { date: d, count: rec.daily.count + 1 } : { date: d, count: 1 };
-  patchUser(uid, { daily });
-  return daily.count;
+function syncLegacyDailyMax(inst, key, day, legacyCount) {
+  const n = Number(legacyCount || 0);
+  if (n <= 0) return;
+  inst.db.prepare(
+    'INSERT INTO coach_daily_usage (user_id, day, count) VALUES (?, ?, ?) ON CONFLICT(user_id, day) DO UPDATE SET count = MAX(count, excluded.count)'
+  ).run(String(key), String(day), n);
 }
 export function capState(uid) {
   const caps = cfgStore.load().caps || {};
+  const d = todayISO();
   const rec = readUser(uid);
-  const used = rec.daily?.date === todayISO() ? rec.daily.count : 0;
+  const legacy = rec.daily?.date === d ? Number(rec.daily.count || 0) : 0;
+  const used = Math.max(getCoachDailySqlite(DATA, uid, d), legacy);
   return { used, limit: caps.perProfileDaily || 0 };
 }
-// The instance-wide count is kept the same way in coach.json, not read off the job log: the
-// log keeps its last hundred entries, and a count that stops at a hundred is not a cap.
-function bumpInstanceDaily() {
-  const cur = cfgStore.load().daily;
-  const d = todayISO();
-  cfgStore.save({ daily: cur?.date === d ? { date: d, count: cur.count + 1 } : { date: d, count: 1 } });
-}
 function instanceUsedToday() {
+  const d = todayISO();
   const daily = cfgStore.load().daily;
-  return daily?.date === todayISO() ? daily.count : 0;
+  const legacy = daily?.date === d ? Number(daily.count || 0) : 0;
+  return Math.max(getCoachDailySqlite(DATA, '__instance__', d), legacy);
 }
 
 /* ---------- status ---------- */
@@ -220,24 +239,43 @@ export function enqueue(uid, opts) {
   const refusal = privilegeRefusal(adapterFor(cfgStore.load().provider));
   if (refusal) throw new CoachError('unprivileged', refusal);
 
-  // The caps, before the bind for the same reason: a job refused for the day spends nothing.
-  const caps = cfgStore.load().caps || {};
-  const { used, limit } = capState(uid);
-  if (limit > 0 && used >= limit) throw new CoachError('cap', 'daily limit reached');
-  if (caps.instanceDaily > 0 && instanceUsedToday() >= caps.instanceDaily) throw new CoachError('cap', 'this instance has reached its daily limit');
+  // Cotas por perfil e por instância verificadas e incrementadas atomicamente em transação SQLite
+  // (`BEGIN IMMEDIATE`), garantindo que duas requisições simultâneas nunca ultrapassem o teto.
+  const cfg = cfgStore.load();
+  const caps = cfg.caps || {};
+  const perProfileCap = caps.perProfileDaily > 0 ? Number(caps.perProfileDaily) : null;
+  const instanceCap = caps.instanceDaily > 0 ? Number(caps.instanceDaily) : null;
+  const today = todayISO();
+  const jobId = crypto.randomBytes(8).toString('hex');
+  const startedAt = Date.now();
+  const inst = getSqliteInstance(DATA);
 
-  // Spending is what binds: a personal credential (setup token, OAuth) belongs to the first
-  // profile that runs a job on it from here on; an API key binds to nobody and is shared.
-  cfgStore.bindInstanceCredential(uid);
+  runInTransaction(inst, () => {
+    const rec = readUser(uid);
+    const legacyUserCount = rec.daily?.date === today ? Number(rec.daily.count || 0) : 0;
+    const legacyInstCount = cfg.daily?.date === today ? Number(cfg.daily.count || 0) : 0;
+    syncLegacyDailyMax(inst, uid, today, legacyUserCount);
+    syncLegacyDailyMax(inst, '__instance__', today, legacyInstCount);
 
-  // Counted at enqueue, not at completion: the cap exists to bound what one profile can spend
-  // of the owner's provider account, and queueing twenty jobs spends it whether or not the
-  // twentieth ever finishes.
-  bumpDaily(uid);
-  bumpInstanceDaily();
+    const userBump = bumpCoachDailySqlite(DATA, uid, today, perProfileCap);
+    if (!userBump.ok) throw new CoachError('cap', 'daily limit reached');
+
+    const instBump = bumpCoachDailySqlite(DATA, '__instance__', today, instanceCap);
+    if (!instBump.ok) throw new CoachError('cap', 'this instance has reached its daily limit');
+
+    // Spending is what binds: a personal credential (setup token, OAuth) belongs to the first
+    // profile that runs a job on it from here on; an API key binds to nobody and is shared.
+    cfgStore.bindInstanceCredential(uid);
+
+    patchUser(uid, {
+      daily: { date: today, count: userBump.count },
+      current: { id: jobId, kind: opts.kind, state: 'queued', startedAt }
+    });
+    cfgStore.save({ daily: { date: today, count: instBump.count } }, { syncSqlite: false });
+  });
 
   const job = {
-    id: crypto.randomBytes(8).toString('hex'),
+    id: jobId,
     uid,
     forgetSeq: forgetSeq.get(uid) || 0,
     kind: opts.kind,                                  // 'create' | 'review' | 'debrief' | 'ask' | 'adapt'
@@ -255,10 +293,9 @@ export function enqueue(uid, opts) {
     activeId: opts.kind === 'adapt' && typeof opts.activeId === 'string' ? opts.activeId.slice(0, 64) : null,
     lang: payloadLib.langTag(opts.lang),              // the language the app was showing (#303)
     state: 'queued',
-    startedAt: Date.now()
+    startedAt
   };
   inflight.add(uid);
-  patchUser(uid, { current: { id: job.id, kind: job.kind, state: 'queued', startedAt: job.startedAt } });
   queue.push(job);
   pump();
   return { id: job.id };

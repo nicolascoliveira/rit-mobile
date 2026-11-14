@@ -423,9 +423,16 @@ function streamToFile(req, file, { max, maxMB, idleMs }) {
  * profile's stored state, or null when there is none or it does not parse — the store sweeps
  * nobody it gets null for. `now` is injectable so the tests can walk the clock.
  */
-export function createMediaStore({ dir, limits, now = Date.now, readState = () => null, idleMs = 60000, log = console } = {}) {
+export function createMediaStore({ dir, limits, now = Date.now, readState = () => null, quotaMBFor = null, idleMs = 60000, log = console } = {}) {
   const L = { ...mediaLimits({}), ...(limits || {}) };
-  const quotaBytes = L.quotaMB > 0 ? Math.round(L.quotaMB * MB) : 0;
+  const quotaMBOf = uid => {
+    const q = typeof quotaMBFor === 'function' ? quotaMBFor(uid) : L.quotaMB;
+    return typeof q === 'number' && Number.isFinite(q) && q >= 0 ? q : L.quotaMB;
+  };
+  const quotaBytesFor = uid => {
+    const mb = quotaMBOf(uid);
+    return mb > 0 ? Math.round(mb * MB) : 0;
+  };
   const capMB = kind => (kind === 'video' ? L.videoMB : kind === 'gif' ? L.gifMB : L.imageMB);
   const capOf = kind => Math.round(capMB(kind) * MB);
   const maxCap = Math.max(capOf('image'), capOf('gif'), capOf('video'));
@@ -488,7 +495,7 @@ export function createMediaStore({ dir, limits, now = Date.now, readState = () =
     e.bytes -= f.size;
     e.count--;
   }
-  const usageOf = e => ({ bytes: e.bytes, count: e.count, quotaBytes });
+  const usageOf = (uid, e) => ({ bytes: e.bytes, count: e.count, quotaBytes: quotaBytesFor(uid) });
 
   /* .gc.json: when each stored hash was last seen leaving the state. Read fresh every time (it
      is a few hundred bytes), so what is on disk is the only truth. Unreadable = no marks: the
@@ -654,12 +661,13 @@ export function createMediaStore({ dir, limits, now = Date.now, readState = () =
       // Reserved before a byte is read, so two uploads at once cannot both fit into the space
       // that is only left for one.
       const need = len ?? cap;
-      if (quotaBytes && e.bytes + e.reserved + need > quotaBytes) {
+      const limitBytes = quotaBytesFor(uid);
+      if (limitBytes && e.bytes + e.reserved + need > limitBytes) {
         // Space the person already let go of may still be sitting out its grace period; under
         // pressure it gets an hour instead of two weeks.
         try { sweep(uid, { graceMs: HOUR }); } catch (err) { log.error('media: quota sweep failed for', e.id, err.message); }
-        if (e.bytes + e.reserved + need > quotaBytes) {
-          throw new MediaError(413, 'media-quota', { usedMB: round1(e.bytes / MB), quotaMB: L.quotaMB });
+        if (e.bytes + e.reserved + need > limitBytes) {
+          throw new MediaError(413, 'media-quota', { usedMB: round1(e.bytes / MB), quotaMB: quotaMBOf(uid) });
         }
       }
       e.reserved += need;
@@ -729,7 +737,7 @@ export function createMediaStore({ dir, limits, now = Date.now, readState = () =
      *  twice the largest cap off the wire so the answer arrives, then closes the socket, instead
      *  of leaving node to read an unbounded body to its end. */
     discard: req => drain(req, 2 * maxCap),
-    usage: uid => usageOf(entry(uid)),
+    usage: uid => usageOf(uid, entry(uid)),
     has: (uid, hash) => entry(uid).hashes.has(hash),
     /** { path, ext, mime, size } of a stored file, or null. Checks the disk, so a file that
      *  vanished from under the cache is forgotten rather than answered with a 500. */
@@ -749,7 +757,7 @@ export function createMediaStore({ dir, limits, now = Date.now, readState = () =
     missing(uid, hashes) {
       const e = entry(uid);
       // A file that is not whole (intact) counts as missing: the device that has it sends it again.
-      return { missing: [...new Set(hashes)].filter(h => !intact(e, h)), usage: usageOf(e) };
+      return { missing: [...new Set(hashes)].filter(h => !intact(e, h)), usage: usageOf(uid, e) };
     },
     noteState,
     sweep,

@@ -1,0 +1,2017 @@
+@import './rit.css';
+@import './admin.css';
+
+/* =====================================================================
+   Rit Plataforma de Gestão — Shell Desktop/Mobile & Extensões Nativas de Design
+   ===================================================================== */
+:root {
+  --b2b-input-bg: #101013;
+  --b2b-input-border: rgba(255, 255, 255, 0.16);
+  --b2b-input-border-hover: rgba(255, 255, 255, 0.3);
+}
+
+:root[data-theme="light"] {
+  --b2b-input-bg: #ffffff;
+  --b2b-input-border: rgba(60, 60, 67, 0.24);
+  --b2b-input-border-hover: rgba(60, 60, 67, 0.44);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg);
+  color: var(--label);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  min-height: 100vh;
+  overflow-x: clip;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Impersonation Banner (Super Admin inspecionando uma academia) */
+.b2b-impersonate-bar {
+  background: var(--indigo);
+  color: #ffffff;
+  padding: 8px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  z-index: 200;
+}
+
+.b2b-impersonate-bar .btn {
+  min-height: 30px;
+  padding: 4px 12px;
+  font-size: 12px;
+}
+
+/* Shell Principal */
+.portal-layout {
+  display: flex;
+  min-height: 100vh;
+  background: var(--bg);
+}
+
+.portal-sidebar {
+  width: 264px;
+  flex-shrink: 0;
+  background: var(--bg-el);
+  border-right: var(--hair) solid var(--sep);
+  display: flex;
+  flex-direction: column;
+  padding: 18px 12px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  z-index: 120;
+}
+
+.portal-sidebar-logo {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 4px 10px 16px;
+  border-bottom: var(--hair) solid var(--sep);
+  margin-bottom: 14px;
+}
+
+.portal-logo-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  background: var(--acc);
+  color: var(--on-acc);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-weight: 800;
+}
+
+.portal-logo-meta {
+  min-width: 0;
+  flex: 1;
+}
+
+.portal-logo-title {
+  font-weight: 700;
+  font-size: 15px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.portal-logo-sub {
+  font-size: 11.5px;
+  color: var(--label-2);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.portal-nav-group-lbl {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--label-3);
+  padding: 8px 12px 6px;
+}
+
+.portal-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.portal-nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 12px;
+  border-radius: var(--r);
+  background: transparent;
+  border: none;
+  color: var(--label-2);
+  font-size: 14.5px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.14s ease, color 0.14s ease;
+  width: 100%;
+}
+
+.portal-nav-btn:hover {
+  background: var(--surface);
+  color: var(--label);
+}
+
+.portal-nav-btn.active {
+  background: var(--acc-soft);
+  color: var(--acc-ink);
+}
+
+.portal-nav-badge {
+  margin-left: auto;
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 99px;
+  background: var(--surface-2);
+  color: var(--label-2);
+}
+
+.portal-nav-badge.danger {
+  background: color-mix(in srgb, var(--red) 18%, transparent);
+  color: var(--red);
+}
+
+.portal-sidebar-foot {
+  border-top: var(--hair) solid var(--sep);
+  padding-top: 12px;
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Conteúdo e Topbar */
+.portal-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.portal-topbar {
+  min-height: 62px;
+  background: color-mix(in srgb, var(--bg-el) 86%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: var(--hair) solid var(--sep);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 28px;
+  position: sticky;
+  top: 0;
+  z-index: 90;
+  gap: 12px;
+}
+
+.portal-topbar-l {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.portal-topbar-r {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.portal-mobile-btn {
+  display: none;
+  background: var(--surface);
+  border: var(--hair) solid var(--sep);
+  border-radius: var(--r-sm);
+  color: var(--label);
+  width: 38px;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+}
+
+.portal-main {
+  padding: 26px 28px 56px;
+  max-width: 1340px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.b2b-page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 22px;
+  flex-wrap: wrap;
+}
+
+.b2b-page-head h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.b2b-page-head p {
+  margin: 4px 0 0;
+  color: var(--label-2);
+  font-size: 14px;
+}
+
+.b2b-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Grids de KPI e Painéis */
+.b2b-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.b2b-kpi {
+  background: var(--surface);
+  border: var(--hair) solid var(--sep);
+  border-radius: var(--r-lg);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+  color: var(--label);
+}
+
+.b2b-kpi.tap {
+  cursor: pointer;
+  transition: transform 0.12s ease, border-color 0.15s ease;
+}
+
+.b2b-kpi.tap:hover {
+  border-color: var(--acc-line, var(--acc));
+}
+
+.b2b-kpi-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.b2b-kpi .t-lbl {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--label-2);
+}
+
+.b2b-kpi .t-val {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+}
+
+.b2b-kpi .t-sub {
+  font-size: 12px;
+  color: var(--label-2);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.b2b-kpi-ico {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--tint, var(--acc)) 16%, transparent);
+  color: var(--tint, var(--acc));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.b2b-grid-2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.b2b-grid-equal {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.b2b-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.b2b-grid-2 > *,
+.b2b-grid-equal > *,
+.b2b-grid-3 > * {
+  min-width: 0;
+}
+
+/* Cards e Cabeçalhos estilo Rit */
+.portal-main .card {
+  margin: 0 0 16px;
+  padding: 18px 20px;
+  border-radius: var(--r-lg);
+  border: var(--hair) solid var(--sep);
+}
+
+.b2b-chead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.b2b-chead-l {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+
+.b2b-card-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+/* Tabelas Nativas B2B */
+.b2b-table-wrap {
+  background: var(--surface);
+  border-radius: var(--r-lg);
+  border: var(--hair) solid var(--sep);
+  overflow-x: auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.b2b-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.b2b-table th {
+  padding: 12px 16px;
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--label-2);
+  border-bottom: var(--hair) solid var(--sep);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.b2b-table td {
+  padding: 13px 16px;
+  border-bottom: var(--hair) solid var(--sep);
+  font-size: 14px;
+  vertical-align: middle;
+}
+
+.b2b-table tr:last-child td {
+  border-bottom: none;
+}
+
+.b2b-table tbody tr:hover {
+  background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+}
+
+.b2b-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* Botões Desktop/B2B (sobrescreve width:100% mobile do rit.css) */
+.btn {
+  width: auto;
+  flex-shrink: 0;
+  min-height: 42px;
+  padding: 10px 18px;
+  border-radius: 11px;
+  font-size: 14.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.btn.btn-block {
+  width: 100%;
+}
+
+.btn.ghost {
+  background: var(--surface-2);
+  color: var(--label);
+  border: 1px solid var(--b2b-input-border);
+  font-weight: 600;
+}
+
+.btn.ghost:hover {
+  background: var(--surface-3);
+  border-color: var(--b2b-input-border-hover);
+}
+
+.btn.sm {
+  min-height: 34px;
+  padding: 6px 12px;
+  font-size: 13px;
+  border-radius: 9px;
+}
+
+/* Formulários com contraste nítido sobre cards e modais */
+.b2b-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.b2b-form-grid>* {
+  min-width: 0;
+}
+
+.b2b-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.b2b-field-lbl {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--label-2);
+}
+
+.b2b-req {
+  color: var(--red);
+}
+
+.b2b-field-hint {
+  font-size: 11.5px;
+  color: var(--label-3);
+}
+
+.field,
+textarea.field,
+.b2b-select {
+  width: 100%;
+  min-height: 44px;
+  border-radius: 11px;
+  background: var(--b2b-input-bg);
+  color: var(--label);
+  border: 1px solid var(--b2b-input-border);
+  padding: 10px 14px;
+  font-size: 14.5px;
+  line-height: 1.35;
+  box-shadow: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.field:hover:not(:disabled),
+textarea.field:hover:not(:disabled),
+.b2b-select:hover:not(:disabled) {
+  border-color: var(--b2b-input-border-hover);
+}
+
+.field:focus,
+textarea.field:focus,
+.b2b-select:focus {
+  border-color: var(--acc);
+  box-shadow: 0 0 0 3px var(--acc-soft);
+  outline: none;
+}
+
+.field:disabled,
+textarea.field:disabled,
+.b2b-select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+textarea.field {
+  min-height: 84px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.b2b-select {
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.b2b-num-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.b2b-num-wrap .field {
+  width: 100%;
+  padding-right: 52px;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.b2b-num-wrap .field::-webkit-outer-spin-button,
+.b2b-num-wrap .field::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.b2b-num-suf {
+  position: absolute;
+  right: 13px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--label-2);
+  pointer-events: none;
+}
+
+/* SearchField padronizado */
+.b2b-searchf {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.b2b-searchf .lead {
+  position: absolute;
+  left: 13px;
+  width: 16px;
+  height: 16px;
+  color: var(--label-2);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.b2b-searchf .field {
+  width: 100%;
+  padding-left: 38px;
+  padding-right: 36px;
+  border-radius: 11px;
+  background: var(--b2b-input-bg);
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.b2b-searchf .field::-webkit-search-cancel-button,
+.b2b-searchf .field::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* Stepper alinhado aos inputs de 44px */
+.stp {
+  height: 44px;
+  background: var(--b2b-input-bg);
+  border: 1px solid var(--b2b-input-border);
+  border-radius: 11px;
+  display: flex;
+  align-items: center;
+}
+
+.stp button {
+  width: 38px;
+  height: 42px;
+  color: var(--label-2);
+}
+
+.stp button:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--label);
+}
+
+.stp-v {
+  flex: 1;
+  text-align: center;
+  font-weight: 700;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  color: var(--label);
+}
+
+/* Chips de filtro & Segmented tabs */
+.b2b-chips {
+  gap: 7px;
+  padding: 2px 0;
+}
+
+.b2b-chips .chip:not(.on) {
+  background: var(--surface-2);
+  border: 1px solid var(--b2b-input-border);
+  color: var(--label-2);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.b2b-chips .chip:not(.on):hover {
+  color: var(--label);
+  border-color: var(--b2b-input-border-hover);
+}
+
+.b2b-chips .chip.on {
+  border: 1px solid transparent;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.b2b-seg {
+  padding: 3px;
+  border-radius: 11px;
+}
+
+.b2b-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.b2b-toolbar .searchf {
+  flex: 1;
+  min-width: min(240px, 100%);
+  max-width: 440px;
+  margin: 0;
+}
+
+.b2b-chip-cnt {
+  margin-left: 5px;
+  opacity: 0.75;
+  font-size: 11.5px;
+}
+
+/* Gráficos */
+.b2b-chart-wrap {
+  width: 100%;
+  overflow: hidden;
+}
+
+.b2b-linechart {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.b2b-barrow {
+  margin-bottom: 11px;
+}
+
+.b2b-barrow:last-child {
+  margin-bottom: 0;
+}
+
+.b2b-barrow-top {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  margin-bottom: 5px;
+}
+
+.b2b-barrow-lbl {
+  color: var(--label);
+  font-weight: 500;
+}
+
+.b2b-barrow-val {
+  color: var(--label-2);
+  font-weight: 600;
+}
+
+.b2b-barrow-track {
+  height: 8px;
+  border-radius: 99px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.b2b-barrow-fill {
+  height: 100%;
+  border-radius: 99px;
+  transition: width 0.25s ease;
+}
+
+.b2b-stackbar {
+  display: flex;
+  height: 12px;
+  border-radius: 99px;
+  background: var(--surface-2);
+  overflow: hidden;
+  gap: 2px;
+}
+
+.b2b-stackbar-seg {
+  height: 100%;
+}
+
+.b2b-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 12px;
+  font-size: 12.5px;
+  color: var(--label-2);
+}
+
+.b2b-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.b2b-legend-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+/* Modais estilo Sheet/Dialog Rit */
+.b2b-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.66);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  z-index: 500;
+}
+
+.b2b-modal {
+  background: var(--surface);
+  border: var(--hair) solid var(--sep);
+  border-radius: 20px;
+  width: 100%;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.b2b-modal-sm {
+  max-width: 440px;
+}
+
+.b2b-modal-md {
+  max-width: 640px;
+}
+
+.b2b-modal-lg {
+  max-width: 880px;
+}
+
+.b2b-modal-xl {
+  max-width: 1140px;
+}
+
+.b2b-modal-head {
+  padding: 18px 22px;
+  border-bottom: var(--hair) solid var(--sep);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.b2b-modal-head h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.b2b-modal-body {
+  padding: 20px 22px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.b2b-modal-foot {
+  padding: 14px 22px;
+  border-top: var(--hair) solid var(--sep);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  background: var(--bg-el);
+}
+
+.b2b-icon-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: none;
+  background: var(--surface-2);
+  color: var(--label);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+}
+
+/* Área de toque invisível: o botão continua com 34px visuais, mas o dedo acerta em ~46px
+   (mesma técnica do app do aluno, .iconbtn::before em frontend/src/index.css). */
+.b2b-icon-btn::before,
+.portal-mobile-btn::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+}
+
+.b2b-icon-btn:hover {
+  background: var(--surface-3);
+}
+
+/* Catálogo de Exercícios & Estúdio de Prescrição */
+.b2b-ex-thumb {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  background: #ffffff;
+  object-fit: cover;
+  flex-shrink: 0;
+  border: var(--hair) solid var(--sep);
+}
+
+.b2b-ex-slot {
+  background: var(--bg-el);
+  border: var(--hair) solid var(--sep);
+  border-radius: var(--r);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.b2b-ex-slot-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  min-width: 0;
+}
+
+.b2b-ex-slot-top > * {
+  min-width: 0;
+}
+
+.b2b-ex-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.b2b-cat-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 430px;
+  overflow-y: auto;
+  padding-right: 4px;
+  min-width: 0;
+}
+
+.b2b-cat-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 4px;
+  border-radius: var(--r);
+  background: var(--bg-el);
+  border: var(--hair) solid var(--sep);
+  color: var(--label);
+  min-width: 0;
+  max-width: 100%;
+  transition: border-color 0.14s ease, background 0.14s ease;
+}
+
+.b2b-cat-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 5px 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.b2b-cat-main > div {
+  min-width: 0;
+}
+
+.b2b-cat-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.b2b-cat-item:hover {
+  border-color: var(--acc);
+  background: var(--surface-2);
+}
+
+.b2b-ex-thumb-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  color: var(--acc-ink);
+}
+
+.b2b-icon-btn.is-accent {
+  background: var(--acc-soft);
+  color: var(--acc-ink);
+  border-color: color-mix(in srgb, var(--acc) 45%, var(--sep));
+}
+
+.b2b-video-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: var(--acc-soft);
+  color: var(--acc-ink);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.b2b-custom-filter-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0 6px;
+}
+
+.b2b-custom-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.b2b-media-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.b2b-media-upload-card {
+  background: var(--bg-el);
+  border: var(--hair) solid var(--sep);
+  border-radius: var(--r);
+  padding: 14px;
+}
+
+.b2b-media-upload-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.b2b-media-caps {
+  font-size: 14px;
+  color: var(--label-2);
+  line-height: 1.4;
+}
+
+.b2b-upload-lbl {
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 14px;
+}
+
+.b2b-upload-lbl.is-disabled {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.b2b-media-progress {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--label-2);
+}
+
+.b2b-media-progress-bar {
+  height: 8px;
+  border-radius: 99px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.b2b-media-progress-bar > div {
+  height: 100%;
+  background: var(--acc);
+  transition: width 0.15s ease;
+}
+
+.b2b-media-preview-box {
+  border-radius: 10px;
+  overflow: hidden;
+  border: var(--hair) solid var(--sep);
+  background: #000000;
+}
+
+.b2b-media-preview-el {
+  display: block;
+  width: 100%;
+  max-height: 260px;
+  object-fit: contain;
+  background: #000000;
+}
+
+.b2b-media-preview-loading {
+  padding: 28px 16px;
+  text-align: center;
+  font-size: 14px;
+  color: var(--label-2);
+}
+
+.b2b-media-meta-row {
+  padding: 8px 12px;
+  background: var(--surface-2);
+  font-size: 14px;
+  color: var(--label-2);
+}
+
+.b2b-media-yt-wrap {
+  position: relative;
+  width: 100%;
+  padding-top: 56.25%;
+  border-radius: 10px;
+  overflow: hidden;
+  border: var(--hair) solid var(--sep);
+  background: #000000;
+}
+
+.b2b-media-yt-wrap iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.b2b-media-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--label);
+  cursor: pointer;
+}
+
+.b2b-media-check input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--acc);
+}
+
+/* Dias da semana (Seletor Seg-Dom) */
+.b2b-days-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.b2b-day-pill {
+  min-width: 46px;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: var(--hair) solid var(--sep);
+  background: var(--surface-2);
+  color: var(--label-2);
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.b2b-day-pill.on {
+  background: var(--acc);
+  color: var(--on-acc);
+  border-color: var(--acc);
+}
+
+/* QR Frame & Phone Preview White-Label */
+.b2b-qr-frame {
+  background: #ffffff;
+  padding: 8px;
+  border-radius: 14px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  display: inline-block;
+}
+
+.b2b-phone-preview {
+  width: 316px;
+  max-width: 100%;
+  margin: 0 auto;
+  border-radius: 38px;
+  border: 7px solid #2c2c2e;
+  background: #09090b;
+  color: #ffffff;
+  padding: 14px 18px 20px;
+  box-shadow: 0 24px 56px rgba(0, 0, 0, 0.5);
+}
+
+/* Tela de Autenticação B2B */
+.b2b-auth-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--acc) 14%, transparent), transparent 55%), var(--bg);
+}
+
+.b2b-auth-wrap {
+  width: 100%;
+  max-width: 960px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.08fr);
+  gap: 22px;
+  align-items: stretch;
+}
+
+.b2b-auth-wrap > * {
+  min-width: 0;
+}
+
+.b2b-auth-wrap.single {
+  max-width: 460px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.sect-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 4px 8px;
+}
+
+/* Campo de Senha com Toggle Mostrar/Ocultar */
+.b2b-pw-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.b2b-pw-wrap .b2b-input {
+  padding-right: 40px;
+}
+
+.b2b-pw-toggle {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  border: none;
+  background: transparent;
+  color: var(--label-3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.b2b-pw-toggle:hover {
+  color: var(--label);
+  background: var(--surface);
+}
+
+/* Readout Interativo de Gráfico */
+.b2b-chart-Readout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 10px;
+  margin-bottom: 6px;
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 12px;
+  min-height: 28px;
+}
+
+/* Topbar Breadcrumb e Link Rápido App */
+.portal-topbar-crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--label-2);
+  padding: 5px 11px;
+  border-radius: 99px;
+  background: var(--surface);
+  border: var(--hair) solid var(--sep);
+}
+
+.portal-topbar-app-link {
+  padding: 6px 11px !important;
+  font-size: 12.5px !important;
+  min-height: 32px !important;
+}
+
+/* Grade de Agenda Semanal Responsiva */
+.b2b-week-schedule-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+}
+
+/* Badge e Estado Adicionado no Catálogo */
+.b2b-cat-item.added {
+  border-color: color-mix(in srgb, var(--acc) 55%, var(--sep));
+  background: color-mix(in srgb, var(--acc-soft) 45%, var(--bg-el));
+}
+
+.b2b-cat-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: var(--acc-soft);
+  color: var(--acc-ink);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.25;
+  flex-shrink: 0;
+}
+
+/* Tabs Mobile do Estúdio de Prescrição */
+.b2b-builder-tabs {
+  display: none;
+  margin-bottom: 12px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.b2b-builder-only-mobile {
+  display: none;
+}
+
+.b2b-builder-grid > *,
+.b2b-builder-col-routine,
+.b2b-builder-col-cat {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Responsividade Mobile/Tablet */
+@media (max-width: 960px) {
+
+  .b2b-grid-2,
+  .b2b-grid-equal,
+  .b2b-auth-wrap {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .b2b-builder-tabs {
+    display: block;
+  }
+
+  .b2b-builder-only-mobile {
+    display: block;
+  }
+
+  .b2b-builder-grid {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 380px;
+  }
+
+  .b2b-builder-grid[data-pane='routine'] .b2b-builder-col-cat {
+    display: none;
+  }
+
+  .b2b-builder-grid[data-pane='catalogue'] .b2b-builder-col-routine {
+    display: none;
+  }
+}
+
+@media (max-width: 820px) {
+  .b2b-auth-screen {
+    padding: 14px;
+  }
+
+  .portal-sidebar {
+    position: fixed;
+    left: -280px;
+    top: 0;
+    bottom: 0;
+    transition: left 0.22s ease;
+    box-shadow: 10px 0 32px rgba(0, 0, 0, 0.55);
+  }
+
+  .portal-sidebar.open {
+    left: 0;
+  }
+
+  .portal-mobile-btn {
+    display: inline-flex;
+  }
+
+  .portal-topbar {
+    padding: 10px 16px;
+  }
+
+  .portal-topbar-app-link span {
+    display: none;
+  }
+
+  .portal-main {
+    padding: 18px 16px 44px;
+  }
+
+  .b2b-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .b2b-week-schedule-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(84px, 100%), 1fr));
+  }
+}
+
+/* =====================================================================
+   Ajustes mobile (auditoria UX/UI): safe areas, zoom do iOS, modais com
+   teclado aberto e tabela de alunos em cards.
+   ===================================================================== */
+
+/* Notch / Dynamic Island / barra de gestos: o index.html já declara viewport-fit=cover,
+   então o conteúdo precisa respeitar as áreas seguras. env() vale 0 fora de aparelhos com
+   recorte, então o desktop não muda. */
+.portal-topbar {
+  padding-top: max(10px, env(safe-area-inset-top));
+  padding-left: max(28px, env(safe-area-inset-left));
+  padding-right: max(28px, env(safe-area-inset-right));
+}
+
+.portal-sidebar {
+  padding-top: max(18px, env(safe-area-inset-top));
+  padding-bottom: max(18px, env(safe-area-inset-bottom));
+}
+
+.portal-main {
+  padding-bottom: max(56px, calc(24px + env(safe-area-inset-bottom)));
+}
+
+.b2b-modal-foot {
+  padding-bottom: max(14px, env(safe-area-inset-bottom));
+}
+
+@media (max-width: 820px) {
+  .portal-topbar {
+    padding-left: max(16px, env(safe-area-inset-left));
+    padding-right: max(16px, env(safe-area-inset-right));
+  }
+
+  .portal-main {
+    padding-bottom: max(44px, calc(24px + env(safe-area-inset-bottom)));
+  }
+
+  /* Botões de ação em linha de tabela e na barra do topo: alvo de toque confortável. */
+  .btn.sm {
+    min-height: 40px;
+  }
+
+  .portal-topbar-app-link {
+    min-height: 40px !important;
+  }
+
+  /* Modal ancorado no topo: com o teclado virtual aberto o cabeçalho e o campo em foco
+     continuam visíveis em vez de o modal centralizado ser empurrado para fora da tela. */
+  .b2b-modal-backdrop {
+    align-items: flex-start;
+    padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom));
+  }
+
+  .b2b-modal {
+    max-height: calc(100vh - 24px);
+    max-height: calc(100dvh - 24px);
+  }
+
+  .b2b-modal-head,
+  .b2b-modal-body,
+  .b2b-modal-foot {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .b2b-modal-foot {
+    flex-wrap: wrap;
+  }
+
+  .b2b-modal-foot .btn {
+    flex: 1 1 140px;
+  }
+}
+
+/* O Safari do iPhone e navegadores móveis dão zoom em qualquer campo com fonte abaixo de 16px
+   (cobrindo também aparelhos touch e paisagem acima de 820px). */
+@media (max-width: 960px), (pointer: coarse) {
+  .field,
+  textarea.field,
+  .b2b-select,
+  .b2b-searchf .field,
+  .b2b-num-wrap .field,
+  .stp input,
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/* Tabela de alunos: no celular cada linha vira um card, sem rolagem horizontal. */
+@media (max-width: 640px) {
+  .b2b-table-wrap-stack {
+    background: transparent;
+    border: none;
+    overflow: visible;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .b2b-table-stack,
+  .b2b-table-stack tbody {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .b2b-table-stack thead {
+    display: none;
+  }
+
+  .b2b-table-stack tr {
+    display: block;
+    background: var(--surface);
+    border: var(--hair) solid var(--sep);
+    border-radius: var(--r-lg);
+    padding: 12px 14px;
+    margin-bottom: 10px;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .b2b-table-stack tbody tr:hover {
+    background: var(--surface);
+  }
+
+  .b2b-table-stack td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 8px 0;
+    border-bottom: var(--hair) solid var(--sep);
+    text-align: right;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .b2b-table-stack td > * {
+    min-width: 0;
+  }
+
+  .b2b-table-stack td::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--label-2);
+    text-align: left;
+  }
+
+  .b2b-table-stack td.b2b-td-main {
+    display: block;
+    text-align: left;
+    padding-top: 0;
+  }
+
+  .b2b-table-stack td.b2b-td-main::before,
+  .b2b-table-stack td.b2b-td-actions::before {
+    content: none;
+  }
+
+  .b2b-table-stack td.b2b-td-actions {
+    display: block;
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+
+  .b2b-table-stack td.b2b-td-actions .b2b-row-actions {
+    justify-content: flex-start;
+  }
+
+  .b2b-table-stack td.b2b-td-actions .btn {
+    flex: 1 1 auto;
+  }
+
+  .b2b-table-stack tr:last-child td.b2b-td-actions {
+    border-bottom: none;
+  }
+}
+
+/* =====================================================================
+   Mobile: barra do topo sem sobreposição, grids sem estourar a largura
+   e linhas de convite que quebram em vez de alargar a página.
+   ===================================================================== */
+.portal-content {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.portal-topbar-r {
+  flex-shrink: 0;
+}
+
+.portal-topbar-pill {
+  white-space: nowrap;
+}
+
+.b2b-url-code {
+  display: block;
+  max-width: 100%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--bg-el);
+  border: var(--hair) solid var(--sep);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  text-align: center;
+}
+
+.b2b-invite-form {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+  align-items: stretch;
+}
+
+.b2b-invite-row {
+  padding: 10px 14px;
+  border-radius: var(--r);
+  background: var(--bg-el);
+  border: var(--hair) solid var(--sep);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+@media (max-width: 820px) {
+  .portal-main,
+  .portal-main .card {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .portal-topbar {
+    gap: 8px;
+  }
+
+  .portal-topbar-l {
+    flex: 1 1 auto;
+    gap: 8px;
+  }
+
+  .portal-topbar-r {
+    gap: 8px;
+  }
+
+  /* O título da página já aparece no corpo; o breadcrumb só disputava espaço com os botões. */
+  .portal-topbar-crumb {
+    display: none;
+  }
+
+  .portal-topbar-pill {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* App do Aluno, tema e Sair viram botões de ícone do mesmo tamanho. */
+  .portal-topbar-app-link,
+  .portal-topbar-logout,
+  .portal-topbar-r .b2b-icon-btn {
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+    min-height: 40px !important;
+    padding: 0 !important;
+    justify-content: center;
+    flex-shrink: 0;
+    border-radius: 12px;
+  }
+
+  .portal-topbar-r .b2b-icon-btn {
+    border: var(--hair) solid var(--sep);
+  }
+
+  .portal-topbar-logout span {
+    display: none;
+  }
+
+  .b2b-invite-form {
+    flex-direction: column;
+  }
+
+  .b2b-invite-form .btn {
+    width: 100%;
+  }
+}
+
+@media (max-width: 380px) {
+  /* Telas bem estreitas: o selo vira só o ícone para os três botões caberem. */
+  .portal-topbar-pill {
+    font-size: 11.5px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+}
+/* =====================================================================
+   Estúdio de Prescrição: vários treinos (A, B, C…) com dias e exercícios próprios
+   ===================================================================== */
+.b2b-wk-bar {
+  margin-bottom: 14px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.b2b-wk-tabs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 2px 8px;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+}
+
+.b2b-wk-tab,
+.b2b-wk-add {
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 12px 8px 8px;
+  border-radius: 12px;
+  border: var(--hair) solid var(--sep);
+  background: var(--surface-2);
+  color: var(--label);
+  cursor: pointer;
+  text-align: left;
+  min-width: 0;
+  max-width: min(230px, 85vw);
+}
+
+.b2b-wk-tab.on {
+  border-color: var(--acc);
+  background: var(--acc-soft);
+}
+
+.b2b-wk-letter {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 13px;
+  background: var(--surface-3, var(--surface-2));
+  color: var(--label-2);
+}
+
+.b2b-wk-tab.on .b2b-wk-letter {
+  background: var(--acc);
+  color: var(--on-acc);
+}
+
+.b2b-wk-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.b2b-wk-meta b {
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.b2b-wk-meta small {
+  font-size: 11.5px;
+  color: var(--label-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.b2b-wk-add {
+  padding: 8px 14px;
+  border-style: dashed;
+  color: var(--acc-ink);
+  font-weight: 700;
+  font-size: 13px;
+  background: transparent;
+}
+
+.b2b-wk-add:hover {
+  border-color: var(--acc);
+  background: var(--acc-soft);
+}
+
+.b2b-day-pill {
+  position: relative;
+}
+
+.b2b-day-pill.taken {
+  background: var(--bg-el);
+  color: var(--label-3);
+  border-style: dashed;
+}
+
+.b2b-day-owner {
+  position: absolute;
+  top: -6px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 99px;
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 16px;
+  text-align: center;
+  background: var(--surface-3, var(--surface-2));
+  color: var(--label);
+  border: var(--hair) solid var(--sep);
+}
+
+.b2b-day-pill.on .b2b-day-owner {
+  background: var(--on-acc);
+  color: var(--acc);
+  border-color: transparent;
+}
+
+.b2b-cat-target {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--acc-soft);
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.b2b-cat-target .b2b-wk-letter {
+  background: var(--acc);
+  color: var(--on-acc);
+}
+
+@media (max-width: 820px) {
+  .b2b-wk-tab {
+    max-width: 200px;
+  }
+
+  .b2b-ex-controls {
+    gap: 8px;
+  }
+}
+
+/* =====================================================================
+   Login: cores da marca Rit (Volt Lime do site), independente de tema
+   ou de qualquer cor White-Label de uma academia aplicada antes.
+   ===================================================================== */
+.b2b-auth-screen {
+  --acc: #D0FF00;
+  --acc-2: #a8cc00;
+  --on-acc: #000000;
+  --acc-ink: #D0FF00;
+  --acc-soft: color-mix(in srgb, #D0FF00 16%, transparent);
+  --acc-line: color-mix(in srgb, #D0FF00 38%, transparent);
+  background:
+    radial-gradient(60% 55% at 50% 0%, color-mix(in srgb, #D0FF00 16%, transparent), transparent 70%),
+    var(--bg);
+}
+
+:root[data-theme="light"] .b2b-auth-screen {
+  --acc-ink: #4d6600;
+  background:
+    radial-gradient(60% 55% at 50% 0%, color-mix(in srgb, #D0FF00 30%, transparent), transparent 70%),
+    var(--bg);
+}
+
+.b2b-auth-screen .btn.primary {
+  box-shadow: 0 0 0 1px color-mix(in srgb, #D0FF00 55%, transparent), 0 8px 24px color-mix(in srgb, #D0FF00 22%, transparent);
+  font-weight: 800;
+}
+
+.b2b-auth-screen .field:focus,
+.b2b-auth-screen input:focus {
+  border-color: #D0FF00;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #D0FF00 22%, transparent);
+  outline: none;
+}
+/* Modais no celular: o campo de texto só redimensiona na vertical e nada empurra a largura. */
+.b2b-modal {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.b2b-modal textarea,
+.b2b-modal .field {
+  max-width: 100%;
+}
+
+.b2b-modal textarea {
+  resize: vertical;
+}
+
+.b2b-modal-body {
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+
+.b2b-modal-head > div:first-child {
+  min-width: 0;
+}
+
+.b2b-modal-head h3 {
+  overflow-wrap: anywhere;
+}
+
+/* Toast do Portal sempre acima de modais (Modal usa 500+, ConfirmModal usa 750) */
+#toast.b2b-toast {
+  z-index: 2000;
+  bottom: calc(24px + var(--sab, env(safe-area-inset-bottom)));
+  font-size: 14px;
+  font-weight: 600;
+  border: var(--hair) solid color-mix(in srgb, var(--label) 16%, transparent);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.55);
+}
+
+/* Alerta de validação inline e estado de erro em abas de treino no Estúdio */
+.b2b-builder-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--red) 14%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--red) 48%, var(--sep));
+  color: var(--label);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.b2b-builder-alert-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  flex: 1 1 240px;
+}
+
+.b2b-builder-alert-icon {
+  color: var(--red);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.b2b-builder-alert-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.b2b-wk-tab.has-error {
+  border-color: color-mix(in srgb, var(--red) 70%, var(--sep));
+}
+
+.b2b-wk-tab.has-error .b2b-wk-letter {
+  background: var(--red);
+  color: #ffffff;
+}
+
+.b2b-field-invalid .field {
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--red) 18%, transparent);
+}

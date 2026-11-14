@@ -6,18 +6,27 @@ media/gif/
 # Runtime data — users, passkeys, per-user state, session secret
 data/
 
-# Local config
+# Local config & production secrets
 .env
+.env.production
+.env.*.local
+INSTRUCOES_DEPLOY_VPS.md
+root@*
 
 # Build output / deps
 frontend/dist/
+portal/dist/
 node_modules/
 *.log
+*.tar.gz
+*.mp4
 .DS_Store
 node_modules
 .claude/
 .agents/
 .superpowers/
+brag-*
+founder/
 
 # Nix build result symlinks
 result

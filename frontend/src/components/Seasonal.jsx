@@ -1,6 +1,7 @@
 import { Suspense, lazy, useEffect } from 'react'
 import { useStore } from '../store/useStore.js'
 import { activeSeason, seasonInWorkout } from '../lib/seasonal.js'
+import { useBranding } from '../lib/branding.js'
 import { useTourRunning } from '../lib/tour.js'
 
 /* The main bundle's side of the seasonal themes (lib/seasonal.js): two tiny components that render
@@ -9,6 +10,7 @@ import { useTourRunning } from '../lib/tour.js'
    scheduled. seasonal.lazy.test.js keeps it that way: no file but this one names that folder,
    and only through import(). */
 const LOADERS = {
+  verao: () => import('../seasonal/verao.jsx'),
   halloween: () => import('../seasonal/halloween.jsx'),
   christmas: () => import('../seasonal/christmas.jsx'),
 }
@@ -20,6 +22,7 @@ const modOf = id => (mods[id] ||= {
 
 // The app tour pauses the theme while it runs: nothing crawls across a spotlight.
 const useSeason = () => {
+  useBranding()
   const id = useStore(s => activeSeason(s.S))
   return useTourRunning() ? null : id
 }

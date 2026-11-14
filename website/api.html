@@ -72,7 +72,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
 .ov li { margin: 5px 0; }
 .ov li::marker { color: var(--fg-3); }
 .ov:last-child:nth-child(odd) { grid-column: 1 / -1; }
-@media (max-width: 720px) { .ov-grid { grid-template-columns: 1fr; } }
+@media (max-width: 720px) { .ov-grid { grid-template-columns: minmax(0, 1fr); } }
 
 /* expand / collapse all */
 .xall { display: flex; gap: 16px; justify-content: flex-end; margin: 30px 0 -34px; }
@@ -122,14 +122,14 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
 
 /* parameter / response tables */
 .ptab { border: 1px solid var(--hair-soft); border-radius: 10px; overflow: hidden; }
-.prow { display: grid; grid-template-columns: minmax(140px, 220px) minmax(110px, 200px) 1fr; gap: 3px 14px; padding: 10px 14px; font-size: 13.5px; }
+.prow { display: grid; grid-template-columns: minmax(140px, 220px) minmax(110px, 200px) minmax(0, 1fr); gap: 3px 14px; padding: 10px 14px; font-size: 13.5px; }
 .prow + .prow { border-top: 1px solid var(--hair-soft); }
 .p-name { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; color: var(--fg); word-break: break-all; }
 .p-req { font-style: normal; color: #ffb340; font-size: 10.5px; margin-left: 7px; letter-spacing: .04em; }
 .p-type { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--fg-3); word-break: break-word; }
 .p-type a, .r-sig a, .p-desc a { color: var(--acc); }
 .p-desc { color: var(--fg-2); line-height: 1.5; }
-.rrow { grid-template-columns: 44px 1fr; }
+.rrow { grid-template-columns: 44px minmax(0, 1fr); }
 .r-code { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; font-weight: 600; }
 .r-code.s2 { color: var(--acc); } .r-code.s3 { color: #6cb2ff; }
 .r-code.s4 { color: #ffb340; } .r-code.s5 { color: #ff6b5e; }
@@ -139,7 +139,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
 @media (max-width: 680px) {
   .prow { grid-template-columns: minmax(0, 1fr) auto; }
   .prow .p-desc { grid-column: 1 / -1; margin-top: 1px; }
-  .rrow { grid-template-columns: 44px 1fr; }
+  .rrow { grid-template-columns: 44px minmax(0, 1fr); }
   .rrow .p-desc { grid-column: auto; margin-top: 0; }
 }
 

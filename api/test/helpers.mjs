@@ -10,6 +10,16 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+// No Windows, processos filhos com handles de arquivos SQLite ou pastas temporárias
+// levam alguns milissegundos para serem liberados pelo kernel após child.kill().
+// O retry nativo do fs.rmSync evita falso-positivos de EPERM no pós-teste.
+if (process.platform === 'win32') {
+  const origRmSync = fs.rmSync.bind(fs);
+  fs.rmSync = function winSafeRmSync(targetPath, options = {}) {
+    return origRmSync(targetPath, { maxRetries: 25, retryDelay: 50, ...options });
+  };
+}
+
 /* The port a spawned server.js actually bound.
  *
  * Never pick one for it. Opening a listener on 0, reading the port, closing it and handing the

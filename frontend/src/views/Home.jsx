@@ -30,12 +30,15 @@ import { WrappedHomeCard } from '../components/WrappedEntry.jsx'
 import RecoveryHint from '../components/RecoveryHint.jsx'
 import { ChallengesCard } from '../components/Challenges.jsx'
 import { isOn } from '../lib/modules.js'
+import { useBranding } from '../lib/branding.js'
+import InstallPwaBanner from '../components/InstallPwaBanner.jsx'
 
 // Home = what to do now + a quick glance. Deep charts & history live in Stats.
 export default function Home() {
   const nav = useNavigate()
   const S = useStore(s => s.S)
   const user = useStore(s => s.user)
+  const branding = useBranding()
   // The banner switched off and the sync stuck: a dot on the gear (Settings → Show connection status).
   const trouble = useConnectionTrouble()
   const [weekOffset, setWeekOffset] = useState(0)
@@ -124,9 +127,105 @@ export default function Home() {
   const onQueueStart = id => { if (S.active) nav('/workout'); else startFlow([id]) }
 
   return <div className="narrow">
+    {branding.isCustomTenant && branding.gymName && (
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 8,
+          padding: '10px 14px',
+          marginBottom: 10,
+          borderRadius: 14,
+          background: 'var(--surface)',
+          border: '1px solid color-mix(in srgb, var(--acc) 28%, transparent)'
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: '1 1 180px' }}>
+            <div
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 10,
+                background: 'var(--acc)',
+                color: 'var(--on-acc)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+                overflow: 'hidden'
+              }}
+            >
+              {branding.logoUrl && !branding.logoUrl.startsWith('blob:') ? (
+                <img
+                  src={branding.logoUrl}
+                  alt=""
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  onError={e => { e.currentTarget.style.display = 'none' }}
+                />
+              ) : (
+                <Icon name="dumbbell" />
+              )}
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontWeight: 700, fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {branding.gymName}
+                </span>
+                <span style={{ fontSize: 10, background: 'var(--surface-3)', color: 'var(--acc)', padding: '1px 5px', borderRadius: 4, fontWeight: 700 }}>
+                  Rit
+                </span>
+              </div>
+              <div className="muted small" style={{ fontSize: 11.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {branding.slogan || (branding.accountType === 'personal' ? 'Consultoria & Treinos' : 'App Oficial da Academia')}
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', maxWidth: '100%' }}>
+            {branding.instagram && (
+              <a
+                href={`https://instagram.com/${String(branding.instagram).replace(/^@/, '').trim()}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="tag"
+                style={{ textDecoration: 'none', maxWidth: '100%', overflowWrap: 'anywhere' }}
+              >
+                {String(branding.instagram).startsWith('@') ? branding.instagram : `@${branding.instagram}`}
+              </a>
+            )}
+            {branding.contactPhone && (
+              <a
+                href={`https://wa.me/${String(branding.contactPhone).replace(/\D/g, '').replace(/^(?!55)/, '55')}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="tag acc"
+                style={{ textDecoration: 'none', flexShrink: 0 }}
+              >
+                WhatsApp
+              </a>
+            )}
+          </div>
+        </div>
+        {branding.address && (
+          <div
+            className="muted small"
+            style={{
+              fontSize: 11.5,
+              paddingTop: 6,
+              borderTop: 'var(--hair) solid var(--sep)',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis'
+            }}
+          >
+            {branding.address}
+          </div>
+        )}
+      </div>
+    )}
     <div className="hdr">
       <SeasonDeco spot="header-bats" />
-      <div><h1>{user ? t('Hi {0}', user.name) : 'openGym'}</h1><div className="sub">{today.toLocaleDateString(dateLocale(), { weekday: 'long', day: 'numeric', month: 'long' })}</div></div>
+      <div><h1>{user ? t('Hi {0}', user.name) : (branding.isCustomTenant && branding.gymName ? branding.gymName : 'Rit')}</h1><div className="sub">{today.toLocaleDateString(dateLocale(), { weekday: 'long', day: 'numeric', month: 'long' })}</div></div>
       <button className="iconbtn" data-tour="settings-gear" onClick={() => nav('/settings')} aria-label={trouble ? t('Settings') + ', ' + t('Connection problem') : t('Settings')}><Icon name="gear" />{trouble && <span className="tab-dot" aria-hidden="true" />}</button>
     </div>
 
@@ -169,6 +268,11 @@ export default function Home() {
             <div className="ttl">{S.active ? (editingSaved ? S.active.name : t('{0} (in progress)', S.active.name))
               : doneToday ? (doneToday.name ? t('{0} (done)', doneToday.name) : t('Workout done'))
               : routine ? todayName : t('Rest day')}{todayOvr && routine && !doneToday ? ' · ' + t('rescheduled') : ''}</div>
+            {routine?.prescribedBy?.name && !S.active && !doneToday && (
+              <div className="ss muted" style={{ fontSize: '11px', marginTop: 1, color: 'var(--acc)' }}>
+                Prescrito pelo Prof. {routine.prescribedBy.name}
+              </div>
+            )}
             {next && !doneToday && <div className="ss">{t('Next session: {0}, {1}', t(DAYN[next.weekday]), next.routine.name)}</div>}
           </div>
         </div>
@@ -279,5 +383,6 @@ export default function Home() {
     </div>
       // Motivation off: no streak card, but the weekly sets line it carried keeps a card of its own.
       : S.homeMuscleSets === true && <div className="card wsets-solo"><WeeklySetsHomeLine S={S} onOpen={() => nav('/stats?section=lifts')} /></div>}
+    <InstallPwaBanner />
   </div>
 }

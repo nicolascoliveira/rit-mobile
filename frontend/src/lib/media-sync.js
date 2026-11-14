@@ -29,6 +29,18 @@ import { MOBILE, nativeLoad } from './mobile.js'
 import { registerMediaRunner, publishMediaStatus, pendingRefCount, loadPending } from './media-owed.js'
 import { t } from './i18n-core.js'
 
+function tenantAsState(te) {
+  if (!te || typeof te !== 'object') return null
+  const items = []
+  for (const ov of Object.values(te.overrides || {})) {
+    if (ov && typeof ov === 'object' && ov.media) items.push({ media: ov.media })
+  }
+  for (const c of Array.isArray(te.customExercises) ? te.customExercises : []) {
+    if (c && typeof c === 'object' && c.media) items.push({ media: c.media })
+  }
+  return items.length ? { customEx: items } : null
+}
+
 const MIN = 60000
 const DEDUPE_MS = 10 * MIN
 const SETTLE_BUDGET_MS = 60000
@@ -289,6 +301,8 @@ export function createMediaSync(deps = {}) {
     await withLock('opengym-media', async () => {
       const st = store.getState()
       const live = keptHashes(st.S)
+      const tState = tenantAsState(st.tenantExercises)
+      if (tState) for (const h of keptHashes(tState)) live.add(h)
       try {
         const raw = d.storage?.getItem(PERSISTED_KEY)
         if (raw) for (const h of keptHashes(JSON.parse(raw))) live.add(h)
@@ -337,11 +351,20 @@ export function createMediaSync(deps = {}) {
     let timer = null
     let busy = false
     const want = () => {
-      const S = store.getState().S
+      const st = store.getState()
+      const S = st.S
+      const te = st.tenantExercises
       const ids = new Set()
       ;(S?.routines || []).forEach(r => (r?.ex || []).forEach(e => { if (e?.id) ids.add(e.id) }))
       ;(S?.active?.entries || []).forEach(en => { if (en?.id) ids.add(en.id) })
-      const used = { customEx: (S?.customEx || []).filter(c => c && ids.has(c.id)) }
+      const tenantUsed = []
+      for (const c of Array.isArray(te?.customExercises) ? te.customExercises : []) {
+        if (c && ids.has(c.id) && c.media) tenantUsed.push({ media: c.media })
+      }
+      for (const [id, ov] of Object.entries(te?.overrides || {})) {
+        if (ids.has(id) && ov?.media) tenantUsed.push({ media: ov.media })
+      }
+      const used = { customEx: [...(S?.customEx || []).filter(c => c && ids.has(c.id)), ...tenantUsed] }
       const withMedia = (Array.isArray(S?.workouts) ? S.workouts : []).filter(w => (Array.isArray(w?.media) && w.media.length) || hasSetMedia(w))
       // Set videos count as workouts with media too; one kept on the phone that filmed it is never
       // asked for (uploadableFiles).
@@ -363,9 +386,11 @@ export function createMediaSync(deps = {}) {
     }
     const schedule = () => { clearTimeout(timer); timer = setTimeout(runPrefetch, delay) }
     let seen = store.getState().S
+    let seenTenant = store.getState().tenantExercises
     const unsub = store.subscribe(s => {
-      if (s.S?.routines === seen?.routines && s.S?.active === seen?.active && s.S?.customEx === seen?.customEx && s.S?.workouts === seen?.workouts) return
+      if (s.S?.routines === seen?.routines && s.S?.active === seen?.active && s.S?.customEx === seen?.customEx && s.S?.workouts === seen?.workouts && s.tenantExercises === seenTenant) return
       seen = s.S
+      seenTenant = s.tenantExercises
       schedule()
     })
     globalThis.addEventListener?.('online', schedule)
@@ -400,8 +425,9 @@ export function createMediaSync(deps = {}) {
     const unsub = store.subscribe(s => {
       const refs = s.S === prev.S ? prevRefs : refsKey(s.S)
       const moved = refs !== prevRefs
+      const tenantMoved = s.tenantExercises !== prev.tenantExercises
       if (moved || s.sync?.lastSynced !== prev.sync?.lastSynced || s.user?.id !== prev.user?.id) schedule(2000)
-      if (moved) scheduleGc(10000)
+      if (moved || tenantMoved) scheduleGc(10000)
       // Boot has restored the state: a clean-up that was asked for before now sees the real copy.
       if (s.ready && !prev.ready && gcWaiting) scheduleGc(2000)
       prev = s

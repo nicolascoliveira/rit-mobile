@@ -2,7 +2,7 @@ import { Fragment, useDeferredValue, useEffect, useMemo, useRef, useState } from
 import { useStore } from './store/useStore.js'
 import { exView, exUnitPin, exUnitOf, exUnitTag, withExUnit, profileUnit, viewTarget, storedTarget, storedBar, viewEntry, viewRow, shownWeight } from './lib/ex-unit.js'
 import { useUI } from './store/useUI.js'
-import { EXDB, EXIDX, BODYPARTS, isCardio, isBodyweightEq, allExercises, equipmentOf, byCategory, smOf, searchExercises, similarExercises, exOr, isAssisted, betterWeight, beatsWeight, isCustomEx } from './lib/exercises.js'
+import { EXDB, EXIDX, BODYPARTS, isCardio, isBodyweightEq, allExercises, equipmentOf, byCategory, smOf, searchExercises, similarExercises, exOr, isAssisted, betterWeight, beatsWeight, isCustomEx, isTenantCustomEx, getTenantOverride } from './lib/exercises.js'
 import { activeProfile, exAvailable, ALL_EQUIPMENT, newProfile, profileEquipment, ACC_V } from './lib/equipment.js'
 import { activeGym, gymsOf, gymLabel, copyInventory, gymHasStack } from './lib/gym-inventory.js'
 import { autoGymHere } from './lib/gym-auto.js'
@@ -93,7 +93,8 @@ import { hrLabel } from './lib/heart-rate.js'
 import { weeklyWeights } from './lib/bodyweight.js'
 import { workoutText } from './lib/workout-text.js'
 import { workoutCardModel, layoutWorkoutCard, drawWorkoutCard, viewAspect, CARD_FONT } from './lib/workout-card.js'
-import { cardPalette } from './lib/card-draw.js'
+import { cardPalette, loadBrandLogo } from './lib/card-draw.js'
+import { getBranding } from './lib/branding.js'
 import { makeCanvas, toPng, currentAccent, isRtl } from './lib/share-image.js'
 import ShareCardSheet from './components/ShareCard.jsx'
 import { streakInfo } from './lib/streak.js'
@@ -112,13 +113,22 @@ const snd = () => S().sound
 // `noCancel`: one button only, for an explainer that must lead straight to the phone's own
 // permission dialog (App Review 5.1.1(iv)); pass `locked` with it so the sheet can't be swiped away.
 function ConfirmDialog({ title, message, confirmText, cancelText, danger, noCancel, onConfirm, onCancel, close }) {
+  const [busy, setBusy] = useState(false)
+  const busyRef = useRef(false)
+  const handleConfirm = () => {
+    if (busyRef.current) return
+    busyRef.current = true
+    setBusy(true)
+    close()
+    onConfirm && onConfirm()
+  }
   return <div style={{ textAlign: 'center', padding: '4px 0' }}>
     {title && <h3 style={{ marginBottom: 8 }}>{title}</h3>}
     <div className="muted" style={{ marginBottom: 18, lineHeight: 1.5 }}>{message}</div>
-    <button className={'btn ' + (danger ? 'danger' : 'primary')} onClick={() => { close(); onConfirm && onConfirm() }}>{confirmText || t('Confirm')}</button>
+    <button className={'btn ' + (danger ? 'danger' : 'primary')} disabled={busy} onClick={handleConfirm}>{confirmText || t('Confirm')}</button>
     {!noCancel && <>
       <div style={{ height: 8 }} />
-      <Button variant="ghost" className="dim" onClick={() => { close(); onCancel && onCancel() }}>{cancelText || t('Cancel')}</Button>
+      <Button variant="ghost" className="dim" disabled={busy} onClick={() => { close(); onCancel && onCancel() }}>{cancelText || t('Cancel')}</Button>
     </>}
   </div>
 }
@@ -1323,6 +1333,10 @@ function ExerciseDetail({ ex, close }) {
       </button>
     </div>
     <Media ex={ex} />
+    {(() => {
+      const tenantOv = useStore(s => s.tenantExercises?.overrides?.[ex?.id]) || getTenantOverride(ex)
+      return tenantOv?.note ? <div className="exnote">{tenantOv.note}</div> : null
+    })()}
     <div className="row" style={{ gap: 6, flexWrap: 'wrap', margin: '10px 0' }}>
       {detailTags(ex).map(tg => <span key={tg.key} className={'tag' + (tg.acc ? ' acc' : '')}>{tg.icon && <Icon name={tg.icon} />}{tg.label}</span>)}
     </div>
@@ -1365,7 +1379,7 @@ function ExerciseDetail({ ex, close }) {
     {youtubeSearchUrl(ex) && <Button variant="ghost" icon="play" style={{ marginTop: 6 }} onClick={() => openExternal(youtubeSearchUrl(ex))}>{t('Watch on YouTube')}</Button>}
     {/* The catalogue is community-edited (catalogue/README.md): a wrong muscle, a clumsy step or a
         missing translation is one tap from an issue that already names the exercise. */}
-    {!isCustomEx(ex) && !ex.missing && <a className="small dim exfix-link" target="_blank" rel="noopener"
+    {!isCustomEx(ex) && !isTenantCustomEx(ex) && !ex.missing && <a className="small dim exfix-link" target="_blank" rel="noopener"
       href={'https://github.com/DuarteSantos8/openGym/issues/new?template=exercise.yml&exercise=' + encodeURIComponent(ex.id + ', ' + ex.n)}>
       <Icon name="pencil" /> {t('Suggest a fix for this exercise')}</a>}
     {/* The end of the sheet: what makes this exercise go away. Merge into… (#656,
@@ -3293,6 +3307,10 @@ function WorkoutDetail({ w, close }) {
       flushNote()
       repeatWorkout(w, close)
     }}>{t('Repeat today')}</Button>
+    {isOn(st, 'motivation') && <>
+      <div style={{ height: 8 }} />
+      <Button variant="tinted" icon="share" onClick={shareAsImage}>{t('Share as image')}</Button>
+    </>}
     <div style={{ height: 10 }} />
     {/* Everything else a past workout can do, once in a while each, behind one row (v1.4.4): it
         used to be eight more buttons down the sheet. */}
@@ -3332,7 +3350,10 @@ function ShareWorkoutImage({ w, close }) {
 const shareNameOf = e => (EXIDX[e.id] ? exerciseNameFor(EXIDX[e.id]) : (e.n || e.id))
 export const shareWorkoutSheet = w => ui().openSheet(close => <ShareWorkoutImage w={w} close={close} />)
 async function workoutCardImage(model, { map, body, format, style }) {
-  const colors = cardPalette(style, currentAccent())
+  const branding = getBranding?.() || {}
+  const brandAccent = branding.isCustomTenant && branding.primaryColor ? branding.primaryColor : currentAccent()
+  const logoImg = await loadBrandLogo(branding.logoUrl)
+  const colors = { ...cardPalette(style, brandAccent), logoImg }
   // The body geometry is ~90 KB and lazy everywhere else too (components/BodyMap.jsx).
   const geometry = map && model.levels ? (await import('./lib/body-paths.js')).default : null
   const shape = geometry && (geometry[body] || geometry.male)
@@ -3341,7 +3362,7 @@ async function workoutCardImage(model, { map, body, format, style }) {
   const layout = layoutWorkoutCard(model, { measure: probe.measure, rtl: isRtl(), format, map: shape ? { aspect: viewAspect(shape.front) } : null })
   const c = makeCanvas(layout.width, layout.height, CARD_FONT)
   if (!c) return null
-  drawWorkoutCard(c.ctx, layout, colors, shape ? { body: shape, levels: model.levels } : null)
+  drawWorkoutCard(c.ctx, layout, colors, shape ? { body: shape, levels: model.levels, logoImg } : (logoImg ? { logoImg } : null))
   return toPng(c.canvas)
 }
 // The .fit file goes out the way a backup does: the share sheet in the phone app (Files, Drive,

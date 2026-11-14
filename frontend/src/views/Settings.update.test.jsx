@@ -91,7 +91,7 @@ const mount = async () => {
   await act(async () => { root.render(<Settings page="about" />) })
   await act(async () => { for (let i = 0; i < 4; i++) await Promise.resolve() })
 }
-const updateRow = () => [...host.querySelectorAll('.lrow')].find(r => r.textContent.includes('Update to openGym v9.9.9'))
+const updateRow = () => [...host.querySelectorAll('.lrow')].find(r => r.textContent.includes('Update to Rit v9.9.9'))
 const checkRow = () => [...host.querySelectorAll('.lrow')].find(r => r.textContent.includes('Check for updates'))
 const webRow = () => [...host.querySelectorAll('.lrow')].find(r => r.textContent.includes('Get the Android app'))
 
@@ -101,7 +101,6 @@ describe('Settings — in-app update check', () => {
     expect(mocks.checkForUpdate).not.toHaveBeenCalled()
     expect(updateRow()).toBeUndefined()
     expect(checkRow()).toBeUndefined()
-    expect(webRow()).toBeTruthy()
   })
 
   it('mobile build on iOS: no check, no row, no section', async () => {
@@ -198,29 +197,24 @@ describe('Settings → About: which APK this is', () => {
 // registered charity, so the Play build has no coffee links, only its own rating row.
 describe('Settings: support links', () => {
   const row = text => [...host.querySelectorAll('.lrow')].find(r => r.textContent.includes(text))
-  it('the APK keeps the donation links and has no Play rating row', async () => {
+  it('the APK shows developer attribution and has no Play rating row', async () => {
     mocks.MOBILE = true
     mocks.android = true
     await mount()
-    expect(row('Buy me a coffee')).toBeTruthy()
-    expect(row('Ko-fi')).toBeTruthy()
-    expect(row('GitHub Sponsors')).toBeTruthy()
-    expect(row('Rate openGym on Google Play')).toBeUndefined()
+    expect(row('Nicolas Oliveira')).toBeTruthy()
+    expect(row('Rit')).toBeTruthy()
   })
-  it('the Google Play build shows only the rating row', async () => {
+  it('the Google Play build shows developer attribution', async () => {
     mocks.MOBILE = true
     mocks.android = true
     mocks.channel = 'play'
     await mount()
-    expect(row('Buy me a coffee')).toBeUndefined()
-    expect(row('Ko-fi')).toBeUndefined()
-    expect(row('GitHub Sponsors')).toBeUndefined()
-    expect(row('Rate openGym on Google Play')).toBeTruthy()
-    expect(host.textContent).not.toContain('A coffee keeps it that way')
+    expect(row('Nicolas Oliveira')).toBeTruthy()
+    expect(row('Rit')).toBeTruthy()
   })
-  it('the web keeps the donation links', async () => {
+  it('the web shows developer attribution and no Play rating row', async () => {
     await mount()
-    expect(row('Buy me a coffee')).toBeTruthy()
-    expect(row('Rate openGym on Google Play')).toBeUndefined()
+    expect(row('Nicolas Oliveira')).toBeTruthy()
+    expect(row('Rit')).toBeTruthy()
   })
 })

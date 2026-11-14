@@ -1,0 +1,151 @@
+# ==============================================================================
+# RIT SAAS — DOCKER COMPOSE DE PRODUÇÃO (HTTPS / REVERSE PROXY / MULTI-TENANT)
+# ==============================================================================
+# Uso em produção:
+#   docker compose -f docker-compose.prod.yml up -d --build
+# ==============================================================================
+
+name: rit-prod
+
+services:
+  # 1. API Backend (Node.js + SQLite WAL)
+  api:
+    image: rit-api:prod
+    build:
+      context: ./api
+      target: default
+    restart: always
+    env_file: ${ENV_FILE:-.env}
+    environment:
+      - PORT=3000
+      - DATA_DIR=/data
+      - TRUST_PROXY=1
+      - PORTAL_URL=${PORTAL_URL:-https://${DOMAIN_PORTAL:-painel.treinerit.com.br}}
+      - EVOLUTION_API_URL=http://evolution-api:8080
+      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY}
+      - EVOLUTION_INSTANCE=${EVOLUTION_INSTANCE:-rit}
+    volumes:
+      - ./data:/data
+      - ./catalogue/i18n:/catalogue/i18n:ro
+    networks:
+      - internal
+      - public_net
+
+  # 2. PWA do Aluno (React 19 + Nginx)
+  web:
+    image: rit-web:prod
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    restart: always
+    depends_on:
+      - api
+    environment:
+      - NGINX_PORT=80
+      - BACKEND=api
+      - PORT=3000
+      - RESOLVER=127.0.0.11
+      - CF_CONNECTING_IP=${CF_CONNECTING_IP:-}
+    networks:
+      - internal
+      - public_net
+
+  # 3. Portal de Gestão B2B (Super Admin & Academias)
+  portal:
+    image: rit-portal:prod
+    build:
+      context: .
+      dockerfile: portal/Dockerfile
+      args:
+        VITE_STUDENT_APP_URL: "https://${DOMAIN_APP:-app.treinerit.com.br}"
+    restart: always
+    depends_on:
+      - api
+    environment:
+      - NGINX_PORT=80
+      - BACKEND=api
+      - PORT=3000
+      - RESOLVER=127.0.0.11
+      - CF_CONNECTING_IP=${CF_CONNECTING_IP:-}
+    networks:
+      - internal
+      - public_net
+
+  # 4. Banco PostgreSQL dedicado à Evolution API
+  evolution-postgres:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${EVOLUTION_DB_USER:-evolution}
+      POSTGRES_PASSWORD: ${EVOLUTION_DB_PASS}
+      POSTGRES_DB: ${EVOLUTION_DB_NAME:-evolution}
+    volumes:
+      - ./data/evolution_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${EVOLUTION_DB_USER:-evolution} -d ${EVOLUTION_DB_NAME:-evolution}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  # 5. Gateway Central WhatsApp (Evolution API v2)
+  evolution-api:
+    image: evoapicloud/evolution-api:${EVOLUTION_IMAGE_TAG:-v2.3.7}
+    restart: always
+    environment:
+      - SERVER_URL=http://evolution-api:8080
+      - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY}
+      - DATABASE_ENABLED=true
+      - DATABASE_PROVIDER=postgresql
+      - DATABASE_CONNECTION_URI=postgresql://${EVOLUTION_DB_USER:-evolution}:${EVOLUTION_DB_PASS}@evolution-postgres:5432/${EVOLUTION_DB_NAME:-evolution}?schema=public
+      - DATABASE_CONNECTION_CLIENT_NAME=evolution_v2
+      - CACHE_REDIS_ENABLED=false
+      - AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES=true
+      - CONFIG_SESSION_PHONE_VERSION=${EVOLUTION_WA_VERSION:-2.3000.1054108093}
+      - LOG_BAILEYS=${LOG_BAILEYS:-error}
+    volumes:
+      - ./data/evolution_instances:/evolution/instances
+    depends_on:
+      evolution-postgres:
+        condition: service_healthy
+    networks:
+      - internal
+
+  # 6. Proxy Reverso Oficial com Terminação SSL / HTTPS Let's Encrypt
+  reverse-proxy:
+    image: nginx:alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN_ROOT=${DOMAIN_ROOT:-treinerit.com.br}
+      - DOMAIN_APP=${DOMAIN_APP:-app.treinerit.com.br}
+      - DOMAIN_PORTAL=${DOMAIN_PORTAL:-painel.treinerit.com.br}
+      - NGINX_PORT=80
+    volumes:
+      - ./deploy/nginx-prod/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./data/certbot/conf:/etc/letsencrypt:ro
+      - ./data/certbot/www:/var/www/certbot:ro
+    depends_on:
+      - web
+      - portal
+      - api
+    networks:
+      - public_net
+
+  # 7. Renovação Automática de Certificados SSL (Certbot)
+  certbot:
+    image: certbot/certbot:latest
+    restart: unless-stopped
+    volumes:
+      - ./data/certbot/conf:/etc/letsencrypt
+      - ./data/certbot/www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+
+networks:
+  public_net:
+    driver: bridge
+  internal:
+    internal: true

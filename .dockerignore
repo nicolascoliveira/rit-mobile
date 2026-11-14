@@ -1,7 +1,17 @@
 **/node_modules
 frontend/dist
+portal/dist
 media
 data
 .env
+.env.*
 .git
 *.log
+*.tar.gz
+*.mp4
+brag-*
+founder
+.github
+docs
+INSTRUCOES_DEPLOY_VPS.md
+root@*

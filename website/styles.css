@@ -1,997 +1,2295 @@
-/* openGym project site.
-   Dark on purpose: the app is pure black with a green accent, and a light site in
-   front of it would be a different product. Everything here is hand-written — no
-   framework, no build step, one stylesheet for all three pages. */
+/* ==========================================================================
+   RIT — Fitness Technology / SaaS Landing Page
+   Inspired by BlackCat Oficial layout, adapted 100% to RIT Brand Briefing
+   Palette:
+     Preto:       #080808 (Base principal e sofisticação)
+     Verde-limão: #D0FF00 (Destaques e reconhecimento)
+     Branco:      #FEFFFC (Contraste e legibilidade)
+     Roxo:        #8116E0 (Elementos complementares)
+   ========================================================================== */
 
 :root {
-  --bg: #000;
-  --surface: #0e0f11;
-  --surface-2: #17181b;
-  --hair: rgba(255, 255, 255, .11);
-  --hair-soft: rgba(255, 255, 255, .06);
-
-  --fg: #f5f5f7;
-  --fg-2: #a1a1a6;
-  --fg-3: #7d7d85;  /* >=4.5:1 on every panel — WCAG AA for small text */
-
-  --acc: #32d74b;
-  --acc-ink: #04150a;
-  --acc-soft: rgba(50, 215, 75, .13);
-
-  --r-s: 12px;
-  --r-m: 20px;
-  --r-l: 28px;
-
-  --max: 1120px;
-  --pad: clamp(20px, 5vw, 34px);
-  --sec: clamp(76px, 11vw, 136px);
-  --ease: cubic-bezier(.16, 1, .3, 1);
-
-  color-scheme: dark;
+  --rit-black: #080808;
+  --rit-black-elevated: #0e0e0f;
+  --rit-black-card: #111113;
+  --rit-black-card-2: #151618;
+  --rit-lime: #D0FF00;
+  --rit-lime-soft: rgba(208, 255, 0, 0.14);
+  --rit-lime-glow: rgba(208, 255, 0, 0.42);
+  --rit-lime-border: rgba(208, 255, 0, 0.28);
+  --rit-white: #FEFFFC;
+  --rit-light-bg: #F4F5F2;
+  --rit-purple: #8116E0;
+  --rit-purple-soft: rgba(129, 22, 224, 0.18);
+  --rit-text-muted: #8e8e93;
+  --rit-text-dim: #636366;
+  --rit-border: rgba(254, 255, 252, 0.08);
+  --rit-border-strong: rgba(254, 255, 252, 0.14);
+  --font-sans: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --container: 1240px;
 }
 
-*, *::before, *::after { box-sizing: border-box; }
-* { margin: 0; }
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
 
 html {
   scroll-behavior: smooth;
-  scroll-padding-top: 72px;
-  -webkit-text-size-adjust: 100%;
+  background-color: var(--rit-black);
+  color: var(--rit-white);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
-@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 
 body {
-  background: var(--bg);
-  color: var(--fg);
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto,
-               Helvetica, Arial, sans-serif;
-  font-size: 17px;
-  line-height: 1.55;
-  letter-spacing: -.01em;
-  -webkit-font-smoothing: antialiased;
+  background-color: var(--rit-black);
+  color: var(--rit-white);
   overflow-x: hidden;
-  /* Notched phones: the sticky bar and full-bleed rows must not sit under the cutout. */
-  padding-left: env(safe-area-inset-left);
-  padding-right: env(safe-area-inset-right);
+  line-height: 1.5;
 }
 
-a { color: var(--acc); text-decoration: none; }
-a:hover { text-decoration: underline; }
-img, svg, iframe { display: block; max-width: 100%; }
-img { height: auto; }
-button { font: inherit; color: inherit; background: none; border: 0; }
+a {
+  color: inherit;
+  text-decoration: none;
+}
 
-::selection { background: rgba(50, 215, 75, .3); }
-:focus-visible { outline: 2px solid var(--acc); outline-offset: 3px; border-radius: 6px; }
+img {
+  max-width: 100%;
+  display: block;
+}
 
-.wrap { max-width: var(--max); margin: 0 auto; padding: 0 var(--pad); }
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+}
 
-/* ---------------------------------------------------------------- type scale */
+/* Offset for fixed navbar anchor scroll navigation */
+section[id], div[id] {
+  scroll-margin-top: 88px;
+}
 
-h1, h2, h3 { font-weight: 600; letter-spacing: -.03em; line-height: 1.07; }
-h1 { font-size: clamp(42px, 8.4vw, 82px); letter-spacing: -.04em; line-height: 1.02; }
-h2 { font-size: clamp(30px, 5.4vw, 50px); }
-h3 { font-size: clamp(19px, 2.3vw, 21px); letter-spacing: -.02em; line-height: 1.25; }
+.rit-container {
+  width: 100%;
+  max-width: var(--container);
+  margin: 0 auto;
+  padding: 0 28px;
+}
 
-.eyebrow {
-  color: var(--acc);
-  font-size: 14px; font-weight: 600; letter-spacing: .01em;
+/* ---------- 1. Top Announcement Bar (Header 01) ---------- */
+.rit-topbar {
+  background: #0c0d0c;
+  border-bottom: 1px solid rgba(254, 255, 252, 0.06);
+  padding: 10px 20px;
+  font-size: 13.5px;
+  position: relative;
+  z-index: 50;
+}
+
+.rit-topbar-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.rit-topbar-text {
+  color: var(--rit-white);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.rit-topbar-dot {
+  color: var(--rit-text-muted);
+}
+
+.rit-topbar-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 14px;
+  border-radius: 999px;
+  background: rgba(208, 255, 0, 0.08);
+  border: 1px solid rgba(208, 255, 0, 0.32);
+  color: var(--rit-lime);
+  font-weight: 600;
+  font-size: 12.5px;
+  transition: all 0.2s ease;
+}
+
+.rit-topbar-cta:hover {
+  background: rgba(208, 255, 0, 0.16);
+  border-color: var(--rit-lime);
+  transform: translateY(-1px);
+}
+
+/* ---------- 2. Main Navbar (Header 2) ---------- */
+.rit-navbar {
+  position: sticky;
+  top: 0;
+  z-index: 45;
+  background: rgba(8, 8, 8, 0.82);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-bottom: 1px solid rgba(254, 255, 252, 0.05);
+  padding: 18px 0;
+}
+
+.rit-navbar-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.rit-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.rit-brand img {
+  height: 34px;
+  width: auto;
+}
+
+.rit-nav-links {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(254, 255, 252, 0.85);
+}
+
+.rit-nav-links a {
+  transition: color 0.2s ease;
+}
+
+.rit-nav-links a:hover {
+  color: var(--rit-lime);
+}
+
+.rit-nav-dot {
+  color: rgba(254, 255, 252, 0.24);
+  font-size: 11px;
+  user-select: none;
+}
+
+.rit-nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Buttons matching BlackCat */
+.btn-dark-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  border-radius: 999px;
+  background: rgba(254, 255, 252, 0.04);
+  border: 1px solid rgba(254, 255, 252, 0.12);
+  color: var(--rit-white);
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 0.22s ease;
+}
+
+.btn-dark-pill:hover {
+  background: rgba(254, 255, 252, 0.09);
+  border-color: rgba(254, 255, 252, 0.24);
+  transform: translateY(-1px);
+}
+
+.btn-lime-glow {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px 9px 22px;
+  border-radius: 999px;
+  background: var(--rit-lime);
+  color: var(--rit-black);
+  font-size: 14.5px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  box-shadow: 0 0 36px rgba(208, 255, 0, 0.45), 0 4px 14px rgba(0, 0, 0, 0.4);
+  transition: all 0.22s ease;
+}
+
+.btn-lime-glow:hover {
+  transform: translateY(-2px) scale(1.01);
+  box-shadow: 0 0 48px rgba(208, 255, 0, 0.68), 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+
+.btn-lime-glow .btn-circle-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--rit-black);
+  color: var(--rit-lime);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.btn-dark-specialist {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 10px 9px 22px;
+  border-radius: 999px;
+  background: rgba(16, 16, 18, 0.88);
+  border: 1px solid rgba(254, 255, 252, 0.13);
+  color: var(--rit-white);
+  font-size: 14.5px;
+  font-weight: 600;
+  transition: all 0.22s ease;
+}
+
+.btn-dark-specialist:hover {
+  border-color: rgba(208, 255, 0, 0.4);
+  background: rgba(24, 24, 28, 0.95);
+  transform: translateY(-2px);
+}
+
+.btn-dark-specialist .btn-circle-lime {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--rit-lime);
+  color: var(--rit-black);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* ---------- 3. Hero Section ---------- */
+.rit-hero {
+  position: relative;
+  padding: 68px 0 40px;
+  overflow: hidden;
+}
+
+.rit-hero-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  position: relative;
+  z-index: 3;
+}
+
+.rit-hero-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 18px;
+  border-radius: 999px;
+  background: rgba(254, 255, 252, 0.03);
+  border: 1px solid rgba(254, 255, 252, 0.11);
+  color: rgba(254, 255, 252, 0.72);
+  font-size: 13.5px;
+  font-weight: 500;
+  margin-bottom: 26px;
+}
+
+.rit-hero-pill svg {
+  color: rgba(254, 255, 252, 0.75);
+}
+
+/* Radial gradient headline matching BlackCat */
+.rit-hero-title {
+  max-width: 900px;
+  font-size: clamp(38px, 5.2vw, 64px);
+  font-weight: 600;
+  line-height: 1.08;
+  letter-spacing: -0.035em;
+  margin-bottom: 22px;
+  background: radial-gradient(52% 80% at 50% 50%, #FEFFFC 38%, rgba(254, 255, 252, 0.36) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.rit-hero-sub {
+  max-width: 720px;
+  font-size: clamp(15.5px, 1.35vw, 17.5px);
+  line-height: 1.6;
+  color: var(--rit-text-muted);
+  margin-bottom: 34px;
+}
+
+.rit-hero-ctas {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 54px;
+}
+
+/* Hero Backdrop & Tablet Showcase */
+.rit-hero-stage {
+  position: relative;
+  width: 100%;
+  max-width: 1120px;
+  margin: 0 auto;
+  z-index: 2;
+}
+
+/* Dramatic ambient wings on left & right of the tablet frame (like BlackCat's glowing green eyes) */
+.rit-hero-wings {
+  position: absolute;
+  top: -90px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 1440px;
+  height: 540px;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(320px 210px at 14% 56%, rgba(208, 255, 0, 0.28), rgba(208, 255, 0, 0.05) 55%, transparent 75%),
+    radial-gradient(320px 210px at 86% 56%, rgba(208, 255, 0, 0.28), rgba(208, 255, 0, 0.05) 55%, transparent 75%),
+    radial-gradient(520px 280px at 50% 35%, rgba(129, 22, 224, 0.14), transparent 70%);
+  filter: blur(8px);
+}
+
+.rit-hero-wing-mark {
+  position: absolute;
+  top: 40px;
+  width: 340px;
+  height: 340px;
+  opacity: 0.11;
+  pointer-events: none;
+  filter: drop-shadow(0 0 40px rgba(208, 255, 0, 0.5));
+}
+
+.rit-hero-wing-mark.left {
+  left: -140px;
+  transform: rotate(-12deg) scaleX(-1);
+}
+
+.rit-hero-wing-mark.right {
+  right: -140px;
+  transform: rotate(12deg);
+}
+
+/* Interactive screen switcher pills above tablet */
+.rit-screen-tabs {
+  position: relative;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 999px;
+  background: rgba(16, 16, 18, 0.9);
+  border: 1px solid rgba(254, 255, 252, 0.1);
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.rit-screen-tab {
+  padding: 7px 15px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--rit-text-muted);
+  transition: all 0.2s ease;
+}
+
+.rit-screen-tab:hover {
+  color: var(--rit-white);
+}
+
+.rit-screen-tab.active {
+  background: var(--rit-lime);
+  color: var(--rit-black);
+  box-shadow: 0 0 18px rgba(208, 255, 0, 0.35);
+}
+
+/* Tablet Bezel Frame */
+.rit-tablet-bezel {
+  position: relative;
+  z-index: 3;
+  background: #141517;
+  border-radius: 26px;
+  padding: 12px;
+  border: 1px solid rgba(254, 255, 252, 0.14);
+  box-shadow:
+    0 30px 90px rgba(0, 0, 0, 0.85),
+    0 0 80px rgba(208, 255, 0, 0.08),
+    inset 0 1px 0 rgba(254, 255, 252, 0.18);
+}
+
+.rit-tablet-screen {
+  background: var(--rit-black);
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(254, 255, 252, 0.07);
+  position: relative;
+}
+
+.rit-tablet-screen img {
+  width: 100%;
+  height: auto;
+  display: block;
+  transition: opacity 0.25s ease;
+}
+
+/* Bottom fade over hero bottom */
+.rit-hero-fade {
+  height: 60px;
+  margin-top: -30px;
+  position: relative;
+  z-index: 4;
+  background: linear-gradient(to bottom, transparent, var(--rit-black));
+}
+
+/* ---------- 4. Marquee Strip (Integrações / Ecossistema) ---------- */
+.rit-marquee-section {
+  padding: 26px 0 64px;
+  overflow: hidden;
+}
+
+.rit-marquee-mask {
+  max-width: 960px;
+  margin: 0 auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  -webkit-mask-image: linear-gradient(to right, transparent, black 16%, black 84%, transparent);
+  mask-image: linear-gradient(to right, transparent, black 16%, black 84%, transparent);
+}
+
+.rit-marquee-track {
+  display: flex;
+  align-items: center;
+  gap: 44px;
+  width: max-content;
+  animation: ritMarquee 28s linear infinite;
+}
+
+.rit-marquee-track.reverse {
+  animation-direction: reverse;
+  animation-duration: 32s;
+}
+
+.rit-marquee-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: rgba(254, 255, 252, 0.42);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  transition: color 0.2s ease;
+}
+
+.rit-marquee-item:hover {
+  color: rgba(254, 255, 252, 0.82);
+}
+
+.rit-marquee-item svg {
+  color: rgba(208, 255, 0, 0.65);
+}
+
+@keyframes ritMarquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+/* ---------- Shared Section Pill Badges (Double Pill Pattern from BlackCat) ---------- */
+.rit-section-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 18px;
+}
+
+.rit-tag-icon {
+  height: 30px;
+  padding: 0 13px;
+  border-radius: 999px;
+  background: rgba(208, 255, 0, 0.1);
+  border: 1px solid rgba(208, 255, 0, 0.35);
+  color: var(--rit-lime);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rit-tag-label {
+  height: 30px;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: rgba(254, 255, 252, 0.03);
+  border: 1px solid rgba(254, 255, 252, 0.11);
+  color: rgba(254, 255, 252, 0.78);
+  font-size: 12.5px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Light theme version of double pill */
+.rit-light-section .rit-tag-icon {
+  background: rgba(208, 255, 0, 0.28);
+  border-color: rgba(8, 8, 8, 0.15);
+  color: var(--rit-black);
+}
+
+.rit-light-section .rit-tag-label {
+  background: rgba(8, 8, 8, 0.04);
+  border-color: rgba(8, 8, 8, 0.12);
+  color: rgba(8, 8, 8, 0.75);
+}
+
+/* ---------- 5. Section: Acompanhamento Contínuo (Suporte) ---------- */
+.rit-support-section {
+  padding: 72px 0 84px;
+  position: relative;
+}
+
+.rit-support-header {
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  gap: 48px;
+  align-items: end;
+  margin-bottom: 48px;
+}
+
+.rit-grad-h2 {
+  font-size: clamp(30px, 3.6vw, 46px);
+  font-weight: 600;
+  line-height: 1.12;
+  letter-spacing: -0.03em;
+  background: radial-gradient(60% 90% at 55% 50%, #FEFFFC 45%, rgba(254, 255, 252, 0.38) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.rit-support-desc {
+  color: var(--rit-text-muted);
+  font-size: 15.5px;
+  line-height: 1.65;
+}
+
+.rit-support-grid {
+  display: grid;
+  grid-template-columns: 1.25fr 0.95fr;
+  gap: 22px;
+}
+
+.rit-bento-dark {
+  background: linear-gradient(180deg, #101112 0%, #0b0c0d 100%);
+  border: 1px solid rgba(254, 255, 252, 0.08);
+  border-radius: 22px;
+  padding: 36px;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 450px;
+}
+
+/* Left Support Card: Radial Dot Matrix + Glowing R Emblem + Floating Avatars/Screens */
+.rit-orbit-visual {
+  position: relative;
+  height: 250px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  background-image: radial-gradient(rgba(208, 255, 0, 0.16) 1.5px, transparent 1.5px);
+  background-size: 20px 20px;
+  -webkit-mask-image: radial-gradient(circle at 50% 35%, black 30%, transparent 75%);
+  mask-image: radial-gradient(circle at 50% 35%, black 30%, transparent 75%);
+}
+
+.rit-orbit-hub {
+  width: 156px;
+  height: 156px;
+  border-radius: 50%;
+  background: var(--rit-lime);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: -28px;
+  box-shadow: 0 0 70px rgba(208, 255, 0, 0.55);
+}
+
+.rit-orbit-hub img {
+  width: 82px;
+  height: auto;
+  filter: brightness(0);
+}
+
+.rit-orbit-node {
+  position: absolute;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 2px solid rgba(208, 255, 0, 0.45);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.65);
+  background: #141517;
+}
+
+.rit-orbit-node img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+}
+
+.rit-orbit-node.n1 { width: 76px; height: 76px; top: 8px; left: 14%; }
+.rit-orbit-node.n2 { width: 70px; height: 70px; top: 14px; right: 14%; }
+.rit-orbit-node.n3 { width: 68px; height: 68px; bottom: 18px; left: 26%; }
+.rit-orbit-node.n4 { width: 78px; height: 78px; bottom: 14px; right: 20%; }
+.rit-orbit-node.n5 {
+  width: 44px;
+  height: 44px;
+  top: 108px;
+  left: 18%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  background: #080808;
+}
+
+.rit-channel-pills {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 14px 0 18px;
+}
+
+.rit-channel-pill {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: rgba(254, 255, 252, 0.04);
+  border: 1px solid rgba(254, 255, 252, 0.09);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(254, 255, 252, 0.72);
+}
+
+.rit-bento-foot {
+  text-align: center;
+}
+
+.rit-bento-foot h3 {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  margin-bottom: 8px;
+  color: var(--rit-white);
+}
+
+.rit-bento-foot p {
+  font-size: 14.5px;
+  color: var(--rit-text-muted);
+  max-width: 360px;
+  margin: 0 auto;
+}
+
+/* Right Support Card: Lightning Hub + Stacked Live Alerts */
+.rit-pulse-stack {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 6px;
+}
+
+.rit-pulse-bolt {
+  width: 74px;
+  height: 74px;
+  border-radius: 50%;
+  background: var(--rit-lime);
+  color: var(--rit-black);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 46px rgba(208, 255, 0, 0.45);
+  margin-bottom: 18px;
+  position: relative;
+}
+
+.rit-pulse-bolt-sub {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--rit-black);
+  border: 1px solid rgba(208, 255, 0, 0.4);
+  color: var(--rit-lime);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rit-alert-rows {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rit-alert-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 14px;
+  border-radius: 14px;
+  background: rgba(20, 22, 20, 0.9);
+  border: 1px solid rgba(208, 255, 0, 0.24);
+}
+
+.rit-alert-row.dim-1 {
+  opacity: 0.58;
+  border-color: rgba(254, 255, 252, 0.08);
+  transform: scale(0.97);
+}
+
+.rit-alert-row.dim-2 {
+  opacity: 0.28;
+  border-color: rgba(254, 255, 252, 0.05);
+  transform: scale(0.94);
+}
+
+.rit-alert-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+}
+
+.rit-alert-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: rgba(208, 255, 0, 0.18);
+  border: 1px solid var(--rit-lime);
+  color: var(--rit-lime);
+  font-weight: 700;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rit-alert-meta b {
+  display: block;
+  font-size: 13px;
+  color: var(--rit-white);
+}
+
+.rit-alert-meta span {
+  display: block;
+  font-size: 11px;
+  color: var(--rit-text-muted);
+}
+
+.rit-alert-btn {
+  padding: 5px 14px;
+  border-radius: 999px;
+  background: var(--rit-lime);
+  color: var(--rit-black);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+/* ---------- 6. Section: Benefícios / Soluções (001, 002, 003 + CTA) ---------- */
+.rit-solutions-section {
+  padding: 56px 0 110px;
+}
+
+.rit-solutions-layout {
+  display: grid;
+  grid-template-columns: 0.85fr 1.45fr;
+  gap: 44px;
+  align-items: start;
+}
+
+.rit-solutions-sticky {
+  position: sticky;
+  top: 110px;
+}
+
+.rit-solutions-cards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 22px;
+}
+
+.rit-sol-card {
+  background:
+    radial-gradient(240px 180px at 90% 95%, rgba(208, 255, 0, 0.14), transparent 75%),
+    linear-gradient(180deg, #101113 0%, #0b0c0d 100%);
+  border: 1px solid rgba(254, 255, 252, 0.09);
+  border-radius: 20px;
+  padding: 30px 28px 26px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 310px;
+  transition: transform 0.25s ease, border-color 0.25s ease;
+}
+
+.rit-sol-card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(208, 255, 0, 0.35);
+}
+
+/* Subtle 4 corner dots like BlackCat */
+.rit-corner-dots::before,
+.rit-corner-dots::after {
+  content: '';
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  height: 4px;
+  background-image:
+    radial-gradient(circle, rgba(254, 255, 252, 0.22) 1.5px, transparent 1.5px),
+    radial-gradient(circle, rgba(254, 255, 252, 0.22) 1.5px, transparent 1.5px);
+  background-position: left center, right center;
+  background-repeat: no-repeat;
+  pointer-events: none;
+}
+
+.rit-corner-dots::before { top: 14px; }
+.rit-corner-dots::after { bottom: 14px; }
+
+.rit-sol-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.rit-sol-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(8, 8, 8, 0.9);
+  border: 1px solid rgba(254, 255, 252, 0.08);
+  color: var(--rit-lime);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: inset 0 0 16px rgba(208, 255, 0, 0.08);
+}
+
+.rit-sol-head h3 {
+  font-size: 17.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.015em;
+  color: var(--rit-white);
+}
+
+.rit-sol-body {
+  font-size: 13.8px;
+  line-height: 1.62;
+  color: var(--rit-text-muted);
+  margin-bottom: 24px;
+}
+
+.rit-sol-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 8px;
+}
+
+.rit-num-pill {
+  padding: 5px 14px;
+  border-radius: 999px;
+  background: rgba(254, 255, 252, 0.04);
+  border: 1px solid rgba(254, 255, 252, 0.1);
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(254, 255, 252, 0.72);
+}
+
+.rit-sol-arrow {
+  color: var(--rit-lime);
+  display: inline-flex;
+  align-items: center;
+  transition: transform 0.2s ease;
+}
+
+.rit-sol-card:hover .rit-sol-arrow {
+  transform: translateX(4px);
+}
+
+.rit-sol-cta-slot {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding: 24px;
+}
+
+/* ---------- 7. Light Contrast Section (QR Code + Segment Plans + Why Choose Bento) ---------- */
+.rit-light-section {
+  background: var(--rit-light-bg);
+  color: var(--rit-black);
+  padding: 96px 0 110px;
+  position: relative;
+}
+
+/* 7A: QR Code & Mobile App Showcase */
+.rit-qr-showcase {
+  display: grid;
+  grid-template-columns: 0.95fr 1.05fr;
+  gap: 54px;
+  align-items: center;
+  margin-bottom: 110px;
+}
+
+.rit-light-h2 {
+  font-size: clamp(32px, 4vw, 50px);
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.035em;
+  margin-bottom: 20px;
+  background: linear-gradient(95deg, rgba(8, 8, 8, 0.45) 0%, #080808 48%, #080808 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.rit-light-sub {
+  font-size: 16.5px;
+  line-height: 1.6;
+  color: #5a5b60;
+  max-width: 470px;
+  margin-bottom: 28px;
+}
+
+.rit-black-callout {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 15px 24px;
+  border-radius: 999px;
+  background: var(--rit-black);
+  color: var(--rit-white);
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: 0 14px 32px rgba(8, 8, 8, 0.16);
+}
+
+.rit-black-callout svg {
+  color: var(--rit-lime);
+  flex-shrink: 0;
+}
+
+/* Right stage with #D0FF00 lime card and real iPhone mockup */
+.rit-qr-stage {
+  position: relative;
+  border-radius: 28px;
+  background: linear-gradient(180deg, var(--rit-lime) 0%, rgba(208, 255, 0, 0.25) 85%, transparent 100%);
+  padding: 36px 36px 0;
+  min-height: 440px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 20px;
+  overflow: hidden;
+}
+
+.rit-phone-frame {
+  width: min(268px, 100%);
+  max-width: 100%;
+  background: #080808;
+  border-radius: 38px 38px 0 0;
+  padding: 11px 11px 0;
+  border: 3px solid #2c2d30;
+  border-bottom: none;
+  box-shadow: 0 24px 60px rgba(8, 8, 8, 0.35);
+  position: relative;
+  z-index: 2;
+}
+
+.rit-phone-frame.secondary {
+  width: 228px;
+  margin-bottom: -14px;
+  opacity: 0.96;
+  z-index: 1;
+}
+
+.rit-phone-notch {
+  width: 82px;
+  height: 18px;
+  background: #080808;
+  border-radius: 999px;
+  margin: 4px auto 8px;
+}
+
+.rit-phone-screen {
+  border-radius: 26px 26px 0 0;
+  overflow: hidden;
+  background: #080808;
+}
+
+.rit-phone-screen img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* 7B: 3-Column Segment / Plan Structure (matching Taxas layout in BlackCat) */
+.rit-plans-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.15fr 1fr;
+  gap: 24px;
+  align-items: stretch;
+  margin-bottom: 110px;
+}
+
+.rit-plan-dark-card {
+  background: var(--rit-black);
+  color: var(--rit-white);
+  border-radius: 22px;
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  box-shadow: 0 20px 50px rgba(8, 8, 8, 0.14);
+}
+
+.rit-plan-pill-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #161719 0%, #1d1f22 100%);
+  border: 1px solid rgba(254, 255, 252, 0.08);
+  margin-bottom: 14px;
+}
+
+.rit-plan-pill-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #080808;
+  color: var(--rit-lime);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.rit-plan-pill-head h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--rit-white);
+}
+
+.rit-plan-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.rit-plan-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 8px;
+  border-bottom: 1px solid rgba(254, 255, 252, 0.08);
+  font-size: 15.5px;
+  font-weight: 600;
+}
+
+.rit-plan-row:last-child {
+  border-bottom: none;
+}
+
+.rit-plan-row span.sub {
+  font-weight: 400;
+  font-size: 13px;
+  color: var(--rit-text-muted);
+  margin-left: 6px;
+}
+
+.rit-plan-row svg {
+  color: var(--rit-lime);
+  flex-shrink: 0;
+}
+
+.rit-plan-center-col {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  text-align: center;
+  gap: 20px;
+}
+
+.rit-plan-center-text {
+  padding: 8px 12px 0;
+}
+
+.rit-plan-center-text h3 {
+  font-size: 27px;
+  font-weight: 600;
+  line-height: 1.18;
+  letter-spacing: -0.025em;
+  color: var(--rit-black);
+  margin-bottom: 10px;
+}
+
+.rit-plan-center-text h3 span {
+  color: #72737a;
+}
+
+.rit-plan-center-text p {
+  font-size: 14.5px;
+  color: #64656b;
+  line-height: 1.55;
+}
+
+.rit-plan-lime-box {
+  background: var(--rit-lime);
+  border-radius: 22px;
+  padding: 18px;
+  display: grid;
+  grid-template-columns: 124px minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+  text-align: left;
+  box-shadow: 0 18px 40px rgba(208, 255, 0, 0.32);
+}
+
+.rit-plan-lime-box > * {
+  min-width: 0;
+}
+
+.rit-plan-lime-thumb {
+  width: 124px;
+  height: 112px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--rit-black);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+}
+
+.rit-plan-lime-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.rit-plan-lime-content h4 {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.32;
+  color: var(--rit-black);
   margin-bottom: 12px;
 }
-.lead {
-  color: var(--fg-2);
-  font-size: clamp(17px, 2.1vw, 21px);
-  line-height: 1.5;
-  letter-spacing: -.015em;
-  max-width: 44ch;
-  margin-top: 18px;
+
+.btn-white-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 16px;
+  border-radius: 999px;
+  background: var(--rit-white);
+  color: var(--rit-black);
+  font-size: 13px;
+  font-weight: 700;
+  transition: transform 0.2s ease;
 }
 
-/* ------------------------------------------------------------------ buttons */
-
-.btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  min-height: 46px; padding: 12px 24px; border-radius: 999px;
-  background: var(--acc); color: var(--acc-ink);
-  font-size: 16px; font-weight: 600; letter-spacing: -.01em;
-  border: 1px solid transparent;
-  transition: transform .25s var(--ease), background-color .25s var(--ease),
-              border-color .25s var(--ease);
+.btn-white-pill:hover {
+  transform: translateY(-2px);
 }
-.btn:hover { text-decoration: none; background: #4ade63; }
-.btn:active { transform: scale(.975); }
-.btn.ghost { background: transparent; color: var(--fg); border-color: var(--hair); }
-.btn.ghost:hover { background: rgba(255, 255, 255, .07); border-color: rgba(255, 255, 255, .22); }
-.btn .ct {
-  font-variant-numeric: tabular-nums; font-weight: 500;
-  padding: 1px 8px; border-radius: 999px; font-size: 13.5px;
-  background: rgba(0, 0, 0, .16);
-}
-.btn.ghost .ct { background: rgba(255, 255, 255, .09); }
 
-/* Text link with a chevron — the quieter half of a button pair. */
-.link {
-  display: inline-flex; align-items: center; gap: 5px;
-  font-size: 16.5px; font-weight: 500; color: var(--acc);
-  min-height: 46px;
+.btn-white-pill .btn-circle-dark {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--rit-black);
+  color: var(--rit-lime);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
-.link:hover { text-decoration: none; }
-.link::after {
-  content: ""; width: 6px; height: 6px; margin-top: -1px;
-  border-right: 1.8px solid currentColor; border-bottom: 1.8px solid currentColor;
-  transform: rotate(-45deg);
-  transition: transform .25s var(--ease);
+
+/* 7C: Por que escolher a Rit? (6-Card Bento Grid) */
+.rit-why-header {
+  max-width: 720px;
+  margin-bottom: 44px;
 }
-.link:hover::after { transform: rotate(-45deg) translate(2px, 2px); }
 
-.actions { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; }
-
-/* ----------------------------------------------------------------- nav bar */
-
-/* The bar is the one fixed point of the site: the same links in the same order on
-   every page, and nothing ever slides out of it. It therefore outranks the
-   navigation sheet, the contents drawer and their scrim — none of them may cover
-   it, so a reader always knows where they are and how to get out. */
-nav {
-  position: sticky; top: 0; z-index: 90;
-  background: rgba(0, 0, 0, .68);
-  backdrop-filter: saturate(180%) blur(20px);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
-  border-bottom: 1px solid var(--hair-soft);
+.rit-bento-row-1 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  margin-bottom: 20px;
 }
-.nav-in { display: flex; align-items: center; height: 54px; gap: 16px; }
-.brand {
-  display: flex; align-items: center; gap: 9px;
-  align-self: stretch;                 /* the whole bar height is the tap target */
-  font-size: 17px; font-weight: 600; letter-spacing: -.02em; color: var(--fg);
-  margin-right: auto;
-}
-.brand:hover { text-decoration: none; }
-.brand img { width: 24px; height: 24px; border-radius: 6px; }
 
-/* One header, everywhere. Every page carries this identical set of links in this
-   identical order; which page you are on is marked at runtime with aria-current,
-   never by adding or dropping links. Below 1000px they fold into the navigation
-   sheet — the same links again, nothing lost. */
-.nav-quick { display: flex; align-items: center; gap: 20px; }
-.nav-quick .ql {
-  color: var(--fg-2); font-size: 14px; font-weight: 400; letter-spacing: 0;
-  transition: color .2s var(--ease);
+.rit-bento-row-2 {
+  display: grid;
+  grid-template-columns: 1fr 0.92fr 1fr;
+  gap: 20px;
+  margin-bottom: 20px;
 }
-.nav-quick .ql:hover { color: var(--fg); text-decoration: none; }
-.nav-quick .ql [data-gh], .nav-quick .ql [data-dc] { font-variant-numeric: tabular-nums; color: var(--fg-3); }
-.nav-quick .ql:hover [data-gh], .nav-quick .ql:hover [data-dc] { color: var(--fg-2); }
-.nav-quick .cta {
-  color: var(--acc-ink); background: var(--acc); font-weight: 600; font-size: 14px;
-  padding: 7px 15px; border-radius: 999px;
+
+.rit-bento-center-stack {
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  gap: 20px;
 }
-.nav-quick .cta:hover { background: #4ade63; text-decoration: none; }
-.nav-quick .ql[aria-current="page"] { color: var(--fg); }
 
-/* The one link up here that asks for something instead of offering it — but it
-   looks like every other link in the bar: same grey, no pill, just the cup in
-   front of the words. The only button up here is and stays the download. */
-.nav-quick .coffee { display: inline-flex; align-items: center; gap: 7px; }
-.nav-quick .coffee svg { width: 15px; height: 15px; fill: currentColor; flex: none; }
+.rit-bento-row-3 {
+  display: flex;
+  justify-content: center;
+}
 
-.nav-toggle {
-  display: none;
+.rit-bento-row-3 .rit-why-card {
+  width: 100%;
+  max-width: 610px;
+}
+
+.rit-why-card {
+  background: var(--rit-black);
+  color: var(--rit-white);
+  border-radius: 22px;
+  padding: 30px;
   position: relative;
-  width: 44px; height: 44px; margin-right: -11px;
-  align-items: center; justify-content: center;
-  border-radius: 10px; cursor: pointer;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 330px;
+  box-shadow: 0 20px 48px rgba(8, 8, 8, 0.12);
 }
 
-/* One breakpoint for the whole header: above it the links are in the bar, below it
-   they are in the sheet. No page has a second answer. Placed after .nav-toggle's
-   own rule — same specificity, so the later one has to be the one that wins. */
-@media (max-width: 999.98px) {
-  .nav-quick .ql { display: none; }
-  .nav-toggle { display: flex; }
-
-  /* …except the coffee, which stays in the bar as its cup alone, on the right
-     beside the download — same grey as everything else up here. It is in the
-     sheet as well, spelled out; two ways to the same page is fine for this one. */
-  .nav-quick .coffee { display: inline-flex; padding: 9px; margin: -9px -5px; }
-  .nav-quick .coffee span { display: none; }
-  .nav-quick .coffee svg { width: 21px; height: 21px; }
-}
-.nav-toggle span {
-  position: absolute; width: 18px; height: 1.5px; border-radius: 2px; background: var(--fg);
-  transition: transform .3s var(--ease);
-}
-.nav-toggle span:first-child { transform: translateY(-3.5px); }
-.nav-toggle span:last-child { transform: translateY(3.5px); }
-.nav-toggle[aria-expanded="true"] span:first-child { transform: rotate(45deg); }
-.nav-toggle[aria-expanded="true"] span:last-child { transform: rotate(-45deg); }
-
-/* ------------------------------------------------------- navigation sheet
-   The header's links, for the widths where the bar shows only the brand and the
-   download. Same links, same order — the sheet is the bar, folded. It drops from
-   under the bar, and the hamburger it came from turns into the ✕ that closes it. */
-
-.navsheet {
-  position: fixed; left: 0; right: 0; top: 54px; z-index: 80;
-  padding: 12px var(--pad) calc(20px + env(safe-area-inset-bottom));
-  background: #000;
-  border-bottom: 1px solid var(--hair-soft);
-  box-shadow: 0 30px 60px rgba(0, 0, 0, .8);
-  max-height: calc(100dvh - 54px); overflow-y: auto; overscroll-behavior: contain;
-  transform: translateY(-8px); opacity: 0; visibility: hidden; pointer-events: none;
-  /* visibility is switched at one instant, never interpolated: transitioning it
-     leaves the panel hidden through its own opening animation — it would pop in
-     at the end, and nothing inside it could take focus until then. Zero delay on
-     the way in, the full duration on the way out. */
-  transition: opacity .28s var(--ease), transform .28s var(--ease), visibility 0s linear .28s;
-}
-body.menu-open .navsheet {
-  transform: none; opacity: 1; visibility: visible; pointer-events: auto;
-  transition: opacity .28s var(--ease), transform .28s var(--ease), visibility 0s;
-}
-@media (min-width: 1000px) { .navsheet { display: none; } }
-
-/* A row per link, comfortably past the 44px touch target. */
-.navsheet .nl {
-  display: flex; align-items: center; justify-content: space-between; gap: 16px;
-  min-height: 52px; padding: 0 12px; margin: 0 -12px; border-radius: 12px;
-  color: var(--fg); font-size: 17px; font-weight: 500; letter-spacing: -.02em;
-  border-bottom: 1px solid var(--hair-soft);
-  transition: background-color .2s var(--ease);
-}
-.navsheet .nl:last-of-type { border-bottom: 0; }
-.navsheet .nl:hover { text-decoration: none; background: rgba(255, 255, 255, .05); }
-.navsheet .nl[aria-current="page"] { color: var(--acc); }
-.navsheet .nl [data-gh], .navsheet .nl [data-dc] { color: var(--fg-3); font-size: 14px; font-variant-numeric: tabular-nums; }
-/* The cup sits where the star count and the member count sit: hard right, in the
-   same quiet grey — the row reads "Buy me a coffee ……… ☕". */
-.navsheet .coffee svg { width: 19px; height: 19px; fill: var(--fg-3); flex: none; }
-/* No second Download button in here: the bar keeps its own at every width, a
-   finger-width above, and two identical green calls to action is one too many. */
-
-/* -------------------------------------------------------- contents drawer
-   Every page that has one gets the same one: closed on load, at every width,
-   with no remembered state. The Contents pill opens it; the ✕ inside it, Escape,
-   or a tap on the dimmed page closes it. Nothing else opens or closes it. */
-
-.toc-btn {
-  position: fixed; z-index: 62;
-  left: max(16px, env(safe-area-inset-left));
-  bottom: max(16px, env(safe-area-inset-bottom));
-  display: inline-flex; align-items: center; gap: 9px;
-  min-height: 44px; padding: 0 19px 0 16px; border-radius: 999px; cursor: pointer;
-  /* Opaque enough to read against running text on its own, so the pill still works
-     where backdrop-filter does not. */
-  background: rgba(20, 21, 24, .94);
-  backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px);
-  border: 1px solid var(--hair);
-  color: var(--fg-2); font-size: 14px; font-weight: 500; letter-spacing: -.01em;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, .45);
-  transition: color .2s var(--ease), background-color .2s var(--ease),
-              border-color .2s var(--ease), opacity .2s var(--ease);
-}
-.toc-btn:hover { color: var(--fg); border-color: rgba(255, 255, 255, .25); background: rgba(32, 33, 37, .92); }
-.toc-btn svg { width: 16px; height: 16px; }
-/* The pill steps aside whenever a panel is up: with the drawer open the ✕ inside it
-   is the control, and under the navigation sheet it is just a shape behind glass. */
-body.contents-open .toc-btn, body.menu-open .toc-btn { opacity: 0; pointer-events: none; }
-
-.side {
-  position: fixed; left: 0; top: 54px; bottom: 0; z-index: 80;
-  width: min(340px, 88vw);
-  padding: 0 24px calc(30px + env(safe-area-inset-bottom)) calc(24px + env(safe-area-inset-left));
-  background: #0a0b0c;
-  border-right: 1px solid var(--hair-soft);
-  box-shadow: 40px 0 80px rgba(0, 0, 0, .5);
-  overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
-  transform: translateX(-102%); visibility: hidden;
-  /* Same one-instant switch as the sheet above, for the same two reasons. */
-  transition: transform .32s var(--ease), visibility 0s linear .32s;
-}
-body.contents-open .side {
-  transform: none; visibility: visible;
-  transition: transform .32s var(--ease), visibility 0s;
+.rit-why-card.glow-top {
+  background:
+    radial-gradient(280px 180px at 35% 0%, rgba(208, 255, 0, 0.24), transparent 72%),
+    var(--rit-black);
 }
 
-/* The close button rides along at the top of a long chapter list, so it is never
-   more than a glance away. */
-.side-top {
-  position: sticky; top: 0; z-index: 1;
-  display: flex; align-items: center; justify-content: space-between;
-  margin: 0 -24px 8px calc(-24px - env(safe-area-inset-left));
-  padding: 12px 14px 12px calc(24px + env(safe-area-inset-left));
-  background: #0a0b0c;
-  border-bottom: 1px solid var(--hair-soft);
+.rit-why-card.glow-right {
+  background:
+    radial-gradient(320px 260px at 85% 45%, rgba(208, 255, 0, 0.28), transparent 72%),
+    var(--rit-black);
 }
-.side-title { font-size: 15px; font-weight: 600; letter-spacing: -.02em; color: var(--fg); }
-.rail-close {
-  flex: none;
-  display: flex; align-items: center; justify-content: center;
-  width: 44px; height: 44px; margin: -6px -8px -6px 0;
-  border-radius: 11px; color: var(--fg-2); cursor: pointer;
-  transition: color .2s var(--ease), background-color .2s var(--ease);
-}
-.rail-close:hover { color: var(--fg); background: rgba(255, 255, 255, .07); }
-.rail-close svg { width: 17px; height: 17px; }
 
-/* Whatever the sheet or the drawer does not cover is dimmed, so the page behind
-   stops competing for attention and a tap out there reads as "close". It starts
-   below the bar: the header stays legible whatever is open. */
-body::after {
-  content: ""; position: fixed; inset: 54px 0 0; z-index: 70;
-  background: rgba(0, 0, 0, .55);
-  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
-  opacity: 0; pointer-events: none;
-  transition: opacity .3s var(--ease);
+.rit-why-card.lime-solid {
+  background: var(--rit-lime);
+  color: var(--rit-black);
+  text-align: center;
+  align-items: center;
+  justify-content: center;
+  min-height: 245px;
 }
-body.menu-open::after, body.contents-open::after { opacity: 1; pointer-events: auto; }
 
-/* The panels still open and close, they just stop travelling. The delay has to go
-   with the duration: it is what holds visibility back until a slide has finished,
-   and there is no slide left to wait for. */
-@media (prefers-reduced-motion: reduce) {
-  .side, .navsheet, .toc-btn, body::after {
-    transition-duration: .01ms !important;
-    transition-delay: 0s !important;
+.rit-why-card.lime-solid h3 {
+  color: var(--rit-black);
+}
+
+.rit-why-card.lime-solid p {
+  color: rgba(8, 8, 8, 0.72);
+}
+
+.rit-why-card h3 {
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin-bottom: 8px;
+  color: var(--rit-white);
+}
+
+.rit-why-card p {
+  font-size: 13.8px;
+  line-height: 1.55;
+  color: var(--rit-text-muted);
+  max-width: 340px;
+}
+
+/* Visual inside Card 1: Chat bubbles */
+.rit-chat-demo {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.rit-chat-msg {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.rit-chat-msg.right {
+  justify-content: flex-end;
+}
+
+.rit-chat-bubble {
+  padding: 12px 16px;
+  border-radius: 14px;
+  font-size: 13px;
+  line-height: 1.4;
+  max-width: 250px;
+}
+
+.rit-chat-bubble.light {
+  background: rgba(254, 255, 252, 0.88);
+  color: var(--rit-black);
+  font-weight: 500;
+}
+
+.rit-chat-bubble.dark {
+  background: #161816;
+  border: 1px solid rgba(208, 255, 0, 0.22);
+  color: var(--rit-white);
+}
+
+.rit-chat-bubble.dark b {
+  color: var(--rit-lime);
+}
+
+.rit-chat-av {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: #1d1f22;
+  border: 2px solid var(--rit-lime);
+  color: var(--rit-lime);
+  font-weight: 700;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Visual inside Card 2: Cropped real Portal screenshot */
+.rit-mini-portal {
+  position: absolute;
+  right: -28px;
+  bottom: -18px;
+  width: 62%;
+  border-radius: 16px 0 0 0;
+  border: 2px solid #25272a;
+  overflow: hidden;
+  box-shadow: -16px -10px 44px rgba(208, 255, 0, 0.22);
+}
+
+/* Visual inside Card 3: Check badge + stacked workout notifications */
+.rit-notif-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 22px;
+}
+
+.rit-check-orb {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(208, 255, 0, 0.25) 0%, #101210 70%);
+  border: 1px solid rgba(208, 255, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 18px;
+}
+
+.rit-check-orb-inner {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--rit-lime);
+  color: var(--rit-black);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rit-workout-toast {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(22, 24, 22, 0.95);
+  border: 1px solid rgba(254, 255, 252, 0.09);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: -8px;
+  position: relative;
+  z-index: 3;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.5);
+}
+
+.rit-workout-toast.t2 {
+  transform: scale(0.94) translateY(6px);
+  opacity: 0.65;
+  z-index: 2;
+}
+
+.rit-workout-toast.t3 {
+  transform: scale(0.88) translateY(12px);
+  opacity: 0.32;
+  z-index: 1;
+}
+
+.rit-toast-badge {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--rit-lime);
+  color: var(--rit-black);
+  font-weight: 800;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Visual inside Card 6: White-label & Student App showcase */
+.rit-why-tall-visual {
+  position: relative;
+  overflow: hidden;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 520px;
+  background: #0a0e0a;
+  border-radius: 28px;
+}
+
+.rit-why-tall-bg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+}
+
+.rit-why-tall-bg img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  filter: brightness(0.96) contrast(1.04);
+}
+
+.rit-why-tall-bg::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(8, 8, 8, 0.02) 0%, rgba(8, 8, 8, 0.25) 40%, rgba(8, 8, 8, 0.92) 85%);
+}
+
+.rit-why-circle-wrap {
+  position: absolute;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 250px;
+  height: 250px;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.rit-spinning-circle {
+  width: 100%;
+  height: 100%;
+  animation: ritRotateText 22s linear infinite;
+}
+
+@keyframes ritRotateText {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.rit-why-glass-box {
+  position: relative;
+  z-index: 3;
+  background: rgba(10, 14, 10, 0.88);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(208, 255, 0, 0.24);
+  border-radius: 22px;
+  padding: 24px;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.45);
+}
+
+.rit-why-glass-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: #FEFFFC;
+  color: #080808;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 14px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+}
+
+/* Visual inside Card 7 (Bottom Wide Card): Mobile preview on right */
+.rit-why-bottom-wide {
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  gap: 20px;
+  align-items: center;
+  min-height: 270px;
+}
+
+.rit-why-bottom-phone {
+  max-width: 210px;
+  margin: 0 auto -40px;
+  border-radius: 26px 26px 0 0;
+  overflow: hidden;
+  border: 2px solid #2b2d30;
+  box-shadow: 0 0 50px rgba(208, 255, 0, 0.25);
+}
+
+/* ---------- 8. Real System Interactive Gallery (Dark Mode) ---------- */
+.rit-gallery-section {
+  padding: 96px 0 40px;
+  background: var(--rit-black);
+}
+
+.rit-gallery-head {
+  text-align: center;
+  max-width: 720px;
+  margin: 0 auto 38px;
+}
+
+.rit-gallery-grid {
+  display: grid;
+  grid-template-columns: 1.35fr 0.65fr;
+  gap: 24px;
+  align-items: stretch;
+}
+
+.rit-gallery-desktop {
+  background: #101113;
+  border: 1px solid rgba(254, 255, 252, 0.09);
+  border-radius: 22px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.rit-gallery-desktop-frame {
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(254, 255, 252, 0.08);
+  margin-bottom: 16px;
+}
+
+.rit-gallery-desktop-frame img,
+.rit-gallery-mobile-frame img,
+.rit-tablet-screen img {
+  transition: opacity 0.18s ease-in-out;
+}
+
+.rit-gallery-mobile {
+  background:
+    radial-gradient(240px 240px at 50% 20%, rgba(129, 22, 224, 0.24), transparent 70%),
+    #101113;
+  border: 1px solid rgba(254, 255, 252, 0.09);
+  border-radius: 22px;
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.rit-gallery-mobile-frame {
+  width: 240px;
+  border-radius: 28px;
+  overflow: hidden;
+  border: 3px solid #282a2d;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.65);
+  margin-bottom: 14px;
+}
+
+.rit-gallery-caption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 12px;
+  padding: 4px 6px;
+}
+
+.rit-gallery-caption b {
+  font-size: 14.5px;
+  color: var(--rit-white);
+}
+
+.rit-gallery-caption span {
+  font-size: 12.5px;
+  color: var(--rit-text-muted);
+}
+
+/* ---------- 9. Testimonials Section (Depoimentos) ---------- */
+.rit-testimonials-section {
+  padding: 84px 0 80px;
+}
+
+.rit-testimonials-head {
+  text-align: center;
+  margin-bottom: 48px;
+}
+
+.rit-testimonials-head h2 {
+  font-size: clamp(28px, 3.5vw, 44px);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.rit-testi-top {
+  background: #0c0d0e;
+  border: 1px solid rgba(254, 255, 252, 0.07);
+  border-radius: 20px;
+  padding: 36px;
+  margin-bottom: 20px;
+}
+
+.rit-testi-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.rit-testi-card {
+  background: #0c0d0e;
+  border: 1px solid rgba(254, 255, 252, 0.07);
+  border-radius: 20px;
+  padding: 34px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 240px;
+}
+
+.rit-quote-mark {
+  font-size: 38px;
+  line-height: 1;
+  color: rgba(254, 255, 252, 0.24);
+  font-family: Georgia, serif;
+  margin-bottom: 12px;
+}
+
+.rit-testi-text {
+  font-size: 16px;
+  line-height: 1.6;
+  color: rgba(254, 255, 252, 0.88);
+  max-width: 580px;
+  margin-bottom: 28px;
+}
+
+.rit-testi-author {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.rit-testi-avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--rit-lime), var(--rit-purple));
+  color: var(--rit-black);
+  font-weight: 800;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rit-testi-author b {
+  display: block;
+  font-size: 14.5px;
+  color: var(--rit-white);
+}
+
+.rit-testi-author span {
+  display: block;
+  font-size: 12.5px;
+  color: var(--rit-text-muted);
+}
+
+/* ---------- 10. FAQ Section (Dúvidas Frequentes) ---------- */
+.rit-faq-section {
+  padding: 64px 0 110px;
+}
+
+.rit-faq-head {
+  margin-bottom: 42px;
+}
+
+.rit-faq-head h2 {
+  font-size: clamp(32px, 3.8vw, 48px);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  margin-bottom: 8px;
+}
+
+.rit-faq-head p {
+  color: var(--rit-text-muted);
+  font-size: 15.5px;
+}
+
+.rit-faq-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  align-items: start;
+}
+
+.rit-faq-item {
+  background: #0d0e0f;
+  border: 1px solid rgba(254, 255, 252, 0.07);
+  border-radius: 18px;
+  padding: 22px 26px;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.rit-faq-item:hover,
+.rit-faq-item.open {
+  border-color: rgba(208, 255, 0, 0.32);
+  background: #111312;
+}
+
+.rit-faq-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 14px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid rgba(254, 255, 252, 0.06);
+}
+
+.rit-faq-plus {
+  color: var(--rit-lime);
+  font-size: 22px;
+  font-weight: 400;
+  line-height: 1;
+  transition: transform 0.22s ease;
+}
+
+.rit-faq-item.open .rit-faq-plus {
+  transform: rotate(45deg);
+}
+
+.rit-faq-q {
+  font-size: 15.5px;
+  font-weight: 600;
+  color: var(--rit-white);
+  line-height: 1.4;
+}
+
+.rit-faq-a {
+  display: none;
+  margin-top: 12px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--rit-text-muted);
+}
+
+.rit-faq-item.open .rit-faq-a {
+  display: block;
+}
+
+/* ---------- 11. Footer ---------- */
+.rit-footer {
+  padding: 64px 0 112px;
+  border-top: 1px solid rgba(254, 255, 252, 0.06);
+  position: relative;
+  overflow: hidden;
+}
+
+.rit-footer::before {
+  content: '';
+  position: absolute;
+  bottom: -120px;
+  left: 38%;
+  width: 420px;
+  height: 220px;
+  background: radial-gradient(circle, rgba(208, 255, 0, 0.14), transparent 70%);
+  pointer-events: none;
+}
+
+.rit-footer-top {
+  display: grid;
+  grid-template-columns: 1.4fr 0.7fr 0.9fr 0.6fr;
+  gap: 40px;
+  padding-bottom: 54px;
+  border-bottom: 1px solid rgba(254, 255, 252, 0.08);
+}
+
+.rit-footer-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.rit-footer-brand img {
+  height: 32px;
+  width: auto;
+}
+
+.rit-footer-brand .dot {
+  color: var(--rit-lime);
+  font-weight: 800;
+}
+
+.rit-footer-brand span.tagline {
+  color: var(--rit-text-muted);
+  font-size: 14px;
+}
+
+.rit-footer-col h4 {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--rit-text-muted);
+  margin-bottom: 18px;
+}
+
+.rit-footer-col ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.rit-footer-col a {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--rit-white);
+  transition: color 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rit-footer-col a:hover {
+  color: var(--rit-lime);
+}
+
+.rit-footer-bottom {
+  padding-top: 32px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.rit-footer-legal b {
+  display: block;
+  font-size: 12.5px;
+  color: var(--rit-white);
+  margin-bottom: 4px;
+}
+
+.rit-footer-legal span {
+  display: block;
+  font-size: 12px;
+  color: var(--rit-text-dim);
+}
+
+.rit-footer-managers h5 {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 10px;
+  color: var(--rit-white);
+}
+
+.rit-manager-pills {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rit-manager-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 8px 7px 14px;
+  border-radius: 999px;
+  background: rgba(254, 255, 252, 0.03);
+  border: 1px solid rgba(254, 255, 252, 0.1);
+  font-size: 13px;
+  color: var(--rit-text-muted);
+}
+
+.rit-manager-pill span.badge {
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(208, 255, 0, 0.12);
+  border: 1px solid rgba(208, 255, 0, 0.35);
+  color: var(--rit-lime);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Floating WhatsApp Button */
+.rit-wa-float {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.rit-wa-bubble {
+  background: var(--rit-white) !important;
+  color: var(--rit-black) !important;
+  padding: 9px 16px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  display: inline-block;
+  text-decoration: none;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  cursor: pointer;
+}
+
+.rit-wa-bubble:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+}
+
+.rit-wa-btn {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--rit-lime);
+  color: var(--rit-black);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8px 28px rgba(208, 255, 0, 0.5);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.rit-wa-btn:hover {
+  transform: scale(1.07);
+  box-shadow: 0 10px 32px rgba(208, 255, 0, 0.65);
+}
+
+/* ---------- Responsive Design ---------- */
+@media (max-width: 1024px) {
+  .rit-support-header,
+  .rit-support-grid,
+  .rit-solutions-layout,
+  .rit-qr-showcase,
+  .rit-plans-grid,
+  .rit-bento-row-1,
+  .rit-bento-row-2,
+  .rit-gallery-grid,
+  .rit-testi-grid,
+  .rit-faq-grid,
+  .rit-footer-top {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rit-plan-center-col {
+    order: -1;
+    margin-bottom: 16px;
+  }
+
+  .rit-solutions-sticky {
+    position: static;
+  }
+
+  .rit-nav-links {
+    display: none;
+  }
+
+  .rit-hamburger-btn {
+    display: inline-flex;
+  }
+
+  .rit-mobile-drawer {
+    display: block;
   }
 }
 
-/* --------------------------------------------------------------- rail contents
-   One list per page — a title with a one-line subtitle per topic. */
-
-.side-label {
-  font-size: 11.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
-  color: var(--fg-3);
-  margin: 28px 0 8px;
-}
-.side-label:first-child { margin-top: 0; }
-.side-link {
-  display: flex; flex-direction: column; justify-content: center;
-  min-height: 44px;                    /* a chapter without a subtitle is still tappable */
-  padding: 8px 12px; margin: 0 -12px; border-radius: 10px;
-  color: var(--fg);
-  transition: background-color .2s var(--ease);
-}
-.side-link:hover { text-decoration: none; background: rgba(255, 255, 255, .05); }
-.side-link b { display: block; font-size: 14.5px; font-weight: 600; letter-spacing: -.015em; }
-.side-link span {
-  display: block; color: var(--fg-3); font-size: 12.5px; line-height: 1.4; margin-top: 2px;
-}
-/* Scrollspy: the section under the reader, and on the other pages the page itself. */
-.side-link.on, .side-link[aria-current="page"] { background: rgba(255, 255, 255, .045); }
-.side-link.on b, .side-link[aria-current="page"] b { color: var(--acc); }
-
-/* A wide sheet with one narrow column of links looks abandoned; two columns fill it. */
-@media (min-width: 640px) and (max-width: 999.98px) {
-  .navsheet .nl { border-bottom: 0; }
-  .navsheet .nl-rows { display: grid; grid-template-columns: 1fr 1fr; column-gap: 28px; }
-}
-
-/* --------------------------------------------------------------------- hero */
-
-.hero { padding: clamp(52px, 9vw, 96px) 0 0; text-align: center; overflow: hidden; }
-.hero .eyebrow { color: var(--fg-2); font-weight: 500; letter-spacing: -.01em; }
-.hero h1 { margin: 0 auto; max-width: 13ch; }
-.hero h1 span { display: block; color: var(--fg-3); }
-.hero .lead { margin: 22px auto 0; max-width: 50ch; text-wrap: balance; }
-.hero .actions { justify-content: center; margin-top: 30px; }
-
-/* The screenshot is cut off at the bottom and dissolved into the page, rather than
-   sitting in a box: it reads as the app continuing past the fold, and it keeps the
-   fold itself short enough that the first section is one flick away. */
-.hero-stage {
-  position: relative;
-  margin: clamp(34px, 6vw, 56px) auto 0;
-  width: min(300px, 68vw);
-}
-.hero-stage::before {
-  content: ""; position: absolute; inset: -12% -46% 14%;
-  background: radial-gradient(closest-side, rgba(50, 215, 75, .2), transparent 72%);
-  filter: blur(10px); pointer-events: none;
-}
-.hero-stage .device {
-  position: relative;
-  padding-bottom: 0; border-radius: 42px 42px 0 0;
-}
-.hero-stage .device > img, .hero-stage .device > picture > img {
-  height: clamp(300px, 44vh, 500px);
-  object-fit: cover; object-position: top center;
-  border-radius: 34px 34px 0 0;
-}
-.hero-fade {
-  position: relative; z-index: 2;
-  height: clamp(80px, 12vw, 130px);
-  margin-top: clamp(-130px, -12vw, -80px);
-  background: linear-gradient(180deg, transparent, var(--bg) 78%);
-}
-
-/* ------------------------------------------------------------ device frame */
-
-.device {
-  padding: 9px; border-radius: 42px;
-  background: linear-gradient(155deg, #34363b, #17181b 42%, #0a0b0c 100%);
-  box-shadow: 0 40px 90px -28px rgba(0, 0, 0, .95),
-              inset 0 0 0 1px rgba(255, 255, 255, .07);
-}
-.device > img, .device > picture > img, .device > iframe, .device > .device-slot {
-  width: 100%; border: 0; border-radius: 34px; background: #000; display: block;
-}
-
-/* --------------------------------------------------------------- sections */
-
-section { padding: var(--sec) 0 0; }
-.sec-head { max-width: 46ch; }
-.sec-head h2 { text-wrap: balance; }
-
-/* ------------------------------------------------------- feature bento grid */
-
-.bento {
-  display: grid; gap: 12px; margin-top: clamp(34px, 5vw, 52px);
-  grid-template-columns: repeat(6, 1fr);
-}
-.tile {
-  grid-column: span 2;
-  background: var(--surface);
-  border: 1px solid var(--hair-soft);
-  border-radius: var(--r-m);
-  padding: clamp(22px, 2.6vw, 30px);
-  transition: border-color .3s var(--ease), background-color .3s var(--ease);
-}
-.tile:hover { border-color: var(--hair); background: #121316; }
-.tile.wide { grid-column: span 3; }
-.tile.full { grid-column: span 6; }
-.tile .ic {
-  width: 40px; height: 40px; border-radius: 11px; margin-bottom: 16px;
-  display: flex; align-items: center; justify-content: center;
-  background: var(--acc-soft); color: var(--acc);
-}
-.tile .ic svg { width: 21px; height: 21px; }
-.tile h3 { margin-bottom: 7px; }
-.tile p { color: var(--fg-2); font-size: 15px; line-height: 1.5; }
-.tile p b { color: var(--fg); font-weight: 600; }
-
-/* The three muscle-map readings, inside the wide tile. */
-.trio { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 18px; }
-.trio div {
-  background: rgba(255, 255, 255, .035); border-radius: var(--r-s);
-  padding: 12px 13px; font-size: 13.5px; color: var(--fg-2); line-height: 1.4;
-}
-.trio b { display: block; color: var(--fg); font-size: 14.5px; font-weight: 600; margin-bottom: 3px; }
-
-@media (max-width: 900px) {
-  .bento { grid-template-columns: repeat(4, 1fr); }
-  .tile, .tile.wide { grid-column: span 2; }
-  .tile.full { grid-column: span 4; }
-}
-@media (max-width: 620px) {
-  .bento { grid-template-columns: 1fr; gap: 10px; }
-  .tile, .tile.wide, .tile.full { grid-column: auto; }
-  .trio { grid-template-columns: 1fr; gap: 8px; }
-}
-
-/* ------------------------------------------------ the rest, as a plain list */
-
-.more { margin-top: clamp(46px, 6vw, 70px); }
-.more > h3 {
-  font-size: 14px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
-  color: var(--fg-3); padding-bottom: 14px; border-bottom: 1px solid var(--hair-soft);
-}
-.more dl {
-  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: clamp(28px, 5vw, 68px);
-}
-.more dl > div { padding: 20px 0; border-bottom: 1px solid var(--hair-soft); }
-.more dt { font-size: 16.5px; font-weight: 600; letter-spacing: -.015em; margin-bottom: 5px; }
-.more dd { margin: 0; color: var(--fg-2); font-size: 14.5px; line-height: 1.5; }
-@media (max-width: 720px) { .more dl { grid-template-columns: 1fr; } }
-
-/* -------------------------------------------------------- screenshot rail */
-
-.bleed { margin-top: clamp(30px, 4.5vw, 46px); }
-.rail {
-  display: flex; gap: clamp(12px, 2.4vw, 22px);
-  overflow-x: auto; scroll-snap-type: x mandatory;
-  /* Line the first card up with the text above it: the gutter is half the leftover width
-     PLUS the wrap's own padding. Using 100% rather than 100vw keeps the scrollbar out of
-     the sum, which would otherwise push the rail a few pixels off. */
-  padding: 4px max(var(--pad), calc((100% - var(--max)) / 2 + var(--pad))) 6px;
-  scrollbar-width: none;
-  overscroll-behavior-x: contain;
-}
-.rail::-webkit-scrollbar { display: none; }
-.rail figure { flex: 0 0 auto; width: clamp(200px, 56vw, 250px); scroll-snap-align: center; }
-.rail .device { padding: 7px; border-radius: 34px; }
-.rail .device > img, .rail .device > picture > img { border-radius: 27px; }
-.rail figcaption {
-  color: var(--fg-3); font-size: 13.5px; text-align: center; margin-top: 12px;
-  letter-spacing: 0;
-}
-.rail-hint { color: var(--fg-3); font-size: 13.5px; margin-top: 14px; }
-
-/* ---------------------------------------------------------------- the demo */
-
-.demo-stage { display: flex; justify-content: center; margin-top: clamp(30px, 5vw, 46px); }
-.demo-stage .device { width: 392px; max-width: 100%; }
-.demo-stage .device-slot { height: min(720px, 74vh); }
-.demo-note { text-align: center; color: var(--fg-3); font-size: 14px; margin-top: 18px; }
-
-/* Below this width the framed iframe is a phone inside a phone: not worth the
-   megabytes. site.js only injects the iframe when the frame is actually shown. */
-.demo-card {
+/* ---------- Hamburger Button & Mobile Drawer (Default Hidden on Desktop) ---------- */
+.rit-hamburger-btn {
   display: none;
-  background: var(--surface); border: 1px solid var(--hair-soft);
-  border-radius: var(--r-m); padding: 26px 22px; text-align: center;
-  margin-top: 30px;
-}
-.demo-card p { color: var(--fg-2); font-size: 15px; margin-bottom: 20px; }
-.demo-card .btn { width: 100%; }
-@media (max-width: 700px) {
-  /* The note belongs to the framed demo; the card below repeats what it needs to say. */
-  .demo-stage, .demo-note { display: none; }
-  .demo-card { display: block; }
-}
-
-/* ------------------------------------------------------------ two flavours */
-
-.duo {
-  display: grid; gap: 12px; margin-top: clamp(34px, 5vw, 50px);
-  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
-}
-.card {
-  display: flex; flex-direction: column;
-  background: var(--surface); border: 1px solid var(--hair-soft);
-  border-radius: var(--r-l); padding: clamp(24px, 3.2vw, 34px);
-}
-.card.hl { border-color: rgba(50, 215, 75, .32); background: linear-gradient(180deg, rgba(50, 215, 75, .05), transparent 55%), var(--surface); }
-.card .ic { width: 38px; height: 38px; color: var(--acc); margin-bottom: 16px; }
-.card .ic svg { width: 100%; height: 100%; }
-.card h3 { font-size: clamp(21px, 2.6vw, 25px); }
-.card .for { color: var(--fg-3); font-size: 14.5px; margin: 6px 0 20px; }
-.card ul { list-style: none; padding: 0; margin: 0 0 24px; }
-.card li {
-  position: relative; padding: 7px 0 7px 27px;
-  font-size: 15px; color: var(--fg-2); line-height: 1.45;
-}
-.card li::before {
-  content: ""; position: absolute; left: 2px; top: 13px;
-  width: 10px; height: 5.5px; border-left: 1.8px solid var(--acc); border-bottom: 1.8px solid var(--acc);
-  transform: rotate(-45deg);
-}
-.card li.no::before {
-  border: 0; border-top: 1.6px solid var(--fg-3); width: 11px; height: 0;
-  transform: none; top: 16px;
-}
-.card .btn { width: 100%; }
-.card .meta { font-size: 13px; color: var(--fg-3); line-height: 1.5; margin-top: 14px; }
-.card .meta a { color: var(--fg-2); text-decoration: underline; text-underline-offset: 2px; }
-.card .meta + .meta { margin-top: 8px; }
-.card .push { margin-top: auto; }
-/* Two APKs side by side (Standard, HD); they stack on a narrow card. */
-.card .dl-row { display: grid; gap: 8px; grid-template-columns: repeat(3, 1fr); }
-.card .dl-row .btn { padding-left: 8px; padding-right: 8px; }
-.card ul.dl-sizes { margin: 14px 0 0; }
-.card ul.dl-sizes li { font-size: 13px; color: var(--fg-3); padding: 3px 0 3px 0; }
-.card ul.dl-sizes li::before { display: none; }
-.card ul.dl-sizes li b { color: var(--fg-2); }
-/* App Store toggle: data-appstore="soon" shows the waiting line, "live" shows the badge. */
-.ios[data-appstore="soon"] .ios-live, .ios[data-appstore="live"] .ios-soon { display: none; }
-.card .store-badge { display: inline-block; margin-top: 14px; line-height: 0; }
-.card .store-badge img { height: 50px; width: auto; }
-
-/* ---------------------------------------------------------------- the story */
-
-.story { max-width: 900px; }
-.story blockquote {
-  font-size: clamp(24px, 4vw, 40px); font-weight: 500;
-  line-height: 1.22; letter-spacing: -.03em; text-wrap: balance;
-  color: var(--fg-2);
-}
-.story blockquote b { color: var(--fg); font-weight: 500; }
-.story .who { color: var(--fg-3); font-size: 15px; margin-top: 26px; }
-.story .who a { color: var(--acc); display: inline-block; padding: 8px 0; }
-
-/* --------------------------------------------------------- open source rail */
-
-.specs {
-  margin-top: clamp(34px, 5vw, 48px);
-  border: 1px solid var(--hair-soft); border-radius: var(--r-m);
-  background: var(--surface); overflow: hidden;
-}
-.spec-head {
-  display: flex; align-items: center; gap: 10px;
-  padding: 15px clamp(18px, 2.4vw, 24px);
-  border-bottom: 1px solid var(--hair-soft);
-  font-size: 13.5px; color: var(--fg-2); letter-spacing: 0;
-}
-.spec-head .live {
-  display: inline-flex; align-items: center; gap: 7px;
-  margin-left: auto; color: var(--fg-3); font-size: 12.5px;
-}
-.spec-head .live::before {
-  content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--acc);
-  box-shadow: 0 0 0 3px var(--acc-soft);
-}
-/* The 1px gap is the divider: the panel background shows through between cells, so
-   the rules land correctly however many columns the grid resolves to. */
-.spec-cells {
-  display: grid; grid-template-columns: repeat(6, 1fr);
-  gap: 1px; background: var(--hair-soft);
-}
-.spec-cells > div {
-  background: var(--surface);
-  padding: clamp(18px, 2.4vw, 24px);
-}
-.spec-cells b {
-  display: block; font-size: clamp(26px, 3.4vw, 36px); font-weight: 600;
-  letter-spacing: -.035em; font-variant-numeric: tabular-nums; line-height: 1.1;
-}
-.spec-cells span { color: var(--fg-3); font-size: 13.5px; }
-/* Six across is too thin to read before the layout is wide; three, then two. */
-@media (max-width: 1000px) { .spec-cells { grid-template-columns: repeat(3, 1fr); } }
-@media (max-width: 620px) { .spec-cells { grid-template-columns: repeat(2, 1fr); } }
-
-/* ------------------------------------------------------------- the link quad
-   Four places openGym lives, as one block of four. Each pad is the whole link, so
-   the target is the card and not the words in it. */
-
-.quad {
-  display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;
-  margin-top: clamp(32px, 4.5vw, 46px);
-}
-.pad {
-  --brand: var(--acc);
-  display: flex; flex-direction: column;
-  padding: clamp(20px, 2.6vw, 28px);
-  background: var(--surface);
-  border: 1px solid var(--hair-soft); border-radius: var(--r-m);
-  color: var(--fg);
-  transition: border-color .3s var(--ease), background-color .3s var(--ease),
-              transform .3s var(--ease);
-}
-.pad:hover {
-  text-decoration: none; transform: translateY(-2px);
-  border-color: color-mix(in srgb, var(--brand) 55%, transparent);
-  background: color-mix(in srgb, var(--brand) 7%, var(--surface));
-}
-.pad:active { transform: none; }
-.pad-ic {
-  width: 44px; height: 44px; border-radius: 13px; margin-bottom: 16px;
-  display: flex; align-items: center; justify-content: center;
-  background: color-mix(in srgb, var(--brand) 16%, transparent);
-}
-.pad-ic svg { width: 22px; height: 22px; fill: var(--brand); }
-.pad.discord .pad-ic svg { width: 24px; height: 19px; }
-.pad-body { display: block; flex: 1 1 auto; }
-.pad-body b {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  font-size: clamp(17px, 2.1vw, 19px); font-weight: 600; letter-spacing: -.02em;
-  margin-bottom: 6px;
-}
-.pad-body > span { display: block; color: var(--fg-2); font-size: 14.5px; line-height: 1.5; }
-.pad-body > span + span { margin-top: 7px; }
-.pad-go {
-  display: inline-flex; align-items: center; gap: 6px;
-  margin-top: 18px; color: var(--brand);
-  font-size: 14.5px; font-weight: 500;
-}
-.pad-go::after {
-  content: ""; width: 5px; height: 5px;
-  border-right: 1.7px solid currentColor; border-bottom: 1.7px solid currentColor;
-  transform: rotate(-45deg); transition: transform .25s var(--ease);
-}
-.pad:hover .pad-go::after { transform: rotate(-45deg) translate(2px, 2px); }
-
-.pad.github  { --brand: var(--fg); }
-.pad.gitlab  { --brand: #fc6d26; }
-.pad.bmc     { --brand: #ffdd00; }
-.pad.discord { --brand: #5865f2; }
-.pad.dead .pad-go::after { display: none; }
-/* The support card holds two destinations, so it is a box with two links instead of one
-   big link; each link carries its own brand colour. */
-.pad-links { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 18px; }
-.pad-links .pad-go { margin-top: 0; }
-.pad-links .pad-go:hover { text-decoration: none; filter: brightness(1.15); }
-.pad-go.kofi { --brand: #ff5e5b; color: var(--brand); }
-.pad-go.kofi svg { width: 17px; height: 17px; fill: currentColor; }
-.pad-body .tag {
-  display: inline-block; padding: 2px 7px; border-radius: 6px;
-  background: rgba(255, 159, 10, .14); color: #ffb340;
-  border: 1px solid rgba(255, 159, 10, .28);
-  font-size: 11.5px; font-weight: 600; letter-spacing: .04em;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: var(--rit-white);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
 }
 
-@media (max-width: 560px) {
-  .quad { gap: 10px; }
-  .pad { padding: 18px; }
-  .pad-ic { width: 38px; height: 38px; border-radius: 11px; margin-bottom: 13px; }
-  .pad-ic svg { width: 19px; height: 19px; }
-  .pad.discord .pad-ic svg { width: 21px; height: 16px; }
-  .pad-body > span { font-size: 13px; }
-  /* Two cards to a row leaves ~160px of column: the second sentence would run to
-     seven lines. The identity and the destination survive; the detail does not. */
-  .pad .rest { display: none; }
-  .pad-go { font-size: 13px; margin-top: 14px; }
-  .pad-links { margin-top: 14px; }
-  .pad-links .pad-go { margin-top: 0; }
+.rit-hamburger-btn:hover,
+.rit-hamburger-btn.open {
+  border-color: var(--rit-lime);
+  color: var(--rit-lime);
+  background: rgba(208, 255, 0, 0.1);
 }
 
-/* ------------------------------------------------------------------ footer */
-
-footer {
-  border-top: 1px solid var(--hair-soft);
-  margin-top: var(--sec);
-  padding: 34px 0 calc(46px + env(safe-area-inset-bottom));
-}
-.foot { display: flex; flex-wrap: wrap; gap: 16px 26px; align-items: center; }
-.foot .c { color: var(--fg-3); font-size: 13.5px; }
-.foot .c a { color: var(--fg-2); }
-.foot .links { display: flex; flex-wrap: wrap; gap: 22px; margin-left: auto; }
-.foot .links a { color: var(--fg-2); font-size: 13.5px; }
-.foot .links a:hover { color: var(--fg); text-decoration: none; }
-@media (max-width: 600px) { .foot .links { margin-left: 0; } }
-
-/* ------------------------------------------------------------ prose pages */
-
-/* Keep .wrap's horizontal padding. The shorthand used to be `… 0 0`, which zeroed the
-   left and right the .wrap class had set, so on a phone the docs and about pages ran
-   edge to edge with nothing between the text and the screen. */
-.prose { max-width: 720px; padding: clamp(44px, 7vw, 72px) var(--pad) 0; }
-.prose h1 { font-size: clamp(36px, 6.5vw, 60px); }
-.prose > .lead { max-width: 42ch; margin-bottom: clamp(34px, 5vw, 48px); }
-.prose h2 {
-  font-size: clamp(24px, 3.4vw, 32px); margin: clamp(48px, 6vw, 68px) 0 14px;
-  scroll-margin-top: 76px;
-}
-.prose h3 { font-size: 18.5px; margin: 32px 0 8px; }
-.prose p, .prose li { color: #c9c9ce; font-size: 16.5px; line-height: 1.62; }
-.prose p { margin: 12px 0; }
-.prose ul, .prose ol { padding-left: 20px; margin: 14px 0; }
-.prose li { margin: 8px 0; }
-.prose li::marker { color: var(--fg-3); }
-.prose b { color: var(--fg); font-weight: 600; }
-.prose .who { color: var(--fg-3); margin-top: 26px; }
-
-.note {
-  background: var(--acc-soft); border: 1px solid rgba(50, 215, 75, .2);
-  border-radius: var(--r-s); padding: 15px 18px; margin: 20px 0;
-}
-.note p, .note { color: #cfe9d5; font-size: 15.5px; line-height: 1.55; }
-
-pre {
-  background: #0b0c0e; border: 1px solid var(--hair-soft); border-radius: var(--r-s);
-  padding: 18px; overflow-x: auto; margin: 18px 0;
-  font-size: 13.5px; line-height: 1.6; -webkit-overflow-scrolling: touch;
-}
-code { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; }
-p code, li code, td code {
-  background: var(--surface-2); border-radius: 6px; padding: 2px 6px;
-  font-size: .88em; color: #e4e4e8;
-  /* An env var or a URL in running text is one unbreakable word wider than a
-     320px phone; without this it pushes the whole page sideways. A <pre> block is
-     left alone — it scrolls inside its own box. */
-  overflow-wrap: anywhere;
-}
-
-.toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 24px 0 4px; }
-.toc a {
-  background: var(--surface); border: 1px solid var(--hair-soft);
-  border-radius: 999px; padding: 8px 15px; font-size: 14px; color: var(--fg-2);
-  transition: border-color .25s var(--ease), color .25s var(--ease);
-}
-.toc a:hover { color: var(--fg); border-color: var(--hair); text-decoration: none; }
-
-/* config table on the docs page */
-table.cfg { width: 100%; border-collapse: collapse; margin: 18px 0 24px; font-size: 15.5px; }
-table.cfg td { padding: 14px 14px 14px 0; border-top: 1px solid var(--hair-soft); vertical-align: top; color: #c9c9ce; }
-table.cfg tr:first-child td { border-top: 0; }
-table.cfg td:first-child { white-space: nowrap; width: 1%; padding-right: 26px; }
-@media (max-width: 640px) {
-  table.cfg td { display: block; border-top: 0; padding: 2px 0; }
-  table.cfg td:first-child {
-    white-space: normal; width: auto; padding: 16px 0 4px;
-    border-top: 1px solid var(--hair-soft);
-  }
-  table.cfg tr:first-child td:first-child { border-top: 0; padding-top: 0; }
-}
-
-/* ---------------------------------------------------------------- timeline */
-
-.tl { list-style: none; padding: 0; margin: 30px 0 0; position: relative; }
-.tl::before {
-  content: ""; position: absolute; left: 5px; top: 8px; bottom: 8px;
-  width: 1px; background: var(--hair);
-}
-.tl li { position: relative; padding: 0 0 30px 30px; }
-.tl li::before {
-  content: ""; position: absolute; left: 0; top: 7px; width: 11px; height: 11px;
-  border-radius: 50%; background: var(--bg); border: 2px solid var(--fg-3);
-}
-.tl li:last-child::before { border-color: var(--acc); }
-.tl b { display: block; font-size: 17px; letter-spacing: -.015em; color: var(--fg); }
-.tl .when { display: block; color: var(--fg-3); font-size: 13.5px; margin-top: 2px; }
-.tl p { margin-top: 6px; font-size: 15.5px; }
-
-/* ------------------------------------------------------------------ skip link
-   First tab stop on every page; invisible until focused. */
-.skip {
-  position: absolute; left: 16px; top: -100px; z-index: 100;
-  background: var(--acc); color: var(--acc-ink); padding: 10px 16px; border-radius: 999px;
-  font-weight: 700; text-decoration: none;
-}
-.skip:focus { top: 16px; outline: 2px solid var(--fg); outline-offset: 2px; }
-/* In-text links must not rely on colour alone (WCAG 1.4.1). */
-.demo-note a { text-decoration: underline; text-underline-offset: 3px; }
-
-/* ------------------------------------------------------------- scroll reveal
-   Only armed when JS is running, so the page is fully visible without it. */
-
-.js .rv {
-  opacity: 0; transform: translateY(16px);
-  transition: opacity .8s var(--ease), transform .8s var(--ease);
-}
-.js .rv.in { opacity: 1; transform: none; }
-@media (prefers-reduced-motion: reduce), print {
-  .js .rv { opacity: 1; transform: none; transition: none; }
-}
-
-
-/* ------------------------------------------------------- the "rest of it" rail
-   The long tail of features. It is a rail rather than a two-column list because
-   this is the "and also" section: worth having, not worth a screenful of reading.
-   Cards carry their full text in the markup, so a reader without JS gets
-   everything; with JS the text is clamped and the card opens a dialog. */
-
-.more-hint { color: var(--fg-2); font-size: 15px; margin-top: 12px; }
-
-.frail { align-items: stretch; padding-top: 10px; padding-bottom: 10px; }
-.more + .bleed, .bleed:has(.frail) { margin-top: clamp(18px, 2.4vw, 26px); }
-/* Not interactive: the card holds its whole text, so there is nothing to open. Only the
-   four cards that point into the docs carry a link, because that is the only place there is
-   genuinely more to read. */
-.fcard {
-  flex: 0 0 auto; width: clamp(250px, 78vw, 310px); scroll-snap-align: center;
-  display: flex; flex-direction: column; text-align: left;
-  padding: 22px; background: var(--surface);
-  border: 1px solid var(--hair-soft); border-radius: var(--r-m);
-  color: var(--fg);
-}
-.fcard-ic {
-  width: 40px; height: 40px; border-radius: 12px; margin-bottom: 15px;
-  display: flex; align-items: center; justify-content: center; flex: none;
-  background: color-mix(in srgb, var(--acc) 15%, transparent); color: var(--acc);
-}
-.fcard-ic svg { width: 21px; height: 21px; }
-.fcard-t { font-size: 16.5px; font-weight: 600; letter-spacing: -.015em; margin-bottom: 6px; }
-.fcard-b { color: var(--fg-2); font-size: 14.5px; line-height: 1.5; }
-.fcard-link {
-  display: block; margin-top: auto; padding-top: 16px;
-  color: var(--acc); font-size: 13.5px; font-weight: 500;
-}
-.fcard-link:hover { text-decoration: underline; }
-
-/* `display: flex` here beats the UA's `[hidden] { display: none }`, so the attribute has to
-   be honoured explicitly — otherwise the arrows show up without JS, where they do nothing. */
-.frail-nav { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
-.frail-nav[hidden] { display: none; }
-.rnav {
-  width: 38px; height: 38px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  background: var(--surface); border: 1px solid var(--hair-soft); color: var(--fg-2);
-  cursor: pointer; transition: color .25s var(--ease), border-color .25s var(--ease);
-}
-.rnav:hover { color: var(--fg); border-color: var(--hair); }
-.rnav:disabled { opacity: .3; cursor: default; }
-.rnav svg { width: 19px; height: 19px; }
-/* Touch scrolls; the arrows are for pointers that cannot swipe. */
-@media (hover: none) { .frail-nav { display: none; } }
-
-
-/* ------------------------------------------------------------ first-visit intro
-   The hero settles in on the first load of a visit instead of appearing all at once.
-   Deliberately the same movement as the scroll reveals below the fold (a short rise
-   and a fade) so it reads as one behaviour rather than an effect. Runs once per tab:
-   site.js sets .intro, and clears it after the last child has finished. */
-
-.js.intro .hero .eyebrow,
-.js.intro .hero h1,
-.js.intro .hero .lead,
-.js.intro .hero .actions,
-.js.intro .hero-stage {
-  opacity: 0;
-  animation: introUp .85s var(--ease) forwards;
-}
-.js.intro .hero .eyebrow { animation-delay: .04s; }
-.js.intro .hero h1       { animation-delay: .12s; }
-.js.intro .hero .lead    { animation-delay: .24s; }
-.js.intro .hero .actions { animation-delay: .34s; }
-.js.intro .hero-stage    { animation-delay: .42s; animation-duration: 1.05s; }
-@keyframes introUp {
-  from { opacity: 0; transform: translateY(18px); }
-  to   { opacity: 1; transform: none; }
-}
-/* The phone in the hero lifts a little further, so it arrives last and reads as depth. */
-.js.intro .hero-stage { animation-name: introRise; }
-@keyframes introRise {
-  from { opacity: 0; transform: translateY(34px) scale(.985); }
-  to   { opacity: 1; transform: none; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .js.intro .hero .eyebrow,
-  .js.intro .hero h1,
-  .js.intro .hero .lead,
-  .js.intro .hero .actions,
-  .js.intro .hero-stage { opacity: 1; animation: none; }
-}
-
-/* ------------------------------------------------------- rail: subchapters
-   Chapters are .side-link rows inside a .side-group; the group's subchapters sit
-   in .side-subs and unfold for the chapter being read (scrollspy) or on tap. */
-.side-group .side-subs {
+.rit-mobile-drawer {
   display: none;
-  margin: 2px 0 6px;
-}
-.side-group.open .side-subs { display: block; }
-.side-sub {
-  display: block; padding: 5px 12px 5px 24px; margin: 0 -12px; border-radius: 8px;
-  color: var(--fg-2); font-size: 13px; line-height: 1.4;
-  transition: color .2s var(--ease), background-color .2s var(--ease);
-}
-.side-sub:hover { text-decoration: none; color: var(--fg); background: rgba(255, 255, 255, .04); }
-.side-sub.on { color: var(--acc); }
-/* A subchapter is a tap target too, not just a line of text. */
-@media (pointer: coarse) { .side-sub { padding-top: 9px; padding-bottom: 9px; } }
-
-/* --------------------------------------------------------- a11y: link affordance
-   Links inside running text can't rely on color alone (WCAG 1.4.1 / Lighthouse
-   link-in-text-block): give them a quiet underline. Nav, cards and the rail keep
-   their color-only look — they are recognisable as controls by placement. */
-.prose p a, .prose li a, .prose td a, .foot .c a, .note a {
-  text-decoration: underline;
-  text-decoration-color: rgba(50, 215, 75, .45);
-  text-underline-offset: 2.5px;
-}
-.prose p a:hover, .prose li a:hover, .prose td a:hover, .foot .c a:hover, .note a:hover {
-  text-decoration-color: currentColor;
+  background: rgba(10, 14, 10, 0.98);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  border-bottom: 1px solid rgba(208, 255, 0, 0.22);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.75);
+  animation: ritSlideDown 0.2s ease-out;
 }
 
-/* ------------------------------------------------- contents: easier to find
-   The pill used to be grey on black in a corner, and on a computer people did not
-   see it at all. It now carries the accent colour, and on the two reference pages
-   (body.dock: docs, API) a wide screen gets the contents as a fixed column beside
-   the text instead of a drawer, so there is nothing to find. */
-.toc-btn {
-  color: var(--acc); font-weight: 600; font-size: 14.5px;
-  border-color: rgba(50, 215, 75, .45);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, .5), 0 0 0 4px rgba(50, 215, 75, .08);
-}
-.toc-btn:hover { color: var(--fg); border-color: var(--acc); background: rgba(32, 33, 37, .96); }
-
-@media (min-width: 1200px) {
-  body.dock { --rail-w: 270px; }
-  body.dock .side {
-    width: var(--rail-w);
-    transform: none; visibility: visible; transition: none;
-    box-shadow: none; background: #050506;
+@keyframes ritSlideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
   }
-  body.dock .side-top { position: static; }
-  body.dock .rail-close, body.dock .toc-btn { display: none; }
-  body.dock::after { content: none; }
-  /* Centre the text in what the rail leaves over, never under it. */
-  body.dock main.prose { margin-left: max(calc(var(--rail-w) + 24px), calc((100% - 720px) / 2)); margin-right: auto; }
-  body.dock main.api-main { margin-left: max(calc(var(--rail-w) + 24px), calc((100% - 880px) / 2)); margin-right: auto; }
-  body.dock .toc { display: none; }
-}
-@media (max-width: 1199px) {
-  /* Where the drawer is the only way in, keep the chip row that points into the page. */
-  .toc { display: flex; }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-/* App Store launch bar above the nav, and the badge under the hero buttons. */
-.announce { background: var(--acc-soft); border-bottom: 1px solid var(--hair-soft); text-align: center; }
-.announce a { display: block; padding: 9px var(--pad); color: var(--fg); font-size: 14px; line-height: 1.4; text-wrap: balance; }
-.announce a:hover { text-decoration: none; }
-.announce b { color: var(--acc); font-weight: 600; }
-.announce-go { color: var(--acc); font-weight: 600; white-space: nowrap; }
-.announce a:hover .announce-go { text-decoration: underline; }
-.hero-badge { display: inline-block; margin-top: 22px; }
-.hero-badge img { display: block; width: 150px; height: auto; }
-@media (max-width: 560px) { .announce-more { display: none; } }
+.rit-mobile-drawer-inner {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 20px 24px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.rit-mobile-nav-links {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rit-mobile-nav-links a {
+  padding: 13px 14px;
+  border-radius: 12px;
+  font-size: 15.5px;
+  font-weight: 600;
+  color: rgba(254, 255, 252, 0.9);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.rit-mobile-nav-links a:last-child {
+  border-bottom: none;
+}
+
+.rit-mobile-nav-links a:hover {
+  background: rgba(208, 255, 0, 0.08);
+  color: var(--rit-lime);
+}
+
+.rit-mobile-drawer-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.rit-mobile-drawer-actions .btn-dark-pill,
+.rit-mobile-drawer-actions .btn-lime-glow {
+  width: 100%;
+  justify-content: center;
+  padding: 13px 18px;
+  font-size: 14.5px;
+}
+
+.rit-mobile-btn-student {
+  border-color: rgba(208, 255, 0, 0.35) !important;
+  background: rgba(208, 255, 0, 0.07) !important;
+}
+
+@media (max-width: 768px) {
+  /* Horizontal carousel for screen switcher pills to prevent vertical stacking */
+  .rit-screen-tabs {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    max-width: calc(100vw - 32px);
+    justify-content: flex-start;
+    padding: 6px 12px;
+    border-radius: 999px;
+  }
+
+  .rit-screen-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .rit-screen-tab {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 680px) {
+  .rit-container {
+    padding: 0 16px;
+  }
+
+  .rit-topbar {
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+
+  .rit-topbar-inner {
+    gap: 8px;
+  }
+
+  .rit-topbar-dot {
+    display: none;
+  }
+
+  .rit-topbar-cta {
+    padding: 4px 11px;
+    font-size: 11.5px;
+    gap: 5px;
+  }
+
+  .rit-navbar {
+    padding: 12px 0;
+  }
+
+  .rit-navbar-inner {
+    gap: 10px;
+  }
+
+  .rit-brand img {
+    height: 26px;
+  }
+
+  .rit-nav-actions {
+    gap: 8px;
+  }
+
+  /* On mobile, hide top-bar buttons and put everything cleanly inside the Hamburger Drawer */
+  .rit-nav-actions .btn-student-nav,
+  .rit-nav-actions .btn-dark-pill,
+  .rit-nav-actions .btn-lime-glow {
+    display: none;
+  }
+
+  .rit-hamburger-btn {
+    display: inline-flex;
+    width: 40px;
+    height: 40px;
+  }
+
+  .rit-wa-float {
+    right: 16px;
+    bottom: 16px;
+  }
+
+  .rit-solutions-cards,
+  .rit-why-bottom-wide {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rit-qr-stage {
+    padding: 24px 16px 0;
+  }
+
+  .rit-phone-frame.secondary {
+    display: none;
+  }
+
+  .rit-mini-portal {
+    position: relative;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    margin-top: 18px;
+  }
+
+  /* Mobile GPU & Scroll Performance Optimizations */
+  .rit-support-section,
+  .rit-solutions-section,
+  .rit-light-section,
+  .rit-gallery-section,
+  .rit-testimonials-section,
+  .rit-faq-section,
+  .rit-footer {
+    content-visibility: auto;
+    contain-intrinsic-size: 1px 680px;
+  }
+
+  .rit-navbar,
+  .rit-mobile-drawer,
+  .rit-why-glass-box {
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+
+  .rit-hero-wings {
+    display: none;
+  }
+
+  .rit-marquee-track {
+    will-change: transform;
+  }
+}
+
+@media (max-width: 520px) {
+  .rit-plan-lime-box {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rit-plan-lime-thumb {
+    width: 100%;
+    height: 140px;
+  }
+}

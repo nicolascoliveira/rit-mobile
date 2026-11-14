@@ -1,15 +1,12 @@
-name: opengym
+name: rit
 
 services:
   # Passkey auth + per-user data (Node, no framework).
-  # image: prebuilt (docker compose pull). build: from source (docker compose up --build).
+  # Builds from local source (./api).
   api:
-    image: ghcr.io/duartesantos8/opengym-api:latest
     # Default target: no AI runtime, no AI dependency — the image every instance has always had.
     # To opt into the AI Coach, build the other target instead:
     #     API_TARGET=coach docker compose up --build api
-    # `--build` matters: with an `image:` also set, compose would otherwise pull the prebuilt
-    # default rather than build the coach one.
     build:
       context: ./api
       target: ${API_TARGET:-default}
@@ -24,9 +21,16 @@ services:
       # X-Forwarded-For / X-Real-IP with the real peer — so the sign-in throttle may count
       # requests by those headers instead of lumping everyone in as "the web container".
       - TRUST_PROXY=${TRUST_PROXY:-1}
+      - PORTAL_URL=${PORTAL_URL:-}
+      # WhatsApp Automation Gateway (Evolution API) defaults
+      - EVOLUTION_API_URL=${DOCKER_EVOLUTION_API_URL:-http://evolution-api:8080}
+      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY:-rit-secret-key}
+      - EVOLUTION_INSTANCE=${EVOLUTION_INSTANCE:-rit}
     volumes:
-      - ./data:/data         # users, passkeys, per-user state, session secret — BACK THIS UP
-                             # (and uploads/: the photos and videos of custom exercises)
+      - ./data:/data
+        # SQLite WAL database (rit.db), daily backups (backups/), passkey secret & media uploads — BACK THIS UP
+        # (and uploads/: the photos and videos of custom exercises)
+      - ./catalogue/i18n:/catalogue/i18n:ro
       # Provider credential cache (Codex). A sibling of ./data on purpose: the documented backup
       # is `tar czf … data/`, and a live refresh token must not end up inside it. Nothing here
       # needs backing up — if you lose it, sign the provider in again.
@@ -35,7 +39,6 @@ services:
   # Builds the React frontend (multi-stage) and serves it, proxying /api → api
   # and the exercise animations, which are part of the image. Single origin for passkeys.
   web:
-    image: ghcr.io/duartesantos8/opengym-web:latest
     build:
       context: .
       dockerfile: web/Dockerfile
@@ -65,3 +68,62 @@ services:
       # The largest photo or video upload nginx passes to the API. Keep it above
       # MEDIA_VIDEO_MAX_MB (40 by default), which the api service reads from .env.
       - MEDIA_UPLOAD_MAX=${MEDIA_UPLOAD_MAX:-48m}
+
+  # B2B Multi-Tenant Management Portal (Super Admin Panel + Gym Panel)
+  portal:
+    build:
+      context: .
+      dockerfile: portal/Dockerfile
+      args:
+        VITE_STUDENT_APP_URL: ${VITE_STUDENT_APP_URL:-}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    ports:
+      - "${PORTAL_PORT:-8081}:${NGINX_PORT:-80}"
+    environment:
+      - NGINX_PORT=${NGINX_PORT:-80}
+      - BACKEND=${BACKEND:-api}
+      - PORT=${PORT:-3000}
+      - RESOLVER=${RESOLVER:-127.0.0.11}
+      - CF_CONNECTING_IP=${CF_CONNECTING_IP:-}
+
+  # PostgreSQL datastore dedicated to the Evolution API WhatsApp Gateway
+  evolution-postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${EVOLUTION_DB_USER:-evolution}
+      POSTGRES_PASSWORD: ${EVOLUTION_DB_PASS:-evolution_password}
+      POSTGRES_DB: ${EVOLUTION_DB_NAME:-evolution}
+    volumes:
+      - ./data/evolution_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${EVOLUTION_DB_USER:-evolution} -d ${EVOLUTION_DB_NAME:-evolution}" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # WhatsApp Automation Gateway (Evolution API v2)
+  evolution-api:
+    image: evoapicloud/evolution-api:${EVOLUTION_IMAGE_TAG:-v2.3.7}
+    restart: unless-stopped
+    ports:
+      - "${EVOLUTION_BIND:-127.0.0.1}:${EVOLUTION_PORT:-8082}:8080"
+    environment:
+      - SERVER_URL=${EVOLUTION_SERVER_URL:-http://localhost:8082}
+      - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY:-rit-secret-key}
+      - DATABASE_ENABLED=true
+      - DATABASE_PROVIDER=postgresql
+      - DATABASE_CONNECTION_URI=postgresql://${EVOLUTION_DB_USER:-evolution}:${EVOLUTION_DB_PASS:-evolution_password}@evolution-postgres:5432/${EVOLUTION_DB_NAME:-evolution}?schema=public
+      - DATABASE_CONNECTION_CLIENT_NAME=evolution_v2
+      - CACHE_REDIS_ENABLED=false
+      - AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES=true
+      - CONFIG_SESSION_PHONE_VERSION=${EVOLUTION_WA_VERSION:-2.3000.1054108093}
+      - LOG_BAILEYS=${LOG_BAILEYS:-error}
+    volumes:
+      - ./data/evolution_instances:/evolution/instances
+    depends_on:
+      evolution-postgres:
+        condition: service_healthy

@@ -99,7 +99,7 @@ const reducedMotion = () => {
 export function CustomThumb({ ex }) {
   const m = mediaOf(ex)
   const link = m ? null : cleanUrl(ex?.url)
-  const poster = useMediaUrl(m?.poster || null)
+  const poster = useMediaUrl(m?.poster || (m?.kind === 'image' ? m : null))
   const [broken, setBroken] = useState(null)
   if (poster.url && broken !== poster.url) {
     return <img className="thumb" loading="lazy" decoding="async" draggable={false} src={poster.url} alt="" onError={() => setBroken(poster.url)} />

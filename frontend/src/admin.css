@@ -70,7 +70,7 @@
 .adm-field .field{width:100%;background:var(--surface-2);font-size:16px;min-height:44px}
 .adm-select{
   width:100%;min-height:44px;padding:10px 38px 10px 12px;border-radius:var(--r);border:0;
-  background:var(--surface-2);color:var(--label);font-size:15px;appearance:none;-webkit-appearance:none;
+  background:var(--surface-2);color:var(--label);font-size:16px;appearance:none;-webkit-appearance:none;
   background-image:linear-gradient(45deg,transparent 50%,var(--label-2) 50%),linear-gradient(135deg,var(--label-2) 50%,transparent 50%);
   background-position:calc(100% - 20px) 50%,calc(100% - 14px) 50%;background-size:6px 6px;background-repeat:no-repeat
 }
@@ -111,7 +111,7 @@
 .adm-kv .v input:focus{box-shadow:inset 0 0 0 2px var(--acc)}
 
 .adm-log{display:flex;flex-direction:column}
-.adm-log-row{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:var(--hair) solid var(--sep);font-size:13.5px}
+.adm-log-row{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px 10px;padding:8px 0;border-bottom:var(--hair) solid var(--sep);font-size:13.5px}
 .adm-log-row:last-child{border-bottom:0}
 .adm-log-row .when{color:var(--label-3);font-size:12px;flex:none}
 

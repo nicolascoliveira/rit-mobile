@@ -34,7 +34,8 @@ export function makeLinkCode() {
 }
 // Dashes, spaces and case are how a person types it, not part of it.
 const clean = code => (typeof code === 'string' ? code : '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-export const hashLinkCode = code => crypto.createHash('sha256').update('opengym-link:' + clean(code)).digest('hex');
+export const hashLinkCode = code => crypto.createHash('sha256').update('rit-link:' + clean(code)).digest('hex');
+const hashLegacyLinkCode = code => crypto.createHash('sha256').update('opengym-link:' + clean(code)).digest('hex');
 
 function prune(db, now) {
   db.deviceLinks = (db.deviceLinks || []).filter(l => l && typeof l.h === 'string' && l.exp > now);
@@ -57,9 +58,11 @@ export function findDeviceLink(db, code, now = Date.now()) {
   prune(db, now);
   if (clean(code).length !== LENGTH) return null;
   const h = Buffer.from(hashLinkCode(code), 'hex');
+  const hLeg = Buffer.from(hashLegacyLinkCode(code), 'hex');
   return db.deviceLinks.find(l => {
     const stored = Buffer.from(l.h, 'hex');
-    return stored.length === h.length && crypto.timingSafeEqual(stored, h);
+    return (stored.length === h.length && crypto.timingSafeEqual(stored, h)) ||
+           (stored.length === hLeg.length && crypto.timingSafeEqual(stored, hLeg));
   }) || null;
 }
 

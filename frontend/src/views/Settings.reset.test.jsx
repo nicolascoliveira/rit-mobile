@@ -154,9 +154,10 @@ describe('Settings — reset everything', () => {
 })
 
 describe('Settings — footer', () => {
-  it('links the source code to its home on GitHub, on About & updates', () => {
+  it('displays Rit and developer attribution Nicolas Oliveira on About & updates', () => {
     act(() => root.render(<Settings page="about" />))
-    const link = [...host.querySelectorAll('a')].find(a => a.textContent === 'Source code')
-    expect(link.getAttribute('href')).toBe('https://github.com/DuarteSantos8/openGym')
+    const ver = host.querySelector('.sp-version')
+    expect(ver.textContent).toContain('Rit v')
+    expect(ver.textContent).toContain('Nicolas Oliveira')
   })
 })

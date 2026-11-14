@@ -30,7 +30,7 @@ export function socketDir(env = process.env) {
   const data = path.resolve(env.DATA_DIR || '/data');
   const tag = crypto.createHash('sha256').update(data).digest('hex').slice(0, 10);
   const uid = typeof process.getuid === 'function' ? process.getuid() : 'u';
-  return path.join(os.tmpdir(), `opengym-admin-${uid}-${tag}`);
+  return path.join(os.tmpdir(), `rit-admin-${uid}-${tag}`);
 }
 export const socketPath = (env = process.env) => path.join(socketDir(env), 'admin.sock');
 

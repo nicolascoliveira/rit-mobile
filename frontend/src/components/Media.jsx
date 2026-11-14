@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { imgSrc, gifSrc, isVideoSrc, isCustomEx, figureOf } from '../lib/exercises.js'
+import { imgSrc, gifSrc, isVideoSrc, isCustomEx, isTenantCustomEx, getTenantOverride, figureOf } from '../lib/exercises.js'
 import { MOBILE } from '../lib/mobile.js'
 import { useStore } from '../store/useStore.js'
 import { t, exerciseNameFor } from '../lib/i18n.js'
@@ -8,16 +8,35 @@ import CustomMedia, { CustomThumb, LinkCard } from './CustomMedia.jsx'
 import { youtubeId, youtubeLinks } from '../lib/youtube.js'
 import { useAnimSources } from './Animations.jsx'
 
+function tenantCustomMediaEx(ex, ov) {
+  if (!ex) return null
+  if (isTenantCustomEx(ex)) return { ...ex, custom: true }
+  if (ov && (ov.media || ov.url)) {
+    return {
+      ...ex,
+      custom: true,
+      ...(ov.media ? { media: ov.media } : { media: undefined }),
+      ...(ov.url ? { url: ov.url } : { url: undefined })
+    }
+  }
+  return null
+}
+
 // An exercise's picture, wherever one shows. A custom exercise goes to CustomMedia.jsx — its own
 // photo, GIF, video or link, from the local media store — and never through imgSrc/gifSrc, which
 // name files of the shipped dataset (a stray img/gif on a custom exercise, written by a fork, is
-// ignored). The split is by component, not by branch, so each side keeps its own hooks in order.
+// ignored). A catalogue exercise with a tenant override from the gym portal also goes through
+// CustomMedia.jsx so trainers' videos replace the catalogue animation cleanly.
 export default function Media(p) {
   const size = useStore(s => s.S.gifSize)
-  const custom = isCustomEx(p.ex)
-  const links = youtubeLinks(p.notes).filter(url => !custom || youtubeId(url) !== youtubeId(p.ex?.url))
+  const tenantExercises = useStore(s => s.tenantExercises)
+  const ov = tenantExercises?.overrides?.[p.ex?.id] || getTenantOverride(p.ex)
+  const overrideEx = tenantCustomMediaEx(p.ex, ov)
+  const custom = isCustomEx(p.ex) || Boolean(overrideEx)
+  const renderEx = overrideEx || p.ex
+  const links = youtubeLinks(p.notes).filter(url => !custom || youtubeId(url) !== youtubeId(renderEx?.url))
   return <>
-    {custom ? <CustomMedia {...p} /> : <BuiltinMedia {...p} />}
+    {custom ? <CustomMedia {...p} ex={renderEx} /> : <BuiltinMedia {...p} />}
     {(!p.minimizable || size !== 'off') && links.map(url => <LinkCard key={url} url={url} compact={p.compact} mini={p.minimizable && size === 'mini'} />)}
   </>
 }
@@ -174,7 +193,10 @@ export function autoplayClip(el) {
 // broken-image glyph in a list of them (#281). The failure is remembered per image, so a list
 // that re-renders does not ask again; a new exercise in the same slot tries its own.
 export function Thumb(p) {
-  return isCustomEx(p.ex) ? <CustomThumb {...p} /> : <BuiltinThumb {...p} />
+  const tenantExercises = useStore(s => s.tenantExercises)
+  const ov = tenantExercises?.overrides?.[p.ex?.id] || getTenantOverride(p.ex)
+  const overrideEx = tenantCustomMediaEx(p.ex, ov)
+  return (isCustomEx(p.ex) || overrideEx) ? <CustomThumb {...p} ex={overrideEx || p.ex} /> : <BuiltinThumb {...p} />
 }
 function BuiltinThumb({ ex }) {
   const body = useStore(s => figureOf(s.S))

@@ -78,7 +78,8 @@ export function createOutbox({ file, deliver, rateOf = () => [], onSettled = () 
   for (const j of st.jobs) delete j.running;
 
   const buckets = createBuckets({ now });
-  let timer = null, kick = null, running = false;
+  let timer = null, kick = null, activeRunPromise = null, rerunRequested = false;
+  const inFlightKeys = new Set();
 
   function prune() {
     const cut = now() - DONE_KEEP_MS;
@@ -100,7 +101,7 @@ export function createOutbox({ file, deliver, rateOf = () => [], onSettled = () 
   /** 'queued', 'duplicate' or 'full'. */
   function enqueue(job) {
     if (!okKey(job?.key)) throw new Error('job key required');
-    if (st.done[job.key] || st.jobs.some(j => j.key === job.key) || st.failed.some(j => j.key === job.key)) return 'duplicate';
+    if (st.done[job.key] || inFlightKeys.has(job.key) || st.jobs.some(j => j.key === job.key) || st.failed.some(j => j.key === job.key)) return 'duplicate';
     if (st.jobs.length >= MAX_JOBS || st.jobs.filter(j => j.uid === job.uid).length >= MAX_PER_USER) return 'full';
     const body = JSON.stringify(job.payload ?? null);
     if (body.length > PAYLOAD_MAX) return 'full';
@@ -114,17 +115,22 @@ export function createOutbox({ file, deliver, rateOf = () => [], onSettled = () 
   }
 
   async function runOne(j) {
+    if (j._dropped || j.running || inFlightKeys.has(j.key)) return;
     // Rate limits first: no token is a wait, not a failure.
     for (const r of rateOf(j)) {
       const wait = buckets.take(r.key, r);
       if (wait > 0) { j.nextAt = now() + wait; return; }
     }
     j.running = true;
+    inFlightKeys.add(j.key);
     let res;
     try { res = await deliver(j); }
     catch (e) { res = { ok: false, retry: true, msg: e?.message || 'delivery failed' }; }
-    delete j.running;
-    if (!st.jobs.includes(j)) return;                  // dropped meanwhile (disconnected)
+    finally {
+      delete j.running;
+      inFlightKeys.delete(j.key);
+    }
+    if (j._dropped || !st.jobs.includes(j)) return; // dropped meanwhile (disconnected)
     // Not now, and not a failure either (a paused connection): later, without spending an attempt.
     if (res?.defer) { j.nextAt = now() + res.defer; return; }
     j.attempts += 1;
@@ -145,17 +151,31 @@ export function createOutbox({ file, deliver, rateOf = () => [], onSettled = () 
     onSettled(j, res, { final });
   }
 
-  /** Send what is due. One pass at a time; resolves when the pass is over. */
+  /** Send what is due. Serialized across concurrent callers so no delivery runs twice. */
   async function run() {
-    if (running) return;
-    running = true;
-    try {
-      const due = st.jobs.filter(j => !j.running && j.nextAt <= now()).sort((a, b) => a.nextAt - b.nextAt);
-      for (let i = 0; i < due.length; i += concurrency) {
-        await Promise.all(due.slice(i, i + concurrency).map(runOne));
+    if (activeRunPromise) {
+      rerunRequested = true;
+      return activeRunPromise;
+    }
+    let settled = false;
+    let p;
+    p = (async () => {
+      try {
+        do {
+          rerunRequested = false;
+          const due = st.jobs.filter(j => !j.running && !j._dropped && j.nextAt <= now()).sort((a, b) => a.nextAt - b.nextAt);
+          for (let i = 0; i < due.length; i += concurrency) {
+            await Promise.all(due.slice(i, i + concurrency).map(runOne));
+          }
+          if (due.length) persist();
+        } while (rerunRequested);
+      } finally {
+        settled = true;
+        if (activeRunPromise === p) activeRunPromise = null;
       }
-      if (due.length) persist();
-    } finally { running = false; }
+    })();
+    if (!settled) activeRunPromise = p;
+    return p;
   }
 
   return {
@@ -167,18 +187,27 @@ export function createOutbox({ file, deliver, rateOf = () => [], onSettled = () 
     retry(uid, conn) {
       const back = st.failed.filter(j => j.uid === uid && j.conn === conn);
       if (!back.length) return 0;
-      st.failed = st.failed.filter(j => !back.includes(j));
-      for (const j of back) { delete j.failedAt; delete j.msg; st.jobs.push({ ...j, attempts: 0, nextAt: now() }); }
+      const backSet = new Set(back);
+      st.failed = st.failed.filter(j => !backSet.has(j));
+      let added = 0;
+      for (const j of back) {
+        if (st.done[j.key] || inFlightKeys.has(j.key) || st.jobs.some(x => x.key === j.key)) continue;
+        delete j.failedAt; delete j.msg; delete j._dropped;
+        st.jobs.push({ ...j, attempts: 0, nextAt: now() });
+        added++;
+      }
       persist(); soon();
-      return back.length;
+      return added;
     },
     dropConnection(uid, conn) {
       const n = st.jobs.length + st.failed.length;
+      for (const j of st.jobs) if (j.uid === uid && j.conn === conn) j._dropped = true;
       st.jobs = st.jobs.filter(j => !(j.uid === uid && j.conn === conn));
       st.failed = st.failed.filter(j => !(j.uid === uid && j.conn === conn));
       if (st.jobs.length + st.failed.length !== n) persist();
     },
     dropUser(uid) {
+      for (const j of st.jobs) if (j.uid === uid) j._dropped = true;
       st.jobs = st.jobs.filter(j => j.uid !== uid);
       st.failed = st.failed.filter(j => j.uid !== uid);
       for (const k of Object.keys(st.done)) if (k.includes(':' + uid + ':')) delete st.done[k];

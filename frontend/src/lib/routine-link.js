@@ -19,6 +19,7 @@
 import { EXIDX, isCustomEx } from './exercises.js'
 import { buildPlanBundle, parsePlan, mergePlan } from './plan-share.js'
 import { t } from './i18n-core.js'
+import { getActiveTenantSlug } from './branding.js'
 
 export const LINK_FMT = 1
 export const LINK_BASE = 'https://opengym.ch/r'
@@ -155,7 +156,14 @@ export async function decodePayload(payload) {
   return data
 }
 
-export const linkFor = payload => `${LINK_BASE}#${payload}`
+export const linkFor = payload => {
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    const tenant = getActiveTenantSlug()
+    const qs = tenant ? `?tenant=${encodeURIComponent(tenant)}` : ''
+    return `${window.location.origin}/${qs}#/r/${payload}`
+  }
+  return `${LINK_BASE}#${payload}`
+}
 
 /**
  * The link for a routine, or `{ tooLong: true }` when it would pass MAX_LINK (the caller shares a

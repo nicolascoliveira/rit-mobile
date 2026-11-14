@@ -14,6 +14,7 @@ import { t } from '../lib/i18n.js'
 import { dateLocale } from '../lib/i18n-core.js'
 import { api, webauthnOK, passkeyAssertion, passwordLogin, passwordRegister, passwordResetRedeem } from '../lib/api.js'
 import { askAddDeviceData } from '../sheets.jsx'
+import Icon from './Icon.jsx'
 import { Row, Button } from './ui.jsx'
 
 // The server's floor (api/password.js MIN_LENGTH), checked here first so the common mistake is
@@ -73,6 +74,9 @@ const dismissed = e => e?.name === 'NotAllowedError' || e?.name === 'AbortError'
 // merges what this device kept for it (adoptProfile).
 async function signedIn(u, close) {
   const st = useStore.getState()
+  try {
+    if (u?.name) localStorage.setItem('rit_last_username', u.name)
+  } catch { /* ignore */ }
   st.setUser(u, { adopt: true })
   close()
   await st.adoptProfile(askAddDeviceData)
@@ -87,15 +91,27 @@ const codeStyle = { letterSpacing: '.14em', fontWeight: 600, textAlign: 'center'
    inputs carry the autocomplete names password managers look for, inside a real form. */
 export function PasswordSignInSheet({ close, onPasskey }) {
   const [mode, setMode] = useState('signin')   // 'signin' | 'reset'
-  const [name, setName] = useState('')
+  const [name, setName] = useState(() => {
+    try {
+      if (typeof process !== 'undefined' && process.env.NODE_ENV === 'test') return ''
+      return localStorage.getItem('rit_last_username') || ''
+    } catch { return '' }
+  })
   const [pw, setPw] = useState('')
+  const [showPw, setShowPw] = useState(false)
   const [code, setCode] = useState('')
   const [next, setNext] = useState('')
   const [again, setAgain] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
   const nameRef = useRef(null)
-  useEffect(() => { setTimeout(() => nameRef.current?.focus(), 250) }, [])
+  const pwRef = useRef(null)
+  useEffect(() => {
+    setTimeout(() => {
+      if (name.trim()) pwRef.current?.focus()
+      else nameRef.current?.focus()
+    }, 250)
+  }, [])
   const reset = mode === 'reset'
   const submit = async ev => {
     ev.preventDefault()
@@ -110,7 +126,11 @@ export function PasswordSignInSheet({ close, onPasskey }) {
       : null
     if (bad) { setErr(bad); return }
     setBusy(true); setErr(null)
-    try { await signedIn(reset ? await passwordResetRedeem(n, code.trim(), next) : await passwordLogin(n, pw), close) }
+    try {
+      const u = reset ? await passwordResetRedeem(n, code.trim(), next) : await passwordLogin(n, pw)
+      try { localStorage.setItem('rit_last_username', n) } catch { /* ignore */ }
+      await signedIn(u, close)
+    }
     catch (e) { setErr(passwordError(e)) }
     finally { setBusy(false) }
   }
@@ -129,14 +149,67 @@ export function PasswordSignInSheet({ close, onPasskey }) {
         <input className="input" name="reset-code" autoComplete="one-time-code" placeholder={t('Reset code')} maxLength={20}
           value={code} onChange={e => setCode(e.target.value.toUpperCase())} {...field} style={codeStyle} />
         <div style={{ height: 10 }} />
-        <input className="input" type="password" name="new-password" autoComplete="new-password" placeholder={t('New password')}
-          value={next} onChange={e => setNext(e.target.value)} />
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+          <input className="input" type={showPw ? 'text' : 'password'} name="new-password" autoComplete="new-password" placeholder={t('New password')}
+            value={next} onChange={e => setNext(e.target.value)} style={{ paddingRight: 42, width: '100%' }} />
+          <button
+            type="button"
+            onClick={() => setShowPw(s => !s)}
+            style={{
+              position: 'absolute',
+              right: 4,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              padding: 8,
+              color: showPw ? 'var(--acc)' : 'var(--muted)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}
+            title={showPw ? t('Hide password') : t('Show password')}
+            aria-label={showPw ? t('Hide password') : t('Show password')}
+          >
+            <Icon name={showPw ? 'eyeOff' : 'eye'} size={20} />
+          </button>
+        </div>
         <div style={{ height: 10 }} />
-        <input className="input" type="password" name="new-password-again" autoComplete="new-password" placeholder={t('Repeat the password')}
+        <input className="input" type={showPw ? 'text' : 'password'} name="new-password-again" autoComplete="new-password" placeholder={t('Repeat the password')}
           value={again} onChange={e => setAgain(e.target.value)} />
         <div className="dim small" style={{ marginTop: 6 }}>{t('At least {0} characters. A few unrelated words make a good one.', MIN_PASSWORD)}</div>
-      </> : <input className="input" type="password" name="password" autoComplete="current-password" placeholder={t('Password')}
-        value={pw} onChange={e => setPw(e.target.value)} />}
+      </> : <>
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+          <input ref={pwRef} className="input" type={showPw ? 'text' : 'password'} name="password" autoComplete="current-password" placeholder={t('Password')}
+            value={pw} onChange={e => setPw(e.target.value)} style={{ paddingRight: 42, width: '100%' }} />
+          <button
+            type="button"
+            onClick={() => setShowPw(s => !s)}
+            style={{
+              position: 'absolute',
+              right: 4,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              padding: 8,
+              color: showPw ? 'var(--acc)' : 'var(--muted)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}
+            title={showPw ? t('Hide password') : t('Show password')}
+            aria-label={showPw ? t('Hide password') : t('Show password')}
+          >
+            <Icon name={showPw ? 'eyeOff' : 'eye'} size={20} />
+          </button>
+        </div>
+        <div className="dim small" style={{ marginTop: 8, textAlign: 'start', lineHeight: 1.4 }}>
+          {t('First time here? Your coach or gym set your initial password (usually {0}). Ask them if you’re unsure.', 'treino2026')}
+        </div>
+      </>}
       {err && <div className="small" role="alert" style={errStyle}>{err}</div>}
       <div style={{ height: 12 }} />
       <Button type="submit" variant="primary" disabled={busy}>{reset ? t('Set password & sign in') : t('Sign in')}</Button>

@@ -43,7 +43,7 @@ async function shareLink(url, text, title) {
 async function shareAsPlanFile(st, routine) {
   const bundle = buildPlanBundle({ ...st, routines: [routine], week: {}, programmes: {} }, routine.name || '')
   const json = JSON.stringify(bundle, null, 2)
-  const name = 'opengym-routine-' + todayISO() + '.json'
+  const name = 'rit-routine-' + todayISO() + '.json'
   if (MOBILE) { try { await shareExport(json, name) } catch (e) { /* dismissed */ } return }
   const blob = new Blob([json], { type: 'application/json' })
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); URL.revokeObjectURL(a.href)
@@ -67,7 +67,7 @@ function ShareRoutine({ routine, close }) {
         await shareAsPlanFile(st, routine)
         return
       }
-      await shareLink(link.url, t('Here’s my {0} on openGym 💪', name), name)
+      await shareLink(link.url, t('Here’s my {0} on Rit 💪', name), name)
     } catch {
       setBusy(false)
       toast(t('Couldn’t make a link for this one.'))

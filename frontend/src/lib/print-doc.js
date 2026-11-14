@@ -25,6 +25,7 @@
 // renders the PDF.
 import { t, getLang, RTL_LANGS, dateLocale } from './i18n-core.js'
 import { MOBILE, printHtml } from './mobile.js'
+import { getBranding } from './branding.js'
 
 export const esc = str => String(str == null ? '' : str)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -70,7 +71,7 @@ export const PRINT_CSS = `
   @page {
     size: auto;
     margin: 15mm 14mm 17mm;
-    @bottom-left { content: "opengym.ch"; font: 7.5pt/1 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #9aa0ad; }
+    @bottom-left { content: "Rit"; font: 7.5pt/1 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #9aa0ad; }
     @bottom-right { font: 7.5pt/1 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #9aa0ad; }
   }
   :root {
@@ -140,6 +141,8 @@ export const PRINT_CSS = `
  */
 export function printShell({ title, kicker = '', facts = [], owner = '', date, body, css = '', credit = '' }) {
   const lang = getLang()
+  const branding = getBranding?.() || {}
+  const brandName = (branding.isCustomTenant && branding.gymName) ? String(branding.gymName).trim() : 'Rit'
   const made = paperDate(date || new Date().toISOString().slice(0, 10))
   const meta = [owner ? `<b>${esc(owner)}</b>` : '', esc(made)].filter(Boolean).join('<br>')
   const factLine = facts.filter(Boolean).map(esc).join('<span class="dot">·</span>')
@@ -147,17 +150,17 @@ export function printShell({ title, kicker = '', facts = [], owner = '', date, b
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)}</title>
 <style>${PRINT_CSS}
-  @page { @bottom-right { content: ${pageNumberContent()}; } }
+  @page { @bottom-left { content: ${cssStr(brandName)}; } @bottom-right { content: ${pageNumberContent()}; } }
 ${css}</style></head>
 <body><div class="doc">
   <header class="mast keep">
-    <div class="mast-top"><div class="brand">${LOGO_SVG}<span>openGym</span></div><div class="mast-meta">${meta}</div></div>
+    <div class="mast-top"><div class="brand">${LOGO_SVG}<span>${esc(brandName)}</span></div><div class="mast-meta">${meta}</div></div>
     ${kicker ? `<div class="kicker">${esc(kicker)}</div>` : ''}
     <h1>${esc(title)}</h1>
     ${factLine ? `<div class="facts">${factLine}</div>` : ''}
   </header>
   ${body}
-  <div class="end keep">${esc(t('Made with openGym'))} · opengym.ch${credit ? `<div class="credit" lang="en" dir="ltr">${esc(credit)}</div>` : ''}</div>
+  <div class="end keep">${esc(brandName === 'Rit' ? t('Made with openGym') : `${brandName} · Rit`)}${credit ? `<div class="credit" lang="en" dir="ltr">${esc(credit)}</div>` : ''}</div>
 </div></body></html>`
 }
 
@@ -174,7 +177,9 @@ export function paperFor(locale) {
 export function printOptions() {
   let locale = ''
   try { locale = navigator.language || '' } catch (e) { /* */ }
-  return { paper: paperFor(locale), footer: { left: 'opengym.ch', page: t('Page {0} of {1}') } }
+  const branding = getBranding?.() || {}
+  const brandName = (branding.isCustomTenant && branding.gymName) ? String(branding.gymName).trim() : 'Rit'
+  return { paper: paperFor(locale), footer: { left: brandName, page: t('Page {0} of {1}') } }
 }
 
 // The web: a hidden iframe and the browser's own print dialog (→ Save as PDF), so we never
@@ -212,7 +217,7 @@ function printInFrame(html) {
  * suggested PDF file; Android refuses a job without one.
  */
 export function printDocument(html, name) {
-  if (MOBILE) return printHtml(html, name || 'openGym', printOptions()).catch(() => { /* dismissed */ })
+  if (MOBILE) return printHtml(html, name || 'Rit', printOptions()).catch(() => { /* dismissed */ })
   printInFrame(html)
   return Promise.resolve()
 }

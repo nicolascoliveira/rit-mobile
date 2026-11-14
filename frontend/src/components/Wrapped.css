@@ -63,7 +63,7 @@
 .wr-bar.peak span{color:var(--acc-ink)}
 @keyframes wr-grow{from{transform:scaleY(0)}to{transform:none}}
 
-.wr-tiles{margin-top:20px;display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.wr-tiles{margin-top:20px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
 .wr-tile{background:var(--surface);background:color-mix(in srgb,var(--surface) 88%,transparent);border-radius:16px;padding:12px 14px;min-width:0;animation:wr-up .5s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--t) * 70ms + 300ms)}
 .wr-tile.wide{grid-column:1 / -1}
 .wr-tile .l{font-size:13px;color:var(--label-2);font-weight:500}

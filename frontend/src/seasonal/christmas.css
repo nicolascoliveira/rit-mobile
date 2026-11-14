@@ -237,7 +237,7 @@
 .xm-advent .lbl2{font-size:13px;color:var(--label-2);letter-spacing:-.004em}
 .xm-advent .ttl{font-size:17px;font-weight:600;letter-spacing:-.016em}
 .xm-advent-i{background:var(--surface-2);background:color-mix(in srgb,var(--xm-green) 26%,var(--surface-2));font-size:16px}
-.xm-dots{display:grid;grid-template-columns:repeat(24,1fr);gap:3px;margin-top:12px}
+.xm-dots{display:grid;grid-template-columns:repeat(24,minmax(0,1fr));gap:3px;margin-top:12px}
 .xm-dots i{display:block;height:5px;border-radius:3px;background:var(--surface-3)}
 .xm-dots i.on{background:var(--xm-green)}
 .xm-dots i.now{background:var(--xm-red);box-shadow:0 0 6px var(--xm-red)}
@@ -249,7 +249,7 @@
 .xm-ask-img{border-radius:11px;flex:none}
 
 /* ------------------------------------------------------- the calendar -- */
-.xm-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:7px}
+.xm-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:7px}
 .xm-door{
   all:unset;position:relative;aspect-ratio:1;border-radius:10px;cursor:pointer;perspective:420px;
   background:var(--surface-2);

@@ -28,6 +28,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { HTTP_PROVIDERS, baseUrlFor } from './core/providers.js';
 import { MAX_OUTPUT_TOKENS } from './core/adapters/http.js';
+import { getSqliteInstance } from '../sqlite.js';
 
 const DATA = process.env.DATA_DIR || '/data';
 const FILE = path.join(DATA, 'coach.json');
@@ -171,10 +172,26 @@ export function load() {
   if (cache.authMode !== 'profile') cache.authMode = 'instance';
   return cache;
 }
-export function save(patch) {
+export function save(patch, { syncSqlite = true } = {}) {
   const next = { ...load(), ...patch };
   cache = next;
   atomicWrite(FILE, JSON.stringify(next, null, 2), 0o600);
+  if (syncSqlite && patch && Object.prototype.hasOwnProperty.call(patch, 'daily') && fs.existsSync(DATA)) {
+    try {
+      const inst = getSqliteInstance(DATA);
+      const d = patch.daily;
+      if (!d || !d.date) {
+        inst.db.prepare("DELETE FROM coach_daily_usage WHERE user_id = '__instance__'").run();
+      } else {
+        const day = String(d.date);
+        const cnt = Math.max(0, Number(d.count || 0));
+        inst.db.prepare("DELETE FROM coach_daily_usage WHERE user_id = '__instance__' AND day != ?").run(day);
+        inst.db.prepare(
+          "INSERT INTO coach_daily_usage (user_id, day, count) VALUES ('__instance__', ?, ?) ON CONFLICT(user_id, day) DO UPDATE SET count = excluded.count"
+        ).run(day, cnt);
+      }
+    } catch { /* fallback quando o diretório ainda não possui SQLite inicializado */ }
+  }
   return next;
 }
 // Test seam: forget the in-memory copy so the next load() re-reads from disk.

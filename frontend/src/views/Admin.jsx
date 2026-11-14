@@ -10,6 +10,7 @@ import { confirmSheet } from '../sheets.jsx'
 import Icon from '../components/Icon.jsx'
 import { Button } from '../components/ui.jsx'
 import AdminCoach from './AdminCoach.jsx'
+import { applyGymBranding } from '../lib/branding.js'
 import '../admin.css'
 
 // Admin-only operator dashboard (owner passkey + admin flag; guarded again server-side).
@@ -62,6 +63,17 @@ function UserDetail({ id, viewerOwner, onChanged, close }) {
   const [d, setD] = useState(null)
   const toast = useUI(s => s.toast)
   const openSheet = useUI(s => s.openSheet)
+  const [actionBusy, setActionBusy] = useState(false)
+  const actionRef = useRef(false)
+  const runUserAction = promiseFn => {
+    if (actionRef.current) return
+    actionRef.current = true
+    setActionBusy(true)
+    return promiseFn().finally(() => {
+      actionRef.current = false
+      setActionBusy(false)
+    })
+  }
   useEffect(() => { api('/api/admin/user?id=' + encodeURIComponent(id)).then(setD).catch(e => toast(e.message)) }, [id])
   if (!d) return <div className="muted small">Loading…</div>
   const u = d.user
@@ -76,31 +88,31 @@ function UserDetail({ id, viewerOwner, onChanged, close }) {
     const blob = new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = `opengym-${u.name.replace(/[^a-zA-Z0-9_-]+/g, '-').toLowerCase()}-${u.id}.json`
+    a.download = `rit-${u.name.replace(/[^a-zA-Z0-9_-]+/g, '-').toLowerCase()}-${u.id}.json`
     document.body.appendChild(a); a.click(); a.remove()
     setTimeout(() => URL.revokeObjectURL(a.href), 1000)
   }
-  const doDelete = () => {
+  const doDelete = () => runUserAction(() =>
     api('/api/admin/user/delete', { method: 'POST', body: JSON.stringify({ id: u.id }) })
       .then(() => { toast('Account deleted'); onChanged(); close() })
       .catch(e => toast(e.message))
-  }
-  const setDisabled = disabled => {
+  )
+  const setDisabled = disabled => runUserAction(() =>
     api('/api/admin/user/disable', { method: 'POST', body: JSON.stringify({ id: u.id, disabled }) })
       .then(() => { toast(disabled ? 'User disabled' : 'User enabled'); onChanged(); close() })
       .catch(e => toast(e.message))
-  }
+  )
   // One owner, any number of admins: only the owner appoints, removes or hands the role on.
-  const setRole = admin => api('/api/admin/user/role', { method: 'POST', body: JSON.stringify({ id: u.id, admin }) })
+  const setRole = admin => runUserAction(() => api('/api/admin/user/role', { method: 'POST', body: JSON.stringify({ id: u.id, admin }) })
     .then(() => { toast(admin ? u.name + ' is an admin now' : u.name + ' is no longer an admin'); onChanged(); close() })
-    .catch(e => toast(e.message))
+    .catch(e => toast(e.message)))
   const makeOwner = () => confirmSheet({
     title: 'Make ' + u.name + ' the owner?',
     message: 'They get everything you can do here, including removing admins and clearing the activity log. You stay an admin, but only they can change that.',
     confirmText: 'Hand it over', danger: true,
-    onConfirm: () => api('/api/admin/owner', { method: 'POST', body: JSON.stringify({ id: u.id }) })
+    onConfirm: () => runUserAction(() => api('/api/admin/owner', { method: 'POST', body: JSON.stringify({ id: u.id }) })
       .then(() => { toast(u.name + ' owns this instance now'); onChanged(); close() })
-      .catch(e => toast(e.message)),
+      .catch(e => toast(e.message))),
   })
   // Password sign-in (#118): the server only sends `password` when the instance offers it. The
   // code comes back once, is shown once, and is never stored anywhere but as a hash.
@@ -147,19 +159,19 @@ function UserDetail({ id, viewerOwner, onChanged, close }) {
       <div className="tile"><div className="l">Last sync</div><div className="v" style={{ fontSize: 'var(--fs-subhead)' }}>{rel(d.lastSync)}</div></div>
     </div>
     {viewerOwner && !u.owner && !u.disabled && <>
-      <button className="btn" style={{ margin: '12px 0 4px' }}
+      <button className="btn" style={{ margin: '12px 0 4px' }} disabled={actionBusy}
         onClick={() => u.admin
           ? confirmSheet({ title: 'Remove ' + u.name + ' as admin?', message: 'They keep their account and data, but lose this page.', confirmText: 'Remove admin', danger: true, onConfirm: () => setRole(false) })
           : confirmSheet({ title: 'Make ' + u.name + ' an admin?', message: 'They can see everyone on this instance, disable accounts, hand out invites and set up the Coach. Only you can add or remove admins.', confirmText: 'Make admin', onConfirm: () => setRole(true) })}>
         {u.admin ? 'Remove admin' : 'Make admin'}</button>
       <div className="adm-hint">{u.admin ? 'Admins run the instance with you. Remove the role to delete or disable their account.' : 'Admins help run the instance. You stay the owner.'}</div>
       {u.admin && <>
-        <button className="btn" style={{ margin: '14px 0 4px' }} onClick={makeOwner}>Make owner</button>
+        <button className="btn" style={{ margin: '14px 0 4px' }} disabled={actionBusy} onClick={makeOwner}>Make owner</button>
         <div className="adm-hint">There is one owner. Handing it over makes you a regular admin.</div>
       </>}
     </>}
     {!u.admin && <>
-      <button className={'btn ' + (u.disabled ? 'primary' : 'danger')} style={{ margin: '12px 0 4px' }}
+      <button className={'btn ' + (u.disabled ? 'primary' : 'danger')} style={{ margin: '12px 0 4px' }} disabled={actionBusy}
         onClick={() => u.disabled ? setDisabled(false)
           : confirmSheet({ title: 'Disable ' + u.name + '?', message: 'They are signed out everywhere and can no longer sync or log in until re-enabled. Their data stays.', confirmText: 'Disable', danger: true, onConfirm: () => setDisabled(true) })}>
         {u.disabled ? 'Enable account' : 'Disable account'}</button>
@@ -167,7 +179,7 @@ function UserDetail({ id, viewerOwner, onChanged, close }) {
       {/* The one destructive action in the app (issue #107), so it asks twice and offers the
           export first — that history is theirs. The second step names the account again, because
           the first sheet can be dismissed by anyone who was not reading. */}
-      <button className="btn danger" style={{ margin: '14px 0 4px' }}
+      <button className="btn danger" style={{ margin: '14px 0 4px' }} disabled={actionBusy}
         onClick={() => confirmSheet({
           title: 'Delete ' + u.name + '?',
           message: 'Everything goes: their workouts, weigh-ins, routines, passkeys and notifications. This cannot be undone, and the invite code they joined with stays used. Download their data first if they might want it.',
@@ -204,6 +216,102 @@ function UserDetail({ id, viewerOwner, onChanged, close }) {
       </div>)}
     </div> : <div className="adm-empty">No workouts logged.</div>}
   </>
+}
+
+function BrandingCard() {
+  const toast = useUI(s => s.toast)
+  const [branding, setBranding] = useState({
+    gymName: '',
+    slogan: '',
+    primaryColor: '#a3e635',
+    contactPhone: '',
+    address: ''
+  })
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    api('/api/tenant/branding').then(res => {
+      if (res?.branding) setBranding(b => ({ ...b, ...res.branding }))
+    }).catch(() => {})
+  }, [])
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      const res = await api('/api/tenant/branding', {
+        method: 'PUT',
+        body: JSON.stringify(branding)
+      })
+      if (res?.branding) {
+        setBranding(b => ({ ...b, ...res.branding }))
+        applyGymBranding(res.branding)
+        toast('Identidade visual da academia salva com sucesso!')
+      }
+    } catch (e) {
+      toast(e.message || 'Erro ao salvar personalização')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2 style={{ margin: '0 0 4px' }}>Personalização da Academia (White-Label)</h2>
+      <div className="adm-lead">Defina o nome, slogan e cor do aplicativo que os seus alunos verão.</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 14 }}>
+        <div>
+          <label className="small muted" style={{ display: 'block', marginBottom: 4 }}>Nome da Academia</label>
+          <input
+            className="field"
+            value={branding.gymName || ''}
+            onChange={e => setBranding(b => ({ ...b, gymName: e.target.value }))}
+            placeholder="Ex: Academia Iron Power"
+          />
+        </div>
+        <div>
+          <label className="small muted" style={{ display: 'block', marginBottom: 4 }}>Slogan / Subtítulo</label>
+          <input
+            className="field"
+            value={branding.slogan || ''}
+            onChange={e => setBranding(b => ({ ...b, slogan: e.target.value }))}
+            placeholder="Ex: Treino levado a sério"
+          />
+        </div>
+        <div>
+          <label className="small muted" style={{ display: 'block', marginBottom: 4 }}>Cor Primária da Academia</label>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <input
+              type="color"
+              value={branding.primaryColor || '#a3e635'}
+              onChange={e => setBranding(b => ({ ...b, primaryColor: e.target.value }))}
+              style={{ width: 44, height: 38, border: 'none', borderRadius: 8, cursor: 'pointer', background: 'transparent' }}
+            />
+            <input
+              className="field"
+              style={{ width: 140 }}
+              value={branding.primaryColor || '#a3e635'}
+              onChange={e => setBranding(b => ({ ...b, primaryColor: e.target.value }))}
+              placeholder="#a3e635"
+            />
+          </div>
+        </div>
+        <div>
+          <label className="small muted" style={{ display: 'block', marginBottom: 4 }}>Telefone / WhatsApp da Academia</label>
+          <input
+            className="field"
+            value={branding.contactPhone || ''}
+            onChange={e => setBranding(b => ({ ...b, contactPhone: e.target.value }))}
+            placeholder="(11) 99999-9999"
+          />
+        </div>
+        <div style={{ marginTop: 6 }}>
+          <Button variant="primary" onClick={save} disabled={saving}>
+            {saving ? 'Salvando...' : 'Salvar Identidade Visual'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function InvitesCard({ invites, reload, inviteOnly }) {
@@ -388,6 +496,8 @@ export default function Admin() {
     {/* The Coach setup. Renders nothing at all unless the instance offers the Coach, so an admin
         page on a box that never enabled it is byte-for-byte the page it was before. */}
     <div ref={coachRef} className="adm-coach-anchor"><AdminCoach /></div>
+
+    <BrandingCard />
 
     <InvitesCard invites={invites} reload={loadInvites} inviteOnly={inviteOnly} />
 

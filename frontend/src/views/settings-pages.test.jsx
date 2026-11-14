@@ -94,7 +94,7 @@ describe('the root', () => {
     expect(host.querySelector('.sp-acct .lrow-t').textContent).toBe('Guest')
     expect(host.querySelector('.sp-acct .lrow-s').textContent).toBe('Your data lives on this device. Sign in to sync.')
     // a guest in a browser has no reminders (no push server) and no Coach page (the server's Coach)
-    expect(titles()).toEqual(['Guest', 'Modules', 'Workout', 'Timer alerts', 'Plan & schedule', 'Units & language', 'Equipment', 'Look & Home', 'Integrations', 'Data & backup', 'About & updates'])
+    expect(titles()).toEqual(['Guest', 'Install app', 'Modules', 'Workout', 'Timer alerts', 'Plan & schedule', 'Units & language', 'Equipment', 'Look & Home', 'Integrations', 'Data & backup', 'About & updates'])
     expect(rowTitled('Workout').querySelector('.lrow-v').textContent).toBe('1:30 rest · Cards')
     expect(rowTitled('Timer alerts').querySelector('.lrow-v').textContent).toBe('Sound · Vibrate')
     expect(rowTitled('Plan & schedule').querySelector('.lrow-v').textContent).toMatch(/^Fixed Week · Mon/)
@@ -239,10 +239,9 @@ describe('the search lands on a row', () => {
     expect(searchSettings('loop', web, tr).map(h => h.title)).toContain('How you train')
     expect(searchSettings('swipe', web, tr)[0].title).toBe('Swipe actions')
     expect(searchSettings('gesture', web, tr).map(h => h.title)).toEqual(['Swipe actions'])
-    expect(searchSettings('home screen', { ...web, desktopWeb: false }, tr).map(h => h.title)).toEqual(['In Safari: Share → Add to Home Screen'])
-    expect(searchSettings('install', { ...web, androidWeb: true, desktopWeb: false }, tr).map(h => h.title)).toEqual(['In Chrome: ⋮ menu → Add to Home screen'])
-    // Windows and Linux are neither: Chrome's install icon, not an iPhone's Share menu (night QA 10-19).
-    expect(searchSettings('install', web, tr).map(h => h.title)).toEqual(['In Chrome or Edge: the install icon in the address bar'])
+    expect(searchSettings('home screen', { ...web, desktopWeb: false }, tr).map(h => h.title)).toEqual(['Install app'])
+    expect(searchSettings('install', { ...web, androidWeb: true, desktopWeb: false }, tr).map(h => h.title)).toEqual(['Install app'])
+    expect(searchSettings('install', web, tr).map(h => h.title)).toEqual(['Install app'])
     expect(searchSettings('backup folder', { ...guestWeb, mobile: true, android: true, autoBackup: true }, tr).map(h => h.title)).toEqual(['Backup folder'])
     expect(searchSettings('backup folder', { ...guestWeb, mobile: true, android: true }, tr)).toEqual([])
   })
@@ -542,5 +541,79 @@ describe('the equipment page with two gyms', () => {
     expect(mocks.S.equipProfiles[0].plates).toEqual(homePlates)
     expect(mocks.toast).toHaveBeenCalledWith('Using Big gym equipment')
     act(() => r.unmount()); h.remove()
+  })
+})
+
+describe('Install app row in Settings (logged-in and guest web)', () => {
+  const origMatchMedia = window.matchMedia
+  afterEach(() => {
+    window.matchMedia = origMatchMedia
+    window.dispatchEvent(new Event('appinstalled'))
+  })
+
+  it('shows Install app right below the account card for a signed-in web user and opens the install guide sheet when no native prompt is buffered', () => {
+    bindUI(useUI)
+    mocks.user = { id: 'u1', name: 'Carlos' }
+    mount()
+    const list = titles()
+    expect(list[0]).toBe('Carlos')
+    expect(list[1]).toBe('Install app')
+
+    act(() => rowTitled('Install app').click())
+    expect(mocks.sheets.length).toBeGreaterThan(0)
+    const h = document.createElement('div'); document.body.appendChild(h)
+    const r = createRoot(h)
+    act(() => r.render(mocks.sheets.at(-1)(vi.fn())))
+    expect(h.textContent).toContain('Install Rit on your phone')
+    expect(h.textContent).toContain('Chrome or Edge')
+    expect(h.textContent).toContain('Safari')
+    act(() => r.unmount()); h.remove()
+
+    mount('about')
+    expect(titles()).toContain('Install app')
+  })
+
+  it('invokes beforeinstallprompt.prompt() when the browser buffered a native install prompt', async () => {
+    const promptSpy = vi.fn(() => Promise.resolve())
+    const ev = new Event('beforeinstallprompt')
+    ev.preventDefault = vi.fn()
+    ev.prompt = promptSpy
+    ev.userChoice = Promise.resolve({ outcome: 'accepted' })
+    window.dispatchEvent(ev)
+
+    mocks.user = { id: 'u1', name: 'Carlos' }
+    mount()
+    expect(rowTitled('Install app')).toBeTruthy()
+    await act(async () => { rowTitled('Install app').click() })
+    expect(promptSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('hides Install app on SettingsRoot and shows Installed in About when already running in standalone mode', () => {
+    window.matchMedia = vi.fn(q => ({
+      matches: q === '(display-mode: standalone)',
+      media: q,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }))
+    mocks.user = { id: 'u1', name: 'Carlos' }
+    mount()
+    expect(titles()).not.toContain('Install app')
+
+    mount('about')
+    const aboutRow = rowTitled('Install app')
+    expect(aboutRow).toBeTruthy()
+    expect(aboutRow.querySelector('.lrow-v').textContent).toBe('Installed')
+  })
+
+  it('hides Install app inside the native mobile app and finds it when searching "instalar" in pt-BR', async () => {
+    mocks.user = { id: 'u1', name: 'Carlos' }
+    mocks.MOBILE = true
+    mount()
+    expect(titles()).not.toContain('Install app')
+
+    const { default: ptBR } = await import('../locales/pt-BR.js')
+    const tr = k => ptBR[k] || k
+    const web = { ...guestWeb, user: { id: 'u1' } }
+    expect(searchSettings('instalar', web, tr).map(h => h.title)).toEqual(['Install app'])
   })
 })

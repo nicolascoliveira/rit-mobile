@@ -265,10 +265,8 @@ export function ServerSyncSection({ children }) {
     try { await syncNowWithToast() } finally { setBusy(false) }
   }
   return <Section title={t('Server & sync')}>
-    {/* No address: a phone an earlier version unpaired. The status row below already says it is
-        not connected; this row only says which server, and there is none to name. */}
-    <Row icon="globe" iconTint="var(--blue)" title={sync.server ? hostOf(sync.server) : t('Server address unknown')}
-      subtitle={t('Signed in as {0}', user.name)} />
+    <Row icon="personCircle" iconTint="var(--acc)" title={user.name || t('Account')}
+      subtitle={user.email ? user.email : t('Signed in as {0}', user.name)} />
     <Row icon={view.icon} iconTint={TINT[view.tone]} title={view.line} subtitle={sub} className="sync-status" />
     <Row icon="reset" iconTint="var(--acc)" title={busy ? t('Syncing…') : t('Sync now')} onClick={now} />
     {MOBILE && <Row icon="key" iconTint="var(--orange)" title={t('Cloudflare Access')} accessory="chevron"
@@ -303,7 +301,7 @@ export function KeptChangesRows() {
     const state = await useStore.getState().keptState(k.server, k.uid)
     if (!state) return
     const json = JSON.stringify(state, null, 2)
-    const name = 'opengym-kept-' + String(k.name || k.uid).replace(/[^\w-]+/g, '_') + '-' + new Date().toISOString().slice(0, 10) + '.json'
+    const name = 'rit-kept-' + String(k.name || k.uid).replace(/[^\w-]+/g, '_') + '-' + new Date().toISOString().slice(0, 10) + '.json'
     if (MOBILE) { try { await shareExport(json, name); useUI.getState().toast(t('Backup exported')) } catch { /* share sheet dismissed */ } return }
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' })); a.download = name; a.click()
     setTimeout(() => URL.revokeObjectURL(a.href), 60000)

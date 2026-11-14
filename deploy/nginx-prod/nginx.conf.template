@@ -1,0 +1,120 @@
+# ==============================================================================
+# RIT SAAS — NGINX REVERSE PROXY COM TERMINAÇÃO SSL / HTTPS (PRODUÇÃO DOCKER)
+# ==============================================================================
+# Orquestra os domínios:
+# - app.rit.com.br e *.rit.com.br   -> Container 'web' (PWA do Aluno, porta 8080)
+# - painel.rit.com.br              -> Container 'portal' (Gestão B2B & Academias, porta 8081)
+# - rit.com.br e www.rit.com.br    -> Landing Page / Portal Institucional
+# ==============================================================================
+
+# 1. Redirecionamento HTTP -> HTTPS (Porta 80) e Desafio ACME Certbot
+server {
+    listen 80;
+    server_name ${DOMAIN_ROOT} www.${DOMAIN_ROOT} ${DOMAIN_APP} ${DOMAIN_PORTAL} gestao.${DOMAIN_ROOT} *.${DOMAIN_ROOT};
+    server_tokens off;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# 2. Aplicativo de Treino do Aluno & PWA (*.rit.com.br e app.rit.com.br)
+server {
+    listen 443 ssl http2;
+    server_name ${DOMAIN_APP} *.${DOMAIN_ROOT};
+    server_tokens off;
+
+    ssl_certificate /etc/letsencrypt/live/${DOMAIN_ROOT}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN_ROOT}/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "same-origin" always;
+
+    client_max_body_size 50m;
+
+    location / {
+        proxy_pass http://web:${NGINX_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}
+
+# 3. Portal de Gestão das Academias & Super Administrador (painel.rit.com.br)
+server {
+    listen 443 ssl http2;
+    server_name ${DOMAIN_PORTAL} gestao.${DOMAIN_ROOT};
+    server_tokens off;
+
+    ssl_certificate /etc/letsencrypt/live/${DOMAIN_ROOT}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN_ROOT}/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "same-origin" always;
+
+    client_max_body_size 20m;
+
+    location / {
+        proxy_pass http://portal:${NGINX_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}
+
+# 4. Domínio Principal / Landing Page Institucional (rit.com.br e www.rit.com.br)
+server {
+    listen 443 ssl http2;
+    server_name ${DOMAIN_ROOT} www.${DOMAIN_ROOT};
+    server_tokens off;
+
+    ssl_certificate /etc/letsencrypt/live/${DOMAIN_ROOT}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN_ROOT}/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "same-origin" always;
+
+    location / {
+        # Encaminha para o Portal Landing View ou Landing Institucional
+        proxy_pass http://portal:${NGINX_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}

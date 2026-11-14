@@ -192,3 +192,135 @@ export function outboundUrlError(raw, { allowLan = false } = {}) {
   }
   return null;
 }
+
+function canonicalBaseUrl(raw) {
+  const s = String(raw || '').trim().replace(/\/+$/, '');
+  if (!s) return '';
+  try {
+    const u = new URL(s);
+    if (u.username || u.password || u.search || u.hash) return '';
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
+    const p = u.pathname === '/' ? '' : u.pathname.replace(/\/+$/, '');
+    return `${u.protocol}//${u.host.toLowerCase()}${p}`;
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Retorna true somente quando `rawUrl` corresponde exatamente a um endpoint canônico do gateway
+ * central da plataforma (por URL + porta exata, nunca permitindo portas arbitrárias em localhost).
+ */
+export function isPlatformEvolutionUrl(rawUrl, env = process.env) {
+  const clean = canonicalBaseUrl(rawUrl);
+  if (!clean) return false;
+  const envUrl = canonicalBaseUrl(env?.EVOLUTION_API_URL || '');
+  return (
+    clean === 'http://localhost:8082' ||
+    clean === 'http://127.0.0.1:8082' ||
+    clean === 'http://evolution-api:8080' ||
+    (Boolean(envUrl) && clean === envUrl)
+  );
+}
+
+/**
+ * Valida URL base da Evolution API contra SSRF.
+ * Quando `allowInternalPlatform: false` (ex.: URLs customizadas de tenants), exige HTTPS público
+ * com domínio completo (FQDN) ou IP público, bloqueando localhost, hostnames internos (.local/.internal),
+ * single-label hostnames, credenciais na URL, query/hash e faixas privadas/loopback/link-local.
+ */
+export function validateEvolutionUrl(rawUrl, { allowInternalPlatform = true, env = process.env } = {}) {
+  if (!rawUrl || typeof rawUrl !== 'string' || !rawUrl.trim()) {
+    return { ok: false, error: 'URL da Evolution API não informada' };
+  }
+  const clean = rawUrl.trim().replace(/\/+$/, '');
+  if (clean.length > MAX_URL_LENGTH) {
+    return { ok: false, error: 'URL da Evolution API muito longa' };
+  }
+  let parsed;
+  try {
+    parsed = new URL(clean);
+  } catch {
+    return { ok: false, error: 'URL da Evolution API inválida' };
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { ok: false, error: 'Apenas protocolos http ou https são permitidos' };
+  }
+  if (parsed.username || parsed.password) {
+    return { ok: false, error: 'URL da Evolution API não pode conter usuário ou senha' };
+  }
+  if (parsed.search || parsed.hash) {
+    return { ok: false, error: 'URL base da Evolution API não pode conter query string ou fragmento' };
+  }
+
+  if (allowInternalPlatform && isPlatformEvolutionUrl(clean, env)) {
+    return { ok: true, url: clean, isPlatform: true };
+  }
+
+  if (parsed.protocol !== 'https:') {
+    return { ok: false, error: 'URLs externas da Evolution API devem utilizar HTTPS' };
+  }
+
+  const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (!hostname) {
+    return { ok: false, error: 'URL da Evolution API inválida' };
+  }
+
+  if (
+    /^(localhost|evolution-api)$/i.test(hostname) ||
+    /\.(localhost|local|internal|lan|home|arpa)$/i.test(hostname)
+  ) {
+    return { ok: false, error: 'Acesso a hostnames internos ou locais é proibido (SSRF bloqueado)' };
+  }
+
+  const isIp = net.isIP(hostname) !== 0;
+  if (isIp || /^[0-9.]+$/.test(hostname) || hostname.includes(':')) {
+    if (!isIp || isPrivateAddr(hostname)) {
+      return { ok: false, error: 'Acesso a endereços de rede privada ou loopback é proibido (SSRF bloqueado)' };
+    }
+    return { ok: true, url: clean, isPlatform: false };
+  }
+
+  if (!hostname.includes('.')) {
+    return { ok: false, error: 'Informe um domínio público completo (FQDN) com HTTPS para a Evolution API' };
+  }
+
+  return { ok: true, url: clean, isPlatform: false };
+}
+
+/**
+ * Valida sintaxe e realiza verificação prévia de DNS para bloquear DNS rebinding para IPs privados.
+ * Pula resolução DNS apenas para endpoints exatos do gateway central quando `allowInternalPlatform: true`.
+ */
+export async function resolveAndVerifyPublicEvolutionHost(
+  rawUrl,
+  { allowInternalPlatform = false, env = process.env, lookup = dns.promises.lookup } = {}
+) {
+  const valid = validateEvolutionUrl(rawUrl, { allowInternalPlatform, env });
+  if (!valid.ok) return valid;
+  if (valid.isPlatform) return valid;
+
+  const parsed = new URL(valid.url);
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (net.isIP(host)) {
+    return isPrivateAddr(host)
+      ? { ok: false, error: 'Acesso a endereços de rede privada ou loopback é proibido (SSRF bloqueado)' }
+      : valid;
+  }
+
+  let records;
+  try {
+    records = await lookup(host, { all: true });
+  } catch (err) {
+    return { ok: false, error: `Falha ao resolver DNS do host da Evolution API: ${err?.message || host}` };
+  }
+  const list = Array.isArray(records) ? records : (records ? [records] : []);
+  if (!list.length || list.some(r => !r?.address || isPrivateAddr(r.address))) {
+    return {
+      ok: false,
+      error: 'Host da Evolution API resolve para endereço privado/loopback proibido (SSRF/DNS rebinding bloqueado)'
+    };
+  }
+  return { ...valid, resolved: list };
+}

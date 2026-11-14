@@ -1,0 +1,86 @@
+/* Projeto Verão (seasonal/verao.jsx): brilho solar sutil no topo, sol interativo com dicas de
+   hidratação/energia nos treinos de verão e detalhes dourados nas conquistas. */
+
+html[data-season="verao"] .vr-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 30;
+  overflow: hidden;
+}
+
+html[data-season="verao"] .vr-glow {
+  position: absolute;
+  top: -60px;
+  right: -40px;
+  width: 240px;
+  height: 240px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(251, 191, 36, 0.14) 0%, rgba(249, 115, 22, 0.05) 48%, transparent 72%);
+  pointer-events: none;
+}
+
+html[data-season="verao"] .vr-sun-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(251, 191, 36, 0.32);
+  background: rgba(251, 191, 36, 0.10);
+  color: var(--label);
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: transform 0.18s ease, background 0.18s ease;
+}
+
+html[data-season="verao"] .vr-sun-btn:active {
+  transform: scale(0.95);
+}
+
+html[data-season="verao"] .vr-sunsvg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  animation: vr-spin 18s linear infinite;
+}
+
+html[data-season="verao"] .vr-sun-pop .vr-sunsvg {
+  animation: vr-pulse 0.55s cubic-bezier(0.3, 0.8, 0.3, 1.3);
+}
+
+html[data-season="verao"] .vr-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #f59e0b;
+  letter-spacing: 0.02em;
+}
+
+html[data-season="verao"] .vr-wavesvg {
+  width: 36px;
+  height: 14px;
+  opacity: 0.82;
+}
+
+@keyframes vr-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes vr-pulse {
+  0% { transform: scale(1) rotate(0deg); }
+  45% { transform: scale(1.28) rotate(45deg); }
+  100% { transform: scale(1) rotate(90deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-season="verao"] .vr-sunsvg {
+    animation: none;
+  }
+}

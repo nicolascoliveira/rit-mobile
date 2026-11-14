@@ -13,12 +13,25 @@ map $request_uri $api_request_uri {
     "~^\Q${BASE_PATH}\E(?<api_request_rest>/.*)$" $api_request_rest;
 }
 
+# Preserve HTTPS scheme when terminated at an upstream TLS reverse proxy.
+map $http_x_forwarded_proto $proxy_proto {
+    default $scheme;
+    "~^(https?)$" $1;
+}
+
 server {
     listen ${NGINX_PORT};
     # No nginx version in the Server header or on its own error pages.
     server_tokens off;
     root /usr/share/nginx/html;
     index index.html;
+    # Unwrap visitor IP only when forwarded through local/private reverse proxies (host nginx / Docker bridge).
+    set_real_ip_from 127.0.0.1;
+    set_real_ip_from 10.0.0.0/8;
+    set_real_ip_from 172.16.0.0/12;
+    set_real_ip_from 192.168.0.0/16;
+    real_ip_header X-Forwarded-For;
+    real_ip_recursive on;
     # Every redirect nginx sends (the unknown-path one below, and /api to /api/) carries a
     # relative Location. An absolute one is built from nginx's own scheme and port,
     # http://host:8080/api/, which is not an address behind an https reverse proxy.
@@ -69,7 +82,7 @@ server {
         # front of its own and choose what the activity log recorded about it. Overwriting is what
         # makes the header mean anything.
         proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $proxy_proto;
         # Same reasoning, and the API trusts this one FIRST. Empty by default, which drops the
         # header entirely, so a direct client cannot forge it. Cloudflare users set
         # CF_CONNECTING_IP=$http_cf_connecting_ip to let the real one through — correct only when
@@ -107,7 +120,7 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $proxy_proto;
         proxy_set_header CF-Connecting-IP "${CF_CONNECTING_IP}";
     }
 

@@ -7,6 +7,7 @@ import { t } from '../lib/i18n.js'
 import { Button, Segmented } from './ui.jsx'
 import { shareImage } from '../lib/share-image.js'
 import { FORMAT_IDS, STYLE_IDS } from '../lib/card-draw.js'
+import { useBranding } from '../lib/branding.js'
 
 // The last format and look picked, per device: a person who posts Stories keeps posting Stories.
 const PREF = 'og_share_card'
@@ -24,6 +25,7 @@ function writePref(p) { try { localStorage.setItem(PREF, JSON.stringify(p)) } ca
  * what the share sheet is told it is.
  */
 export default function ShareCardSheet({ title, render, deps = [], name, shareTitle, close, toast, children }) {
+  const branding = useBranding()
   const [pref, setPref] = useState(readPref)
   const [img, setImg] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -43,7 +45,7 @@ export default function ShareCardSheet({ title, render, deps = [], name, shareTi
       })
       .catch(() => { if (alive) setImg(prev => ({ ...prev, failed: true })) })
     return () => { alive = false }
-  }, [pref.format, pref.style, ...deps]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pref.format, pref.style, branding?.gymName, branding?.logoUrl, branding?.primaryColor, ...deps]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => { if (shown.current) URL.revokeObjectURL(shown.current) }, [])
   const share = async () => {
     setBusy(true)
@@ -51,8 +53,22 @@ export default function ShareCardSheet({ title, render, deps = [], name, shareTi
     setBusy(false)
     close?.()
   }
+  const downloadDirect = () => {
+    if (!img?.blob) return
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(img.blob)
+    a.download = name || 'rit-story-workout.png'
+    a.click()
+    URL.revokeObjectURL(a.href)
+    toast?.(t('Image saved'))
+  }
   return <>
     <h3>{title}</h3>
+    {branding?.isCustomTenant && branding?.gymName && (
+      <div className="small muted" style={{ marginBottom: 8 }}>
+        ✨ Card oficial <b>{branding.gymName}</b> pronto para Stories e Status
+      </div>
+    )}
     <div className={'share-card share-' + pref.format}>
       {img?.url
         ? <img src={img.url} alt={t('Preview of the image to share')} />
@@ -66,6 +82,13 @@ export default function ShareCardSheet({ title, render, deps = [], name, shareTi
         options={[{ value: 'dark', icon: 'moon', label: t('Dark') }, { value: 'light', icon: 'sun', label: t('Light') }]} />
     </div>
     {children}
-    <Button variant="primary" icon="share" disabled={!img?.blob || busy} onClick={share}>{t('Share')}</Button>
+    <div style={{ display: 'flex', gap: 8 }}>
+      <div style={{ flex: 1 }}>
+        <Button variant="primary" icon="share" disabled={!img?.blob || busy} onClick={share}>{t('Share')}</Button>
+      </div>
+      <Button variant="tinted" icon="download" disabled={!img?.blob || busy} onClick={downloadDirect} aria-label={t('Download')}>
+        PNG
+      </Button>
+    </div>
   </>
 }

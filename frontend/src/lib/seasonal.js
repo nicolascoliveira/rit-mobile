@@ -17,6 +17,7 @@
    override, which is only ever opt-in. `appIcon` names its icon in lib/app-icon-variants.js, which
    the settings page then suggests while the theme shows. */
 import { isOn } from './modules.js'
+import { getBranding } from './branding.js'
 
 export const THEMES = [
   {
@@ -36,6 +37,14 @@ export const THEMES = [
     during: 'Snow, fairy lights, a sleigh and an advent calendar until the end of December. Never on your sets.',
     back: 'Back next December. The elves are on a tea break.',
     appIcon: 'christmas', appIconTitle: 'Try the Christmas app icon',
+  },
+  {
+    id: 'verao', title: 'Projeto Verão', icon: 'sun', tint: 'var(--orange)',
+    from: [1, 2], to: [2, 28],
+    colors: 'orange', colorsTitle: 'Cores solares de verão', colorsNote: 'Aplica um destaque solar enquanto o Projeto Verão estiver ativo. A cor padrão volta depois.',
+    workoutTitle: 'Também durante os treinos', workoutNote: 'Selo especial na tela de conclusão do treino. Nunca interfere nas suas séries.',
+    during: 'Clima de verão, dicas de hidratação e alta performance até o fim de fevereiro.',
+    back: 'Ativo em janeiro e fevereiro (ou quando ativado em campanha pela academia).',
   },
 ]
 export const THEME_IDS = THEMES.map(th => th.id)
@@ -64,10 +73,19 @@ export function themeOn(S, id, now = new Date()) {
   return c === 'on' || (c === 'auto' && inSeason(id, now))
 }
 
-/** The theme showing now, or null. The first in the list wins if two ever overlap. */
+/** The theme showing now, or null. Respects the gym's campaign setting (`branding.seasonalTheme`) as well as the student's preference. */
 export function activeSeason(S, now = new Date()) {
-  // Settings → Modules: Seasonal themes off is no theme at all, whatever each one is set to.
   if (!isOn(S, 'seasonal')) return null
+  const branding = getBranding?.() || {}
+  const gymSeason = branding.seasonalTheme
+  if (gymSeason === 'off') return null
+  // If the student explicitly turned a theme 'on', honor it first
+  const explicitOn = THEMES.find(th => seasonChoice(S, th.id) === 'on')
+  if (explicitOn) return explicitOn.id
+  // If the gym activated a specific seasonal campaign ('verao', 'halloween', 'christmas') and the student left it on 'auto'
+  if (gymSeason && THEME_IDS.includes(gymSeason) && seasonChoice(S, gymSeason) !== 'off') {
+    return gymSeason
+  }
   return THEMES.find(th => themeOn(S, th.id, now))?.id || null
 }
 

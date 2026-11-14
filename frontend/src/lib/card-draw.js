@@ -4,11 +4,13 @@
 // lib/share-image.js gets the picture out of the app. No exercise picture or clip is ever drawn
 // on a card (the licence keeps those inside the app, NOTICE.md).
 
+import { getBranding } from './branding.js'
+
 // 9:16 for Stories and Reels, 1:1 for a feed or a chat.
 export const FORMATS = { story: { width: 1080, height: 1920 }, square: { width: 1080, height: 1080 } }
 export const FORMAT_IDS = Object.keys(FORMATS)
 export const STYLE_IDS = ['dark', 'light']
-export const SITE = 'opengym.ch'
+export const SITE = 'Rit'
 
 /**
  * The colours of a card, the app's own (index.css) in a fixed light or dark look, whatever the
@@ -66,26 +68,83 @@ export function drawMark(ctx, x, y, h, color) {
 }
 
 /**
- * The footer every card ends with: the mark, "openGym" with "Gym" in the accent, and the site at
- * the other end. `y` is the text's baseline. Drawn left to right whatever the language: it is a
- * logo, and a logo does not mirror.
+ * Carrega a logo da academia/personal (data URL ou HTTPS) para desenhar no rodapé do card 9:16.
+ * Nunca trava a geração se a imagem falhar por CORS ou timeout.
  */
-export function drawBrand(ctx, { x, y, width, colors, family, size = 40 }) {
-  const markH = size * 0.78
-  drawMark(ctx, x, y - size * 0.36, markH, colors.acc)
-  let tx = x + markH * MARK_ASPECT + size * 0.4
+export function loadBrandLogo(logoUrl) {
+  if (!logoUrl || typeof Image === 'undefined') return Promise.resolve(null)
+  const src = String(logoUrl).trim()
+  if (!src || src.startsWith('blob:')) return Promise.resolve(null)
+  return new Promise(resolve => {
+    const img = new Image()
+    let settled = false
+    const done = val => {
+      if (settled) return
+      settled = true
+      resolve(val)
+    }
+    const timer = setTimeout(() => done(null), 2500)
+    if (!src.startsWith('data:')) {
+      img.crossOrigin = 'anonymous'
+    }
+    img.onload = () => {
+      clearTimeout(timer)
+      done(img.naturalWidth > 0 ? img : null)
+    }
+    img.onerror = () => {
+      clearTimeout(timer)
+      done(null)
+    }
+    img.src = src
+  })
+}
+
+/**
+ * The footer every card ends with: the mark (or custom gym logo), the active gym name (or "Rit"),
+ * optional slogan, and the Instagram / Rit signature at the other end. `y` is the text's baseline.
+ */
+export function drawBrand(ctx, { x, y, width, colors, family, size = 40, logoImg = null }) {
+  const branding = getBranding?.() || {}
+  const customName = branding.isCustomTenant && branding.gymName ? String(branding.gymName).trim() : ''
+  const rawInsta = branding.instagram ? String(branding.instagram).trim() : ''
+  const instaLabel = rawInsta ? (rawInsta.startsWith('@') ? rawInsta : `@${rawInsta}`) : ''
+  const rightLabel = instaLabel
+    ? (customName ? `${instaLabel} · Rit` : instaLabel)
+    : (customName ? 'Rit' : '')
+
+  let tx = x
+  if (logoImg && logoImg.naturalWidth > 0) {
+    const box = Math.round(size * 1.18)
+    const bx = x
+    const by = Math.round(y - size * 0.88)
+    ctx.save()
+    roundRect(ctx, bx, by, box, box, Math.round(box * 0.26))
+    ctx.clip()
+    ctx.drawImage(logoImg, bx, by, box, box)
+    ctx.restore()
+    tx = x + box + Math.round(size * 0.36)
+  } else {
+    const markH = size * 0.78
+    drawMark(ctx, x, y - size * 0.36, markH, colors.acc)
+    tx = x + markH * MARK_ASPECT + size * 0.4
+  }
+
   ctx.direction = 'ltr'
   ctx.textAlign = 'left'
   ctx.font = `800 ${size}px ${family}`
-  ctx.fillStyle = colors.label
-  ctx.fillText('open', tx, y)
-  tx += ctx.measureText('open').width
-  ctx.fillStyle = colors.accText || colors.acc
-  ctx.fillText('Gym', tx, y)
-  ctx.font = `600 ${Math.round(size * 0.72)}px ${family}`
-  ctx.fillStyle = colors.label2
-  ctx.textAlign = 'right'
-  ctx.fillText(SITE, x + width, y)
+  if (customName) {
+    ctx.fillStyle = colors.label
+    ctx.fillText(customName, tx, y)
+  } else {
+    ctx.fillStyle = colors.accText || colors.acc
+    ctx.fillText('Rit', tx, y)
+  }
+  if (rightLabel) {
+    ctx.font = `600 ${Math.round(size * 0.68)}px ${family}`
+    ctx.fillStyle = colors.label2
+    ctx.textAlign = 'right'
+    ctx.fillText(rightLabel, x + width, y)
+  }
   ctx.textAlign = 'left'
 }
 

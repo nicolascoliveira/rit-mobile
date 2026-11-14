@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { api, setRemoteAuth } from '../lib/api.js'
 import { localTZ } from '../lib/format.js'
 import { t } from '../lib/i18n.js'
-import { registerCustom, healCustomEx } from '../lib/exercises.js'
+import { registerCustom, registerTenantExercises, healCustomEx } from '../lib/exercises.js'
 import { syncGymInventory } from '../lib/gym-inventory.js'
 import { DEMO, DEMO_SEEDED } from '../lib/demo.js'
 import { rememberDefaultLang } from '../lib/default-lang.js'
@@ -31,6 +31,7 @@ import { DEFAULT_TEMPLATE_ID } from '../lib/structuralBalanceTemplates.js'
 import { WC_DEFAULT } from '../lib/workout-controls.js'
 import { sanitizeAccent } from '../lib/accent.js'
 import { registerExerciseAliases } from '../lib/exercise-aliases.js'
+import { lockTenantForUser, unlockTenant } from '../lib/branding.js'
 
 const KEY = 'gym_state_v1'
 // Where the saved copy stands with the server: the revision it descends from, and its own `_ts`
@@ -42,6 +43,39 @@ const KEY = 'gym_state_v1'
 const SYNC_KEY = 'gym_sync'
 // Which write of the saved copy this is: a tab finds another tab's write by it (persist, joinSaved).
 const WID_KEY = 'gym_state_wid'
+const EMPTY_TENANT_EX = { tenantId: 'default', overrides: {}, customExercises: [] }
+const tenantExCacheKey = uid => (uid ? `rit_tenant_ex_${uid}` : null)
+const readCachedTenantEx = uid => {
+  const k = tenantExCacheKey(uid)
+  if (!k) return null
+  try {
+    const raw = localStorage.getItem(k)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') return null
+    return {
+      tenantId: typeof parsed.tenantId === 'string' ? parsed.tenantId : 'default',
+      overrides: parsed.overrides && typeof parsed.overrides === 'object' ? parsed.overrides : {},
+      customExercises: Array.isArray(parsed.customExercises) ? parsed.customExercises : []
+    }
+  } catch { return null }
+}
+const writeCachedTenantEx = (uid, data) => {
+  const k = tenantExCacheKey(uid)
+  if (!k) return
+  try { localStorage.setItem(k, JSON.stringify(data)) } catch { /* quota */ }
+}
+const clearCachedTenantEx = uid => {
+  const k = tenantExCacheKey(uid)
+  if (!k) return
+  try { localStorage.removeItem(k) } catch { /* ignore */ }
+}
+const hasTenantMedia = te => {
+  if (!te || typeof te !== 'object') return false
+  for (const ov of Object.values(te.overrides || {})) if (ov?.media?.hash) return true
+  for (const c of Array.isArray(te.customExercises) ? te.customExercises : []) if (c?.media?.hash) return true
+  return false
+}
 // Whose copy that write was: the owner (gym_owner) the writing tab held, '' for a guest's. A tab
 // joins only a copy written under the owner it holds itself (joinSaved, syncFromSaved).
 const WID_OWNER_KEY = 'gym_state_owner'
@@ -89,7 +123,7 @@ const gainedWorkoutMedia = (prev, next) => {
   return workoutMediaHashes(next).some(h => !had.has(h))
 }
 export const DEF = {
-  unit: 'kg', restSec: 90, restPauseSec: 15, sound: true, soundOnSilent: false, vibrateOnSilent: false, timerFlash: false, timedSetOvertime: false, keepAwake: true, lang: 'en',
+  unit: 'kg', restSec: 90, restPauseSec: 15, sound: true, soundOnSilent: false, vibrateOnSilent: false, timerFlash: false, timedSetOvertime: false, keepAwake: true, lang: 'pt-BR',
   theme: 'dark', accent: 'lime', body: 'male', targetW: null,
   // The weekly-rate corridor on the body-weight card (#759, lib/bodyweight.js rateCorridor).
   rateGoal: null,
@@ -317,10 +351,12 @@ export function draftOf(prev) {
 // picks a language.
 const detectedLang = () => {
   try {
-    const base = (navigator.language || '').toLowerCase().split('-')[0]
+    const full = (navigator.language || '').replace(/_/g, '-')
+    const base = full.toLowerCase().split('-')[0]
     if (RTL_LANGS.has(base)) return base
+    if (full.toLowerCase().startsWith('pt')) return 'pt-BR'
   } catch (e) { /* ignore */ }
-  return 'en'
+  return 'pt-BR'
 }
 
 // A copy started from nothing on this device. `langAuto` marks its language as one nobody has
@@ -965,6 +1001,7 @@ export const useStore = create((set, get) => {
     const base = readStoredSync()
     if (!base) return false
     meta.set(get().S, { base, owed: storedOwed() })
+    lockTenantForUser(u)
     set({ user: u })
     setSync({ held: false })
     return true
@@ -1027,8 +1064,11 @@ export const useStore = create((set, get) => {
   // goes before the wiped copy is written: another tab must learn that the copy is nobody's before
   // it sees the new copy, or it joins its own copy of the account into it (QA 2026-10-06).
   const clearLocalSession = () => {
-    const hadMedia = keptHashes(get().S).size > 0
+    const prevUid = get().user?.id
+    const hadMedia = keptHashes(get().S).size > 0 || hasTenantMedia(get().tenantExercises)
     get().setUser(null)
+    clearCachedTenantEx(prevUid)
+    unlockTenant({ clearStorageIfNoUrl: true })
     localStorage.removeItem('gym_guest')
     forgetSync()
     releaseAdopt()   // the copy it was about is gone
@@ -1388,6 +1428,9 @@ export const useStore = create((set, get) => {
   if (keptHashes(S0).size) loadPending()
   meta.set(S0, { base: readStoredSync(), owed: storedOwed() })
   const user0 = (() => { try { return JSON.parse(localStorage.getItem('gym_user')) || null } catch { return null } })()
+  if (user0) lockTenantForUser(user0)
+  const tenantEx0 = user0?.id ? (readCachedTenantEx(user0.id) || EMPTY_TENANT_EX) : EMPTY_TENANT_EX
+  registerTenantExercises(tenantEx0.customExercises, tenantEx0.overrides)
   adoptHold = !!user0 && readAdopt()?.uid === user0.id
   const sync0 = { offline: false, pending: storedOwed(), auth: false, lastError: null, lastSynced: (() => { try { return +localStorage.getItem(SYNCED_AT_KEY) || 0 } catch { return 0 } })(), server: serverBase(), held: adoptHold }
   sync0.status = statusOf(sync0, user0)
@@ -1395,6 +1438,7 @@ export const useStore = create((set, get) => {
   return {
     S: S0,
     user: user0,
+    tenantExercises: tenantEx0,
     ready: false,
     // The connection as the screens show it — see statusOf above for every field.
     sync: sync0,
@@ -1663,9 +1707,31 @@ export const useStore = create((set, get) => {
       return configFetch
     },
 
+    async loadTenantExercises() {
+      const u = get().user
+      if (!u?.id) return EMPTY_TENANT_EX
+      if (sandbox) return get().tenantExercises
+      try {
+        const res = await api('/api/tenant/exercises')
+        if (get().user?.id !== u.id) return get().tenantExercises
+        const next = {
+          tenantId: res?.tenant_id || 'default',
+          overrides: res?.overrides && typeof res.overrides === 'object' ? res.overrides : {},
+          customExercises: Array.isArray(res?.customExercises) ? res.customExercises : []
+        }
+        registerTenantExercises(next.customExercises, next.overrides)
+        writeCachedTenantEx(u.id, next)
+        set({ tenantExercises: next })
+        return next
+      } catch {
+        return get().tenantExercises
+      }
+    },
+
     // `adopt` (a sign-in, a pairing — { alwaysAsk } for a device link): adoptProfile follows and
     // decides what becomes of this copy; until it has, nothing is pulled or pushed (ADOPT_KEY).
     setUser(u, { adopt } = {}) {
+      let nextTe = EMPTY_TENANT_EX
       if (u) {
         // The local copy belongs to whoever last signed in here. When a session expires or is
         // revoked elsewhere, boot() only drops the user and the data stays; a different profile
@@ -1729,9 +1795,21 @@ export const useStore = create((set, get) => {
         // Coach entry point would stay hidden until the next reload. Ask again, unawaited:
         // nothing on this path waits for the answer. A copy that has the key was made for a
         // session and is already the right answer, Coach or no Coach.
-        if (get().config && !('coach' in get().config)) get().refreshConfig()
-      } else { rejoined = false; adoptHold = false; localStorage.removeItem('gym_user') }
-      set({ user: u })
+        const locked = lockTenantForUser(u)
+        const cfgNow = get().config
+        if (cfgNow && (!('coach' in cfgNow) || (locked && (cfgNow.tenant_id || 'default') !== locked))) {
+          get().refreshConfig()
+        }
+        nextTe = u.id ? (readCachedTenantEx(u.id) || EMPTY_TENANT_EX) : EMPTY_TENANT_EX
+        registerTenantExercises(nextTe.customExercises, nextTe.overrides)
+      } else {
+        rejoined = false
+        adoptHold = false
+        localStorage.removeItem('gym_user')
+        unlockTenant({ clearStorageIfNoUrl: false })
+        registerTenantExercises([], {})
+      }
+      set({ user: u, tenantExercises: nextTe })
       setSync({ held: adoptHold })
     },
 

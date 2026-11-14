@@ -83,17 +83,68 @@ export function byCategory(list, cat) {
 
 // Custom (user-created) exercises live in synced state S.customEx (issue #11) and are
 // merged into the id index here so every EXIDX[id] lookup keeps working unchanged.
+// Tenant custom exercises (tx_*) and media overrides synced from the gym portal live in a
+// separate read-only registry so they never pollute S.customEx or get overwritten by the student.
 let customIds = new Set()
+let tenantCustomList = []
+let tenantCustomIds = new Set()
+let tenantOverridesMap = Object.create(null)
 const BUILTIN = new Set(CATALOGUE)
 export function registerCustom(list) {
   customIds.forEach(id => {
     delete EXIDX[id]
+    const fromTenant = tenantCustomList.find(ex => ex.id === id)
+    if (fromTenant) { EXIDX[id] = fromTenant; return }
     const builtIn = CATALOGUE.find(ex => ex.id === id)
     if (builtIn) EXIDX[id] = builtIn
   })
   const xs = (Array.isArray(list) ? list : []).filter(e => e && e.id != null)
   customIds = new Set(xs.map(e => e.id))
   xs.forEach(e => { EXIDX[e.id] = e })
+}
+
+export function registerTenantExercises(customList = [], overridesMap = {}) {
+  tenantCustomIds.forEach(id => {
+    if (!customIds.has(id)) {
+      delete EXIDX[id]
+      const builtIn = CATALOGUE.find(ex => ex.id === id)
+      if (builtIn) EXIDX[id] = builtIn
+    }
+  })
+  const xs = (Array.isArray(customList) ? customList : [])
+    .filter(e => e && e.id != null)
+    .map(e => ({
+      ...e,
+      n: e.n || e.name || e.id,
+      name: e.name || e.n || e.id,
+      bp: e.bp || 'other',
+      tg: e.tg || e.bp || 'other',
+      eq: e.eq || '',
+      tenantCustom: true
+    }))
+  tenantCustomList = xs
+  tenantCustomIds = new Set(xs.map(e => e.id))
+  xs.forEach(e => {
+    if (!customIds.has(e.id)) EXIDX[e.id] = e
+  })
+
+  const cleanOv = Object.create(null)
+  if (overridesMap && typeof overridesMap === 'object') {
+    for (const [id, ov] of Object.entries(overridesMap)) {
+      if (ov && (ov.media || ov.url || ov.note)) cleanOv[id] = ov
+    }
+  }
+  tenantOverridesMap = cleanOv
+}
+
+export const isTenantCustomEx = ex => !!ex && typeof ex === 'object' && !BUILTIN.has(ex) &&
+  (ex.tenantCustom === true || tenantCustomIds.has(ex.id))
+
+export const getTenantOverride = exOrId => {
+  const id = typeof exOrId === 'string' ? exOrId : exOrId?.id
+  if (!id) return null
+  const ov = tenantOverridesMap[id]
+  return ov && (ov.media || ov.url || ov.note) ? ov : null
 }
 
 // A built-in catalogue entry itself (never a copy, a snapshot or a custom one). Those objects never
@@ -104,7 +155,7 @@ export const isBuiltinEx = ex => BUILTIN.has(ex)
 // `custom` flag alone: a plan import before 1.3.8 (a shared plan file, a plan from the AI coach)
 // stored its exercises without the flag, and those were left with no Edit, no Delete and a
 // broken thumbnail. A built-in catalogue entry is never custom, even if a custom one shadows its id.
-export const isCustomEx = ex => !!ex && typeof ex === 'object' && !BUILTIN.has(ex) &&
+export const isCustomEx = ex => !!ex && typeof ex === 'object' && !BUILTIN.has(ex) && !isTenantCustomEx(ex) &&
   (ex.custom === true || customIds.has(ex.id))
 
 // The stored list with the flag put back on every entry that lost it — the same array when
@@ -125,7 +176,10 @@ export function healCustomEx(list) {
 // Every exercise you can pick: yours, then the catalogue's, less any merged into another (#656,
 // lib/exercise-merge.js): a catalogue exercise cannot be removed, so a merge hides it instead.
 export const allExercises = st => {
-  const all = [...(st?.customEx || []), ...CATALOGUE]
+  const own = st?.customEx || []
+  const ownIds = new Set(own.map(c => c?.id).filter(Boolean))
+  const tCustom = tenantCustomList.filter(c => !ownIds.has(c.id))
+  const all = [...own, ...tCustom, ...CATALOGUE]
   const m = st?.exMerged
   if (!m || typeof m !== 'object') return all
   const away = new Set(Object.keys(m).filter(k => m[k] && m[k].into))

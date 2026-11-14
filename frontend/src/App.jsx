@@ -5,7 +5,7 @@ import { useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
 import { bindUI } from './components/ui.jsx'
 import { setWeightDecimals } from './lib/format.js'
-import { accentValue, applyAccent } from './lib/accent.js'
+import { accentValue, applyAccent, cleanHex } from './lib/accent.js'
 import { seasonAccent } from './lib/seasonal.js'
 import { setLang, useLang, baseLang } from './lib/i18n.js'
 import { effectiveLang } from './lib/default-lang.js'
@@ -52,6 +52,7 @@ import { openDeviceLinkRedeem } from './components/Passkeys.jsx'
 import { useAnimPacksBoot } from './components/Animations.jsx'
 import { useNfcTagLinks } from './components/Nfc.jsx'
 import { useRoutineLinks } from './components/RoutineShare.jsx'
+import { initGymBranding, useBranding } from './lib/branding.js'
 import Login from './views/Login.jsx'
 import MobileOnboarding from './views/MobileOnboarding.jsx'
 import PermissionSteps from './views/PermissionSteps.jsx'
@@ -75,6 +76,7 @@ function lazyView(load) {
   }
 }
 const Admin = lazyView(() => import('./views/Admin.jsx'))
+const Trainer = lazyView(() => import('./views/Trainer.jsx'))
 const CoachChat = lazyView(() => import('./views/CoachChat.jsx'))
 const Measurements = lazyView(() => import('./views/Measurements.jsx'))
 const CoachIntake = lazyView(() => import('./views/CoachIntake.jsx'))
@@ -137,6 +139,20 @@ function Shell() {
   useEffect(() => { setAlarmBuzzer(MOBILE && S.vibrate !== false && S.vibrateOnSilent ? buzzAsAlarm : null) }, [S.vibrate, S.vibrateOnSilent])
   // iPhone app: the page cannot buzz (no navigator.vibrate), its native side can.
   useEffect(() => { if (MOBILE) nativePlatform().then(p => { if (p === 'ios') setNativeBuzzer(buzzAsAlarm) }) }, [])
+  // Inicializa a identidade visual / branding da academia (na abertura, ao autenticar e ao focar na aba)
+  const branding = useBranding()
+  const lastSynced = useStore(s => s.sync?.lastSynced)
+  const loadTenantExercises = useStore(s => s.loadTenantExercises)
+  useEffect(() => {
+    initGymBranding(true)
+    if (user?.id) loadTenantExercises()
+    const onFocus = () => {
+      initGymBranding()
+      if (useStore.getState().user?.id) loadTenantExercises()
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [user?.id, user?.tenantId, user?.saasRole, lastSynced, loadTenantExercises])
   // Store apps: which animation packs this device has, and the one the chosen quality wants for
   // the figure shown (components/Animations.jsx). Nothing on the web.
   useAnimPacksBoot()
@@ -161,7 +177,9 @@ function Shell() {
   // A preset key, or the user's own colour as '#rrggbb' (lib/accent.js), already checked. A
   // seasonal theme's colours stand in for it while that theme shows, and only when chosen
   // (Settings → Look & Home → Seasonal themes); the saved accent itself is never touched.
-  const accent = seasonAccent(S) || accentValue(S)
+  const gymHex = branding.isCustomTenant ? cleanHex(branding.primaryColor) : null
+  const userPickedAccent = S.accent && S.accent !== 'lime'
+  const accent = seasonAccent(S) || (userPickedAccent ? accentValue(S) : (gymHex || accentValue(S)))
   useEffect(() => { applyPrefs(S.theme, accent) }, [S.theme, accent])
   // 'system' needs to react live if the OS theme flips while the app is open, not just on
   // the next mount — a fixed 'dark'/'light' choice never re-fires this since matchMedia
@@ -358,6 +376,14 @@ function Shell() {
       {isOn(S, 'coach') && <Route path="/coach/proposal" element={<Navigate to="/coach" replace />} />}
       {isOn(S, 'coach') && <Route path="/coach/setup" element={<CoachSetup />} />}
       <Route path="/admin" element={user?.admin ? <Admin /> : <Navigate to="/home" replace />} />
+      <Route
+        path="/trainer"
+        element={
+          user?.admin || user?.owner || user?.role === 'trainer' || ['trainer', 'gym_owner', 'gym_manager', 'superadmin'].includes(user?.saasRole)
+            ? <Trainer />
+            : <Navigate to="/home" replace />
+        }
+      />
       <Route path="*" element={<Navigate to="/home" replace />} />
     </Routes>
   ))

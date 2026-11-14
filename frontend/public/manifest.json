@@ -1,7 +1,7 @@
 {
-  "name": "openGym",
-  "short_name": "openGym",
-  "description": "Personal gym & body weight tracker",
+  "name": "Rit",
+  "short_name": "Rit",
+  "description": "Plataforma inteligente de treinos e evolução física",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

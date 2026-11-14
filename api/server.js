@@ -1,4 +1,4 @@
-/* opengym-api — passkey (WebAuthn) auth + per-user state storage for openGym
+/* rit-api — passkey (WebAuthn) auth + per-user state storage for Rit
    No framework, JSON-file storage, signed session cookies.               */
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -41,14 +41,47 @@ import { atomicWrite as durableWrite } from './durable.js';
 import { ipv6Groups, guardedLookup, pushEndpointError, MAX_PUSH_ENDPOINT } from './net-guard.js';
 import { createIntegrations } from './integrations/index.js';
 import { integrationRoutes } from './integrations/routes.js';
+import { createSaasRoutes, ensureSaasDemoSeed, getCatalogueIndex } from './saas-routes.js';
+import { recoverWebhookQueueOnBoot } from './webhook-worker.js';
+import { runSecurityMigrations } from './migrate-security.js';
+import { resolveTenantId, resolveEffectiveTenantId, getTenant, listTenants, isTenantSuspended, getTenantAccessState, sanitizeTenantId } from './tenants.js';
+import {
+  tenantMediaBucket,
+  isTenantMediaBucket,
+  tenantIdFromMediaBucket,
+  tenantHasMediaHash,
+  readTenantMediaState
+} from './exercise-media.js';
+import { evictStudentSummary } from './trainer.js';
 import { excusedOn, nudgeFor, nudgeWindowOpen, toneOf } from './nudge.js';
 import { wrappedPushYear, wrappedSummary, wrappedPushOwed, wrappedPush } from './wrapped.js';
+import { notifyWorkoutCompletedIfAny } from './whatsapp.js';
+import {
+  getSqliteInstance,
+  runInTransaction,
+  loadCoreDbFromSqlite,
+  saveCoreDbToSqlite,
+  upsertUserSqlite,
+  upsertCredSqlite,
+  consumeInviteSqlite,
+  consumeDeviceLinkSqlite,
+  deleteUserSqlite,
+  readUserStateSqlite,
+  statUserStateSqlite,
+  writeUserStateSqlite,
+  writeUserStateCasSqlite,
+  deleteUserStateSqlite,
+  readWatchBoxSqlite,
+  writeWatchBoxSqlite,
+  deleteWatchBoxSqlite,
+  isSqliteUniqueConstraintError
+} from './sqlite.js';
 
 const PORT = +(process.env.PORT || 3000);
 const DATA = process.env.DATA_DIR || '/data';
 const RP_ID = process.env.RP_ID || 'localhost';
 const ORIGIN = process.env.ORIGIN || 'http://localhost:8080';
-const RP_NAME = process.env.RP_NAME || 'openGym';
+const RP_NAME = process.env.RP_NAME || 'Rit';
 // Admin dashboard (issue): admins are matched by uid (or the admin flag FIRST_USER_ADMIN sets);
 // INVITE_ONLY gates new signups behind a code the admin generates. Off by default, so a fresh
 // self-hosted instance stays open.
@@ -69,6 +102,58 @@ function claimFirstAdmin(req, user) {
   user.admin = true;
   user.owner = true;
   audit(req, 'admin.first-user', { user });
+}
+
+function resolveSignupContext(req, rawCode) {
+  const reqTenant = resolveTenantId(req);
+  const code = text(rawCode).trim().toUpperCase();
+  const findValidInvite = () => {
+    if (!code) return null;
+    const inv = db.invites.find(i => i.code === code && !i.usedBy && !i.revoked);
+    if (!inv) return null;
+    if (inv.tenantId && reqTenant !== 'default' && inv.tenantId !== reqTenant) return null;
+    return inv;
+  };
+  const inv = findValidInvite();
+  const signupTenant = inv?.tenantId || reqTenant;
+  const tenant = signupTenant !== 'default' ? getTenant(DATA, signupTenant) : null;
+  const inviteRequired = INVITE_ONLY || Boolean(tenant?.settings?.inviteOnly);
+  return { reqTenant, code, findValidInvite, inv, signupTenant, tenant, inviteRequired };
+}
+
+function signupTenantBlockedReason(signupTenant, tenant) {
+  if (!signupTenant || signupTenant === 'default') return null;
+  const access = getTenantAccessState(DATA, signupTenant);
+  if (access.blocked) {
+    return {
+      status: 403,
+      error: access.reason === 'trial_expired'
+        ? 'O período de degustação desta academia expirou.'
+        : access.reason === 'past_due'
+          ? 'O acesso desta academia está suspenso por pendência financeira.'
+          : 'O acesso desta academia está suspenso no momento.'
+    };
+  }
+  const maxStudents = tenant?.limits?.maxStudents;
+  if (maxStudents) {
+    const activeStudents = db.users.filter(
+      u => u.tenantId === signupTenant &&
+        !u.admin &&
+        !u.owner &&
+        u.saasRole !== 'superadmin' &&
+        u.saasRole !== 'gym_owner' &&
+        u.saasRole !== 'gym_manager' &&
+        u.saasRole !== 'manager' &&
+        u.saasRole !== 'trainer' &&
+        u.role !== 'trainer' &&
+        (!u.saasRole || u.saasRole === 'student') &&
+        !u.disabled
+    ).length;
+    if (activeStudents >= maxStudents) {
+      return { status: 403, error: 'Limite de alunos desta academia atingido. Entre em contato com a recepção.', code: 'plan-limit' };
+    }
+  }
+  return null;
 }
 // Guest mode ("Continue without account") keeps everything in the browser and never touches this
 // server — but on an instance meant for a known set of people, an entrance nobody can walk back
@@ -116,57 +201,29 @@ fs.mkdirSync(DATA, { recursive: true });
  * reason to refuse to boot. The privilege drop in adapters/spawn.js is the control that does
  * fail closed. */
 const lock = f => { try { fs.chmodSync(path.join(DATA, f), 0o600); } catch { /* not present yet, or host says no */ } };
-['secret', 'db.json', 'coach.json'].forEach(lock);
+['secret', 'rit.db', 'coach.json', 'db.json'].forEach(lock);
 
-/* ---------- secret + db ---------- */
+/* ---------- secret + SQLite db (WAL mode) ---------- */
 const secretFile = path.join(DATA, 'secret');
 if (!fs.existsSync(secretFile)) fs.writeFileSync(secretFile, crypto.randomBytes(32).toString('hex'), { mode: 0o600 });
 const SECRET = fs.readFileSync(secretFile, 'utf8').trim();
-// Integrations (integrations/, docs/INTEGRATIONS.md): off unless INTEGRATIONS names some. Their
-// connections live in DATA_DIR/integrations/, sealed with a key derived from SECRET.
 const integrations = createIntegrations({ dataDir: DATA, secret: SECRET, version: '1' });
 
-const dbFile = path.join(DATA, 'db.json');
-// Every account, passkey and invite. Only a missing file starts empty: an unreadable one (a write
-// cut short by a power loss, a damaged restore) used to boot with no users at all, and the first
-// save then replaced it — every profile locked out, every training history orphaned, and with
-// FIRST_USER_ADMIN the first visitor made admin. Now the damaged file is kept aside and the copy
-// saveDb keeps of each version it writes (db.json.bak) is used; with neither readable the server
-// refuses to start, saying why, rather than start as a new instance.
 function loadDb() {
-  let raw;
-  try { raw = fs.readFileSync(dbFile, 'utf8'); }
-  catch (e) { if (e.code === 'ENOENT') return { users: [], creds: [], subs: [], invites: [] }; throw e; }
-  const parse = text => { const v = JSON.parse(text); if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('not an object'); return v; };
-  try { return parse(raw); } catch (err) {
-    const aside = `${dbFile}.unreadable-${Date.now()}`;
-    try { fs.copyFileSync(dbFile, aside); } catch { /* the original stays where it is anyway */ }
-    console.error(`db.json cannot be read (${err.message}); kept a copy as ${path.basename(aside)}`);
-    try {
-      const bak = parse(fs.readFileSync(dbFile + '.bak', 'utf8'));
-      console.error('db.json: using db.json.bak, the copy of the last save');
-      return bak;
-    } catch {
-      console.error('db.json: no readable db.json.bak either. Refusing to start: restore db.json from a backup.');
-      process.exit(1);
-    }
-  }
+  return loadCoreDbFromSqlite(DATA);
 }
 let db = loadDb();
+const bootMigration = runSecurityMigrations({ dataDir: DATA, secret: SECRET, env: process.env });
+if (bootMigration.normalizedUsers > 0 || bootMigration.normalizedInvites > 0) {
+  db = loadDb();
+}
 db.users = db.users || [];
 db.creds = db.creds || [];
 db.subs = db.subs || [];
 db.invites = db.invites || [];
 db.deviceLinks = db.deviceLinks || [];   // unused one-time device links, hashed (device-link.js)
 const isAdmin = user => !!user && (user.admin === true || ADMIN_UIDS.includes(user.id));
-// One owner per instance, any number of admins. Admins run the place day to day (users, invites,
-// the Coach); the owner is the one admin the others cannot act on: only the owner appoints or
-// removes admins, deletes an admin's account, hands the role on, or clears the activity log.
-// Without this any admin could delete every other admin and then wipe the log of having done it.
-// The owner is whoever carries `owner: true` (the first profile under FIRST_USER_ADMIN, or a
-// handover); an instance from before the role has none, so it falls to the first ADMIN_UIDS entry
-// that has a profile, then to the oldest admin record. Decided on every call, never cached, so a
-// deleted or demoted owner cannot leave the instance without one.
+
 function ownerId() {
   const flagged = db.users.find(u => u.owner === true && isAdmin(u));
   if (flagged) return flagged.id;
@@ -175,52 +232,28 @@ function ownerId() {
   return db.users.find(isAdmin)?.id || null;
 }
 const isOwner = user => !!user && isAdmin(user) && user.id === ownerId();
-// 0600: db.json holds passkey credential material. It used to be covered by a blanket 0700 on
-// the whole directory; now that the directory stays traversable, the file carries its own mode.
-// Once the new version is on disk, a second copy of it goes to db.json.bak, the same durable
-// way: loadDb falls back to it. A copy of the version being replaced, as it used to be, lost
-// whatever the last save wrote (a profile just created) when db.json was later found unreadable.
-// A write cut short leaves the previous db.json.bak whole (temporary file and rename).
+
 function saveDb() {
-  const text = JSON.stringify(db, null, 2);
-  atomicWrite(dbFile, text, 0o600);
-  try { atomicWrite(dbFile + '.bak', text, 0o600); }
-  catch (e) { console.error('db.json.bak could not be written', e.message); }
+  saveCoreDbToSqlite(DATA, db);
 }
-// Flushed before and after the rename (durable.js): a host reset must not bring back the file
-// the client was told had been replaced.
 function atomicWrite(file, content, mode) { durableWrite(file, content, mode); }
-// How many earlier write ids a document keeps (`_wids`, see PUT /api/data): a device that last
-// synced more writes ago than this merges on its next pull instead of taking the server's copy.
 const WID_KEEP = 50;
-const stateFile = uid => path.join(DATA, 'state-' + uid.replace(/[^a-zA-Z0-9_-]/g, '') + '.json');
-// The watch relay's mailbox of a profile (watch-relay.js): the page's last snapshot and what its
-// Zepp OS watches sent. Small, rewritten whole like the state file.
-const watchFile = uid => path.join(DATA, 'watch-' + uid.replace(/[^a-zA-Z0-9_-]/g, '') + '.json');
-// When a profile last fetched its document (GET /api/data). The document's own `_ts` moves only
-// on a push, so a device that only ever read — a second phone, a profile that trains elsewhere
-// and just looks — showed "last sync never" in the admin dashboard (QA 1.3.9). Kept on the user
-// record and written at most every ten minutes per profile, since every foreground return pulls.
 const PULL_NOTE_MS = 10 * 60 * 1000;
 function notePull(user, now = Date.now()) {
   if (user.lastPull && now - user.lastPull < PULL_NOTE_MS) return;
   user.lastPull = now;
-  try { saveDb(); } catch (e) { console.error('db save failed', e.message); }
+  try { upsertUserSqlite(DATA, user, db); } catch (e) { console.error('db save failed', e.message); }
 }
-// The later of the last push and the last pull.
 const lastSyncOf = (u, S) => Math.max(S?._ts || 0, u?.lastPull || 0) || null;
 function readState(uid) {
-  try { return JSON.parse(fs.readFileSync(stateFile(uid), 'utf8')); } catch { return null; }
+  const st = readUserStateSqlite(DATA, uid);
+  return st || null;
 }
-// GET and PUT /api/data tell a profile with no state yet from one whose file cannot be read: the
-// second answers 503 instead of an empty profile, which a device would adopt, or a write would
-// replace, losing what a restore could still bring back.
 const UNREADABLE = Symbol('unreadable');
 function readStateStrict(uid) {
-  let raw;
-  try { raw = fs.readFileSync(stateFile(uid), 'utf8'); }
-  catch (e) { return e.code === 'ENOENT' ? null : UNREADABLE; }
-  try { return JSON.parse(raw); } catch { return UNREADABLE; }
+  const st = readUserStateSqlite(DATA, uid);
+  if (st === undefined) return UNREADABLE;
+  return st;
 }
 // A stored document as a client gets it: without the server's own notes `_unstamped` and `_prior`.
 function forClient(S) {
@@ -302,47 +335,44 @@ async function sendPush(userId, payload, deviceId) {
   if (deviceId) subs = subs.filter(s => !s.deviceId || s.deviceId === deviceId);
   if (!subs.length) return;
   const body = JSON.stringify(payload);
-  let dirty = false;
+  // Coleta apenas os endpoints inválidos/mortos durante os awaits de rede e remove sob lock no final,
+  // evitando sobrescrever assinaturas recém-criadas por POST /api/push/subscribe durante o envio.
+  const deadSubs = new Map();
   let next = 0;
   const worker = async () => {
     while (next < subs.length) {
       const sub = subs[next++];
-      // Re-judged before every send: PUSH_AGENT never sees a literal address, so an endpoint
-      // that is private (however it got into db.json) is dropped here rather than connected to.
       const bad = pushEndpointError(sub.endpoint);
       if (bad) {
         console.error('push endpoint refused', userId, bad);
-        db.subs = db.subs.filter(s => s.endpoint !== sub.endpoint); dirty = true;
+        deadSubs.set(sub.endpoint, sub.created);
         continue;
       }
-      // urgency 'high' is the one lever we have over delivery speed — iOS/Android throttle
-      // low-urgency background push more aggressively under battery-saving modes. TTL is left
-      // at the library default (long) so a briefly-offline device still gets it once reconnected,
-      // rather than risking it being dropped for the sake of shaving off latency that TTL doesn't
-      // actually control anyway.
       try {
         await webpush.sendNotification({ endpoint: sub.endpoint, keys: sub.keys }, body,
           { urgency: 'high', timeout: PUSH_TIMEOUT_MS, agent: PUSH_AGENT });
       } catch (e) {
         console.error('push send failed', userId, e.statusCode, e.body || e.message);
-        // 404/410: the push service says the subscription is gone. 403: it refuses our VAPID
-        // signature — a subscription made against a key this instance no longer has (data/vapid.json
-        // regenerated). Neither will ever deliver again; keeping them only hides the fact from the
-        // Settings toggle, which reads the browser's side. The client re-subscribes on its next boot.
         if (e.statusCode === 404 || e.statusCode === 410 || e.statusCode === 403) {
-          db.subs = db.subs.filter(s => s.endpoint !== sub.endpoint); dirty = true;
+          deadSubs.set(sub.endpoint, sub.created);
         }
       }
     }
   };
   await Promise.all(Array.from({ length: Math.min(PUSH_CONCURRENCY, subs.length) }, worker));
-  // Pruning dead subscriptions is bookkeeping, not the send. Most callers do not await this
-  // function at all (the rest-timer setTimeout, the Coach proposal hook), so a ./data that cannot
-  // be written right now — disk full, read-only mount, EIO — would turn the throw into an
-  // unhandled rejection and take the process down. The row is already gone from db.subs in
-  // memory, so only the copy on disk lags: the next saveDb() that succeeds, from any route,
-  // writes it out, and a restart re-reads the old file and prunes it again on the next send.
-  if (dirty) { try { saveDb(); } catch (e) { console.error('push: could not save db.json', e.message); } }
+  if (deadSubs.size) {
+    let pruned = false;
+    const before = db.subs.length;
+    db.subs = db.subs.filter(s => !(deadSubs.has(s.endpoint) && s.created === deadSubs.get(s.endpoint)));
+    pruned = db.subs.length !== before;
+    if (pruned) {
+      try {
+        runInTransaction(getSqliteInstance(DATA), () => saveDb());
+      } catch (e) {
+        console.error('push: could not save db.json', e.message);
+      }
+    }
+  }
 }
 
 // Rest-timer alerts: client schedules on start/extend, cancels on skip or on-screen completion —
@@ -429,8 +459,8 @@ const STATE_CACHE_MAX = 64;
 const STATE_CACHE_TTL_MS = Math.max(50, +(process.env.STATE_CACHE_TTL_MS || 600000) || 600000);
 const stateCache = new Map(); // uid -> { mtimeMs, size, hitAt, S }
 function readStateCached(uid) {
-  let st;
-  try { st = fs.statSync(stateFile(uid)); } catch { stateCache.delete(uid); return null; }
+  const st = statUserStateSqlite(DATA, uid);
+  if (!st) { stateCache.delete(uid); return null; }
   const now = Date.now();
   for (const [k, v] of stateCache) if (now - v.hitAt > STATE_CACHE_TTL_MS) stateCache.delete(k);
   const hit = stateCache.get(uid);
@@ -445,11 +475,6 @@ function readStateCached(uid) {
   while (stateCache.size > STATE_CACHE_MAX) stateCache.delete(stateCache.keys().next().value);
   return S;
 }
-// Missed-workout nudge (nudge.js): opt-in on top of the reminder, so it needs everything the
-// reminder does (a push subscription, the reminder on, a zone). Owed from 20:00 — or 2 h after the
-// reminder — until 21:30 on the user's clock, the same catch-up idea as the reminder's window: a
-// restart inside the evening still sends it. Once per local date (`user.lastNudge`), never while
-// a workout is on screen, and nudgeFor() decides the day and the back-off.
 function nudgeTick(user, S, now) {
   if (!S.reminder.nudge || user.lastNudge === now.date) return;
   if (!nudgeWindowOpen(S.reminder.time, now.hhmm)) return;
@@ -462,17 +487,10 @@ function nudgeTick(user, S, now) {
   saveDb();
   sendPush(user.id, nudgePush(S.lang, toneOf(S.reminder), routine, now.date));
 }
-// What the tick needs to know before it reads a whole state: the reminder settings and whether
-// the Coach was agreed to, kept per user against the state file's mtime and size. The state cache
-// above holds at most STATE_CACHE_MAX documents, and the tick walks every subscribed user in the
-// same order, so past that many it missed on every lookup and parsed every state every 10 s: a
-// handful of accounts with multi-megabyte states stalled the instance for everyone. A summary is
-// a few bytes, so there is one for every user, and a full read happens only while one of that
-// user's windows is open and something could still be sent.
 const stateSummaries = new Map(); // uid -> { mtimeMs, size, rem, consent, settled }
 function stateSummary(uid) {
-  let st;
-  try { st = fs.statSync(stateFile(uid)); } catch { stateSummaries.delete(uid); return null; }
+  const st = statUserStateSqlite(DATA, uid);
+  if (!st) { stateSummaries.delete(uid); return null; }
   const had = stateSummaries.get(uid);
   if (had && had.mtimeMs === st.mtimeMs && had.size === st.size) return had;
   const S = readStateCached(uid);
@@ -604,18 +622,18 @@ function cookieToken(req) {
 }
 // The session behind a request: { user, exp, bearer } — `bearer` when it came in an Authorization
 // header (a paired phone) rather than the cookie — or null for no valid session at all.
-function sessionOf(req) {
+function sessionOf(req, opts = undefined) {
   // The paired mobile app has no cookie jar shared with the API's origin, so it carries the same
   // signed token in an Authorization header instead — same payload, same verification below.
   const auth = req.headers.authorization || '';
   const cookie = cookieToken(req);
   const tok = cookie || (auth.startsWith('Bearer ') ? auth.slice(7).trim() : null);
-  const s = sessionUser(tok);
+  const s = sessionUser(tok, opts);
   return s && { ...s, bearer: !cookie };
 }
 // The session a token (a cookie value or a bearer) stands for — { user, exp } — or null. Split
 // out of sessionOf so the origin check can ask whether a bearer authenticates on its own.
-function sessionUser(tok) {
+function sessionUser(tok, { allowBillingOnly = false } = {}) {
   if (!tok) return null;
   const payload = verifySig(tok);
   if (!payload) return null;
@@ -624,6 +642,13 @@ function sessionUser(tok) {
   const user = db.users.find(u => u.id === uid) || null;
   if (!user) return null;
   if (user.disabled) return null;           // disabled accounts are locked out everywhere
+  if (user.tenantId && user.saasRole !== 'superadmin') {
+    const access = getTenantAccessState(DATA, user.tenantId);
+    const isBillingManager = ['gym_owner', 'gym_manager', 'manager'].includes(user.saasRole);
+    if (access.blocked && !(allowBillingOnly && access.billingOnly && isBillingManager)) {
+      return null;
+    }
+  }
   // Missing third field = pre-versioning cookie = version 0. Anything non-numeric is a malformed
   // payload (it still had to pass the HMAC, so this is belt-and-braces) and is refused outright.
   const claimed = ver === undefined ? 0 : Number(ver);
@@ -632,6 +657,16 @@ function sessionUser(tok) {
 }
 function readSession(req) {
   return sessionOf(req)?.user || null;
+}
+// Portal B2B routes authenticate explicitly via Authorization: Bearer <token>. On localhost dev
+// setups (:8081 portal alongside :8080 student app), browsers share cookies across ports, so B2B
+// routes prioritize the explicit Bearer header over any ambient student session cookie.
+function readSaasSession(req) {
+  const auth = req.headers.authorization || '';
+  if (auth.startsWith('Bearer ')) {
+    return sessionUser(auth.slice(7).trim(), { allowBillingOnly: true })?.user || null;
+  }
+  return sessionOf(req, { allowBillingOnly: true })?.user || null;
 }
 // Guard for /api/admin/* — resolves the caller and 401/403s if they aren't an admin.
 function requireAdmin(req, res) {
@@ -685,7 +720,10 @@ const clearCookie = COOKIE === LEGACY_COOKIE
 // any site sign a visitor into the attacker's account and collect what they log (login CSRF).
 // The watch relay's two routes for the watch are the same kind: the code in the body, or a watch
 // token in the Authorization header, which no browser attaches on its own.
-const CSRF_EXEMPT = new Set(['POST /api/pair/redeem', 'POST /api/watch/redeem', 'POST /api/watch/box']);
+const CSRF_EXEMPT = new Set([
+  'POST /api/pair/redeem', 'POST /api/watch/redeem', 'POST /api/watch/box',
+  'POST /api/saas/billing/webhook'
+]);
 // The routes that answer to the credential in the body and never to a Bearer. No Bearer is the
 // credential that acts there, so none buys the shortcut below: any valid token would do, the
 // attacker's own included.
@@ -697,7 +735,9 @@ const PASSKEY_ROUTES = new Set([
 // device code in the body is the credential, never a Bearer.
 const SIGN_IN_ROUTES = new Set([
   'POST /api/login/password', 'POST /api/register/password', 'POST /api/login/password-reset',
-  'POST /api/device-link/options', 'POST /api/device-link/verify'
+  'POST /api/device-link/options', 'POST /api/device-link/verify',
+  'POST /api/saas/auth/login', 'POST /api/saas/auth/demo-login', 'POST /api/saas/demo/seed',
+  'POST /api/saas/auth/setup-admin'
 ]);
 // A verify error as the answer's body: a passkey made at an address that is not ORIGIN/RP_ID gets
 // the same `code` as the origin check's 403, so the app explains both alike.
@@ -705,7 +745,43 @@ const verifyAnswer = e => ({
   error: verifyError(e, { rpId: RP_ID, origin: ORIGIN }),
   ...(isMisconfigured(e) ? { code: 'origin-mismatch', expected: ORIGIN } : {})
 });
+const PORTAL_URL = (process.env.PORTAL_URL || process.env.VITE_PORTAL_URL || '').trim();
 const originsMatch = (a, b) => a.replace(/\/+$/, '') === b.replace(/\/+$/, '');
+function isAllowedSubdomainOrigin(orig) {
+  if (!orig) return false;
+  if (originsMatch(orig, ORIGIN)) return true;
+  if (PORTAL_URL && originsMatch(orig, PORTAL_URL)) return true;
+  let origUrl;
+  let reqUrl;
+  try {
+    origUrl = new URL(ORIGIN);
+    reqUrl = new URL(orig);
+  } catch { return false; }
+  if (reqUrl.protocol !== origUrl.protocol || reqUrl.port !== origUrl.port) return false;
+  if (reqUrl.hostname === origUrl.hostname || reqUrl.hostname.endsWith('.' + origUrl.hostname)) return true;
+  if (RP_ID && RP_ID !== 'localhost' && (reqUrl.hostname === RP_ID || reqUrl.hostname.endsWith('.' + RP_ID))) return true;
+  return false;
+}
+function expectedOriginsFor(req) {
+  const allowed = new Set([ORIGIN.replace(/\/+$/, '')]);
+  if (PORTAL_URL) allowed.add(PORTAL_URL.replace(/\/+$/, ''));
+  const reqOrig = req?.headers?.origin;
+  if (reqOrig && isAllowedSubdomainOrigin(reqOrig)) {
+    allowed.add(reqOrig.replace(/\/+$/, ''));
+  }
+  return [...allowed];
+}
+const SAAS_BEARER_RE = /^(POST|PUT|DELETE) \/api\/(saas|gym|tenant|trainer)\//;
+function hasValidSaasBearer(req) {
+  const auth = req.headers.authorization || '';
+  if (!auth.startsWith('Bearer ')) return false;
+  return !!sessionUser(auth.slice(7).trim(), { allowBillingOnly: true });
+}
+function saasBearerAuthenticates(req, key) {
+  if (!SAAS_BEARER_RE.test(key)) return false;
+  if (PASSKEY_ROUTES.has(key) || SIGN_IN_ROUTES.has(key)) return false;
+  return hasValidSaasBearer(req);
+}
 // Whether a Bearer is the credential that would act on this request: it verifies, and no session
 // cookie sits beside it (readSession takes the cookie first, so a cookie is what would act then).
 function bearerAuthenticates(req) {
@@ -716,6 +792,7 @@ function bearerAuthenticates(req) {
 function csrfOk(req, key) {
   if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return true;
   if (CSRF_EXEMPT.has(key)) return true;
+  if (saasBearerAuthenticates(req, key)) return true;
   // The paired mobile app authenticates with a Bearer token. A browser never attaches one on its
   // own, so there is no ambient authority for a hostile page to borrow and no origin to check.
   // That holds only when the Bearer is the credential that acts, so it has to authenticate by
@@ -737,7 +814,7 @@ function csrfOk(req, key) {
   // Browsers put an Origin on every state-changing request and a page cannot suppress it, so the
   // forgery this exists to stop always carries one.
   if (!origin) return true;
-  return originsMatch(origin, ORIGIN);
+  return isAllowedSubdomainOrigin(origin);
 }
 
 /* ---------- challenge store (in-memory, 5 min TTL) ---------- */
@@ -786,8 +863,8 @@ setInterval(() => { for (const [k, v] of pairings) if (v.exp < Date.now()) pairi
 // Pairing codes for watches, in memory like the phone's: hashed, one per profile, ten minutes.
 const watchCodes = new Map();
 setInterval(() => { const now = Date.now(); for (const [k, v] of watchCodes) if (v.exp <= now) watchCodes.delete(k); }, 60000).unref();
-const readBox = uid => { try { return boxOf(JSON.parse(fs.readFileSync(watchFile(uid), 'utf8'))); } catch { return boxOf(null); } };
-const writeBox = (uid, box) => durableWrite(watchFile(uid), JSON.stringify(box), 0o600);
+const readBox = uid => { try { return boxOf(readWatchBoxSqlite(DATA, uid)); } catch { return boxOf(null); } };
+const writeBox = (uid, box) => writeWatchBoxSqlite(DATA, uid, box);
 // The watch link a request carries (`Authorization: Bearer ogw_…`), or null. Never a session: an
 // account that may not sign in, or whose sessions were all ended since, has no live links either.
 function watchLinkFor(req) {
@@ -859,6 +936,30 @@ function readBody(req) {
     // A browser hanging up mid-body — which is what pagehide does to an in-flight sync — is not
     // the caller getting a request wrong, it is nobody being left to answer. Marked so the
     // catch-all at the bottom says one line instead of a stack trace and a 500 into a dead socket.
+    req.on('error', e => reject(Object.assign(e, { clientGone: true })));
+  });
+}
+function readRawBody(req) {
+  return new Promise((resolve, reject) => {
+    let size = 0, over = false; const chunks = [];
+    req.on('data', d => {
+      size += d.length;
+      if (over) {
+        if (size > 2 * MAX_BODY) req.destroy();
+        return;
+      }
+      if (size > MAX_BODY) {
+        over = true; chunks.length = 0;
+        reject(new HttpError(413, 'body too large'));
+        return;
+      }
+      chunks.push(d);
+    });
+    req.on('end', () => {
+      if (over) return;
+      const rawBuf = Buffer.concat(chunks);
+      resolve({ rawBuf, rawText: rawBuf.toString('utf8') });
+    });
     req.on('error', e => reject(Object.assign(e, { clientGone: true })));
   });
 }
@@ -1057,6 +1158,9 @@ const THROTTLED = {
   // Deleting the account: the same, for the password that may prove it.
   'POST /api/account/delete': null
 };
+THROTTLED['POST /api/saas/auth/login'] = 'password';
+THROTTLED['POST /api/saas/auth/demo-login'] = null;
+THROTTLED['POST /api/saas/billing/webhook'] = null;
 
 // Which address the throttle counts against. Unlike clientIp() above, which only labels a log
 // line, this decides who is refused, so a header is believed only when TRUST_PROXY says the API
@@ -1129,17 +1233,29 @@ function auditFail(req, ev, f) {
 // redeem — there is no rename — and leave that profile locked out. Sign-in itself only ever
 // looks at profiles that have a password (passwordHolder).
 const hasPassword = u => !!(u && u.pw && typeof u.pw.h === 'string');
+const userTenantOf = u => u?.tenantId || 'default';
 // A password that counts for anything: one the instance still lets people sign in with. With
 // PASSWORD_LOGIN off, a password kept from when it was on neither signs in nor proves anything
 // (proveOwner), and does not keep a profile's last passkey in place.
 const passwordWayIn = u => PASSWORD_LOGIN && hasPassword(u);
-const passwordHolder = k => db.users.find(u => hasPassword(u) && nameKey(u.name) === k) || null;
+const passwordHolder = (k, tenantId = 'default') => {
+  const t = tenantId || 'default';
+  const scoped = db.users.find(u => hasPassword(u) && userTenantOf(u) === t && nameKey(u.name) === k);
+  if (scoped) return scoped;
+  if (t === 'default') {
+    const matches = db.users.filter(u => hasPassword(u) && nameKey(u.name) === k);
+    if (matches.length === 1) return matches[0];
+  }
+  return null;
+};
 const holdsName = u => hasPassword(u) || !!(u.pwReset && u.pwReset.exp > Date.now());
 // An e-mail is a second name to sign in with (see "e-mail as a sign-in name" below), so a name
 // is also taken by another profile's e-mail — only ever relevant for a name with an "@" in it.
-const nameTaken = (name, exceptId) => {
+// In multi-tenant mode, profile names are scoped per academy (`tenantId`), while e-mails stay global.
+const nameTaken = (name, exceptId, tenantId = 'default') => {
   const k = nameKey(name);
-  return db.users.some(u => u.id !== exceptId && ((holdsName(u) && nameKey(u.name) === k) || u.email === k));
+  const t = tenantId || 'default';
+  return db.users.some(u => u.id !== exceptId && ((holdsName(u) && userTenantOf(u) === t && nameKey(u.name) === k) || u.email === k));
 };
 
 /* ---------- e-mail as a sign-in name ----------
@@ -1181,17 +1297,28 @@ const EMAIL_ERRORS = {
 // what older clients still send — an address typed there works too) or `email` (only an address).
 // `key` is what wrong passwords are counted against: the account when there is one, otherwise the
 // identifier as folded, so an unknown one is paused exactly like a known one.
-function loginTarget(body) {
+function loginTarget(body, reqTenantId = 'default') {
   const onlyEmail = body.identifier === undefined && body.name === undefined;
   const k = nameKey(text(body.identifier ?? body.name ?? body.email).slice(0, 300));
   if (!k) return null;
-  const resolve = () => (k.includes('@') ? emailHolder(k) : null) || (onlyEmail ? null : passwordHolder(k));
-  const user = resolve();
-  return { k, user, resolve, email: k.includes('@'), key: user ? acctKey(user) : 'id:' + k };
+  const t = body?.tenantId ? sanitizeTenantId(body.tenantId) : (reqTenantId || 'default');
+  const resolve = () => (k.includes('@') ? emailHolder(k) : null) || (onlyEmail ? null : passwordHolder(k, t));
+  const candidates = (!k.includes('@') && !onlyEmail && t === 'default')
+    ? db.users.filter(u => hasPassword(u) && nameKey(u.name) === k)
+    : [];
+  const user = resolve() || (candidates.length > 1 ? candidates[0] : null);
+  const missKey = t === 'default' ? 'id:' + k : 'id:' + t + ':' + k;
+  return { k, user, candidates, resolve, email: k.includes('@'), key: user ? acctKey(user) : missKey };
 }
 const acctKey = u => 'acct:' + u.id;
 const passkeyCount = u => db.creds.filter(c => c.userId === u.id).length;
-const publicUser = u => ({ id: u.id, name: u.name, admin: isAdmin(u), ...(isOwner(u) ? { owner: true } : {}) });
+const publicUser = u => ({
+  id: u.id, name: u.name, admin: isAdmin(u),
+  ...(isOwner(u) ? { owner: true } : {}),
+  ...(u.role ? { role: u.role } : {}),
+  ...(u.saasRole ? { saasRole: u.saasRole } : {}),
+  ...(u.tenantId ? { tenantId: u.tenantId } : {})
+});
 const POLICY_ERRORS = {
   'too-short': `the password needs at least ${MIN_LENGTH} characters`,
   'too-long': `the password can have at most ${MAX_LENGTH} characters`,
@@ -1217,13 +1344,13 @@ function setPassword(user, h) {
 // it may be a cookie someone walked off with, and a password would turn it into a way in that
 // outlives "sign out everywhere". Same ceremony as /api/login/verify, and the credential has
 // to belong to this account.
-async function passkeyStepUp(user, body) {
+async function passkeyStepUp(user, body, req = null) {
   const c = takeChallenge(body.cid);
   const cred = c?.kind === 'login' && db.creds.find(x => x.id === body.credential?.id && x.userId === user.id);
   if (!cred) return false;
   try {
     const v = await verifyAuthenticationResponse({
-      response: body.credential, expectedChallenge: c.challenge, expectedOrigin: ORIGIN, expectedRPID: RP_ID,
+      response: body.credential, expectedChallenge: c.challenge, expectedOrigin: expectedOriginsFor(req), expectedRPID: RP_ID,
       requireUserVerification: false,
       credential: { id: cred.id, publicKey: b64uToBuf(cred.publicKey), counter: cred.counter, transports: cred.transports }
     });
@@ -1289,7 +1416,7 @@ function passwordAttempt(req, res, k) {
 // signed in all along, and "Password sign-in failed" sent an admin looking for the wrong thing.
 async function proveOwner(req, res, user, body, act) {
   if (body.credential) {
-    if (await passkeyStepUp(user, body)) return 'passkey';
+    if (await passkeyStepUp(user, body, req)) return 'passkey';
     audit(req, 'auth.proof.fail', { ok: false, user, msg: 'step-up-failed', act });
     json(res, 403, { error: 'the passkey could not be verified', code: 'passkey' });
     return null;
@@ -1343,9 +1470,12 @@ function removeAccount(u) {
   dropWatchLinks(db, u.id);
   dropWatchCodes(watchCodes, u.id);
   presence.delete(u.id);
-  // The training history and any Coach credential of theirs, both outside db.json.
-  try { fs.unlinkSync(stateFile(u.id)); } catch { /* already gone */ }
-  try { fs.unlinkSync(watchFile(u.id)); } catch { /* never had a watch */ }
+  // The training history and any Coach credential of theirs, stored in SQLite / disk.
+  try { deleteUserStateSqlite(DATA, u.id); } catch { /* already gone */ }
+  try { deleteWatchBoxSqlite(DATA, u.id); } catch { /* never had a watch */ }
+  stateCache.delete(u.id);
+  stateSummaries.delete(u.id);
+  evictStudentSummary(u.id);
   try { coachConfig.clearProfileAuth(u.id); } catch { /* nothing stored */ }
   // Their photos and videos — the one place a profile's folder under uploads/ is removed.
   try { MEDIA.removeUser(u.id); } catch (e) { console.error('media: could not remove uploads of', u.id, e.message); }
@@ -1357,14 +1487,28 @@ function removeAccount(u) {
 const passwordRoutes = {
   'POST /api/login/password': async (req, res) => {
     const body = await readBody(req);
-    const target = loginTarget(body);
+    const target = loginTarget(body, resolveTenantId(req));
     const pw = typeof body.password === 'string' ? body.password : '';
     if (!target || !pw) return json(res, 400, { error: 'name and password required', code: 'missing' });
     const check = passwordAttempt(req, res, target.key);
     if (!check) return;
-    const { user } = target;
-    const rec = user?.pw;
-    if (!(await check.verify(pw, rec?.h))) {
+    let user = target.user;
+    let rec = user?.pw;
+    let matched = await check.verify(pw, rec?.h);
+    // Se houver homônimos em academias diferentes tentando logar sem ?tenant= na URL,
+    // verifica a senha nos demais perfis com o mesmo nome para logar no perfil certo.
+    if (!matched && Array.isArray(target.candidates) && target.candidates.length > 1) {
+      for (let i = 1; i < target.candidates.length; i++) {
+        const alt = target.candidates[i];
+        if (alt?.pw?.h && passwordLength(pw) <= MAX_LENGTH && await verifyPassword(pw, alt.pw.h)) {
+          user = alt;
+          rec = alt.pw;
+          matched = true;
+          break;
+        }
+      }
+    }
+    if (!matched) {
       check.failed(user, 'bad-password', target.email ? 'unknown-email' : 'unknown-name');
       return json(res, 401, WRONG);
     }
@@ -1373,7 +1517,7 @@ const passwordRoutes = {
     // in place). A session signed now would carry the account's *new* session version and outlive
     // the "signed out everywhere" that came with it, so the old password gets nothing; it is not
     // counted as a wrong one either.
-    const still = () => hasPassword(user) && user.pw === rec && target.resolve() === user;
+    const still = () => hasPassword(user) && user.pw === rec && (target.resolve() === user || (Array.isArray(target.candidates) && target.candidates.includes(user)));
     if (!still()) {
       check.void();
       return json(res, 401, WRONG);
@@ -1382,6 +1526,10 @@ const passwordRoutes = {
       check.void();
       audit(req, 'auth.password.fail', { ok: false, user, msg: 'account-disabled' });
       return json(res, 403, { error: 'this account has been disabled', code: 'disabled' });
+    }
+    if (user.tenantId && user.saasRole !== 'superadmin' && isTenantSuspended(DATA, user.tenantId)) {
+      check.void();
+      return json(res, 403, { error: 'O acesso desta academia está suspenso no momento.' });
     }
     check.ok();
     // A hash made with older parameters is replaced now, while the password is at hand.
@@ -1403,28 +1551,24 @@ const passwordRoutes = {
     const body = await readBody(req);
     const name = text(body.name).trim().slice(0, 40);
     if (!name) return json(res, 400, { error: 'name required', code: 'missing' });
-    const code = text(body.code).trim().toUpperCase();
-    const invite = () => db.invites.find(i => i.code === code && !i.usedBy && !i.revoked);
-    if (INVITE_ONLY && addressPaused(req, res, 'signup')) return;
-    if (INVITE_ONLY && !invite()) {
+    const earlyCtx = resolveSignupContext(req, body.code);
+    if (earlyCtx.inviteRequired && addressPaused(req, res, 'signup')) return;
+    if (earlyCtx.inviteRequired && !earlyCtx.inv) {
       audit(req, 'auth.register.denied', { ok: false, name, msg: 'invite-rejected' });
       strikeAddress(req, 'signup');
       return json(res, 403, { error: 'a valid invite code is required', code: 'invite' });
     }
+    const earlyBlocked = signupTenantBlockedReason(earlyCtx.signupTenant, earlyCtx.tenant);
+    if (earlyBlocked) {
+      return json(res, earlyBlocked.status, { error: earlyBlocked.error, ...(earlyBlocked.code ? { code: earlyBlocked.code } : {}) });
+    }
     const problem = passwordProblem(body.password, name);
     if (problem) return policyError(res, problem);
     const taken = () => json(res, 409, { error: 'another profile already signs in with this name', code: 'name-taken' });
-    // A name is also matched against every sign-in e-mail (nameTaken), so a name that is an
-    // address is the e-mail question asked through the name field: it waits for the hash below
-    // and counts against the address like the e-mail field does, or it would answer "in use" for
-    // any address at once and without limit.
     const nameIsAddress = name.includes('@');
+    const earlyTenant = earlyCtx.signupTenant;
     if (nameIsAddress && addressPaused(req, res, 'email')) return;
-    if (!nameIsAddress && nameTaken(name)) return taken();
-    // An e-mail is optional here. One already in use counts against the address, the way it
-    // does in Settings: this route needs no session, so it is the cheaper place to ask. Whether
-    // it is in use is only answered after the hash and the invite check that follows it, so on
-    // an invite-only instance nobody without a valid code learns anything about addresses.
+    if (!nameIsAddress && nameTaken(name, undefined, earlyTenant)) return taken();
     const hasEmail = typeof body.email === 'string' && body.email.trim() !== '';
     const email = hasEmail ? normalizeEmail(body.email) : null;
     if (hasEmail && !email) return json(res, 400, EMAIL_ERRORS.invalid);
@@ -1435,29 +1579,80 @@ const passwordRoutes = {
     };
     if (email && addressPaused(req, res, 'email')) return;
     const h = await hashPassword(body.password);
-    let inv = null;
-    if (INVITE_ONLY) {
-      inv = invite();
-      if (!inv) {
-        audit(req, 'auth.register.fail', { ok: false, name, msg: 'invite-invalid' });
-        return json(res, 403, { error: 'invite code is no longer valid, ask for a new one', code: 'invite' });
-      }
+    const created = new Date().toISOString();
+    const userId = crypto.randomBytes(12).toString('base64url');
+
+    let outcome;
+    try {
+      outcome = runInTransaction(getSqliteInstance(DATA), () => {
+        const ctxAfter = resolveSignupContext(req, body.code);
+        const inv = ctxAfter.inv;
+        if (ctxAfter.inviteRequired && !inv) {
+          return { kind: 'invite-invalid' };
+        }
+        const signupTenant = ctxAfter.signupTenant;
+        const blockedAfter = signupTenantBlockedReason(signupTenant, ctxAfter.tenant);
+        if (blockedAfter) {
+          return { kind: 'blocked', blockedAfter };
+        }
+        if (nameTaken(name, undefined, signupTenant)) {
+          return { kind: 'name-taken' };
+        }
+        if (email && emailTaken(email)) {
+          return { kind: 'email-taken' };
+        }
+
+        const user = {
+          id: userId, name, created, pw: { h, set: created },
+          ...(email ? { email } : {}),
+          ...(signupTenant !== 'default' ? { tenantId: signupTenant, saasRole: 'student', role: 'student' } : {})
+        };
+        if (inv) {
+          const consumed = consumeInviteSqlite(DATA, inv.code, user.id, created);
+          if (!consumed.ok) {
+            return { kind: 'invite-invalid' };
+          }
+          user.invitedBy = inv.code;
+        }
+
+        try {
+          upsertUserSqlite(DATA, user, null);
+        } catch (err) {
+          if (isSqliteUniqueConstraintError(err)) {
+            throw Object.assign(new Error('conflict'), { conflictKind: email ? 'email-taken' : 'name-taken' });
+          }
+          throw err;
+        }
+
+        if (inv) {
+          inv.usedBy = user.id;
+          inv.usedAt = created;
+        }
+        if (signupTenant === 'default') claimFirstAdmin(req, user);
+        db.users.push(user);
+        saveDb();
+        return { kind: 'ok', user, inv };
+      });
+    } catch (err) {
+      if (err?.conflictKind) outcome = { kind: err.conflictKind };
+      else throw err;
     }
-    if (nameTaken(name)) {
-      // No name in the row: it is an address, and the log keeps none (maskEmail is for owners).
+
+    if (outcome.kind === 'invite-invalid') {
+      audit(req, 'auth.register.fail', { ok: false, name, msg: 'invite-invalid' });
+      return json(res, 403, { error: 'invite code is no longer valid, ask for a new one', code: 'invite' });
+    }
+    if (outcome.kind === 'blocked') {
+      return json(res, outcome.blockedAfter.status, { error: outcome.blockedAfter.error, ...(outcome.blockedAfter.code ? { code: outcome.blockedAfter.code } : {}) });
+    }
+    if (outcome.kind === 'name-taken') {
       if (nameIsAddress) { strikeAddress(req, 'email'); audit(req, 'auth.register.fail', { ok: false, msg: 'email-taken' }); }
       return taken();
     }
-    // No await from here to the push: nothing can take the address between this check and it.
-    if (email && emailTaken(email)) return emailRefused();
-    const created = new Date().toISOString();
-    const user = { id: crypto.randomBytes(12).toString('base64url'), name, created, pw: { h, set: created }, ...(email ? { email } : {}) };
-    if (inv) { user.invitedBy = inv.code; inv.usedBy = user.id; inv.usedAt = created; }
-    claimFirstAdmin(req, user);
-    db.users.push(user);
-    saveDb();
-    audit(req, 'auth.register.ok', { user, msg: inv ? inv.code + ' · password' : 'password' });
-    json(res, 200, { user: publicUser(user) }, { 'Set-Cookie': sessionCookie(user) });
+    if (outcome.kind === 'email-taken') return emailRefused();
+
+    audit(req, 'auth.register.ok', { user: outcome.user, msg: outcome.inv ? outcome.inv.code + ' · password' : 'password' });
+    json(res, 200, { user: publicUser(outcome.user) }, { 'Set-Cookie': sessionCookie(outcome.user) });
   },
 
   // What Settings shows: whether a password is set, and whether it could be removed.
@@ -1466,7 +1661,7 @@ const passwordRoutes = {
     if (!user) return json(res, 401, { error: 'not signed in' });
     json(res, 200, {
       set: hasPassword(user), setAt: user.pw?.set || null, passkeys: passkeyCount(user),
-      name: user.name, nameTaken: nameTaken(user.name, user.id),
+      name: user.name, nameTaken: nameTaken(user.name, user.id, userTenantOf(user)),
       // Only the owner's own session is ever handed their address.
       email: user.email || null
     });
@@ -1482,14 +1677,14 @@ const passwordRoutes = {
     const problem = passwordProblem(body.next, user.name);
     if (problem) return policyError(res, problem);
     const taken = () => json(res, 409, { error: 'another profile already signs in with this name', code: 'name-taken' });
-    if (nameTaken(user.name, user.id)) return taken();
+    if (nameTaken(user.name, user.id, userTenantOf(user))) return taken();
     const proof = await proveOwner(req, res, user, body, 'password');
     if (!proof) return;
     const h = await hashPassword(body.next);
     // Everything above awaited: an admin reset, a disable or "sign out everywhere" may have ended
     // this session in the meantime, and a password set now would outlive that.
     if (sessionOf(req)?.user !== user) return json(res, 401, { error: 'not signed in' });
-    if (nameTaken(user.name, user.id)) return taken();
+    if (nameTaken(user.name, user.id, userTenantOf(user))) return taken();
     const first = !hasPassword(user);
     setPassword(user, h);
     // Whatever pause wrong guesses put on this account was about a password that no longer exists.
@@ -1518,11 +1713,17 @@ const passwordRoutes = {
     // Everything above awaited: the session may have ended, and the profile's last passkey may
     // have been removed by a request that ran alongside this one.
     if (readSession(req) !== user) return json(res, 401, { error: 'not signed in' });
-    if (proof === 'passkey') saveDb();   // the confirming passkey's counter and last use
-    if (!hasPassword(user)) return json(res, 200, { ok: true });
-    if (!passkeyCount(user)) return lastWayIn();
-    delete user.pw;
-    saveDb();
+    const delOutcome = runInTransaction(getSqliteInstance(DATA), () => {
+      if (proof === 'passkey') saveDb();   // the confirming passkey's counter and last use
+      if (!hasPassword(user)) return 'already-gone';
+      if (!passkeyCount(user)) return 'last-way-in';
+      delete user.pw;
+      upsertUserSqlite(DATA, user, null);
+      saveDb();
+      return 'removed';
+    });
+    if (delOutcome === 'already-gone') return json(res, 200, { ok: true });
+    if (delOutcome === 'last-way-in') return lastWayIn();
     audit(req, 'auth.password.remove', { user });
     json(res, 200, { ok: true });
   },
@@ -1553,16 +1754,33 @@ const passwordRoutes = {
     if (!proof) return;
     if (sessionOf(req)?.user !== user) return json(res, 401, { error: 'not signed in' });
     if (paused()) return;
-    if (emailTaken(email, user.id)) {
-      if (proof === 'passkey') saveDb();   // the confirming passkey's counter and last use
+    const first = !user.email;
+    const emailOutcome = runInTransaction(getSqliteInstance(DATA), () => {
+      if (emailTaken(email, user.id)) {
+        if (proof === 'passkey') saveDb();
+        return { taken: true };
+      }
+      const prevEmail = user.email;
+      user.email = email;
+      try {
+        upsertUserSqlite(DATA, user, null);
+      } catch (err) {
+        if (prevEmail === undefined) delete user.email; else user.email = prevEmail;
+        if (isSqliteUniqueConstraintError(err)) {
+          if (proof === 'passkey') saveDb();
+          return { taken: true };
+        }
+        throw err;
+      }
+      saveDb();
+      return { taken: false };
+    });
+    if (emailOutcome.taken) {
       strikeAddress(req, 'email');
       ADDR_FAILS.fail(acct);
       audit(req, 'auth.email.fail', { ok: false, user, msg: 'email-taken' });
       return json(res, 409, EMAIL_ERRORS.taken);
     }
-    const first = !user.email;
-    user.email = email;
-    saveDb();
     audit(req, first ? 'auth.email.set' : 'auth.email.change', { user, msg: proof + ' · ' + maskEmail(email) });
     json(res, 200, { ok: true, email });
   },
@@ -1584,7 +1802,7 @@ const passwordRoutes = {
     const u = db.users.find(x => x.id === body.id);
     if (!u) return json(res, 404, { error: 'no such user' });
     if (isAdmin(u)) return json(res, 400, { error: 'an admin sets their own password in Settings' });
-    if (nameTaken(u.name, u.id)) return json(res, 409, { error: 'another profile already signs in with this name', code: 'name-taken' });
+    if (nameTaken(u.name, u.id, userTenantOf(u))) return json(res, 409, { error: 'another profile already signs in with this name', code: 'name-taken' });
     const code = makeResetCode();
     delete u.pw;
     u.pwReset = { h: hashResetCode(code), exp: Date.now() + RESET_TTL_MS, by: admin.id };
@@ -1623,14 +1841,25 @@ const passwordRoutes = {
     // The code is good and stays good until a password is actually set with it.
     const problem = passwordProblem(body.next, user.name);
     if (problem) return policyError(res, problem);
-    if (nameTaken(user.name, user.id)) return taken();
+    if (nameTaken(user.name, user.id, userTenantOf(user))) return taken();
     const h = await hashPassword(body.next);
-    // Single use: a second request that raced this one through the hash finds the code gone.
-    if (find() !== user) return invalid();
-    if (nameTaken(user.name, user.id)) return taken();
-    setPassword(user, h);
-    ACCOUNT_FAILS.clear(acctKey(user));
-    saveDb();
+    const resetOutcome = runInTransaction(getSqliteInstance(DATA), () => {
+      // Single use dentro de BEGIN IMMEDIATE: uma segunda requisição paralela encontra o código já consumido.
+      if (find() !== user) return 'invalid';
+      if (nameTaken(user.name, user.id, userTenantOf(user))) return 'taken';
+      setPassword(user, h);
+      ACCOUNT_FAILS.clear(acctKey(user));
+      try {
+        upsertUserSqlite(DATA, user, null);
+      } catch (err) {
+        if (isSqliteUniqueConstraintError(err)) return 'taken';
+        throw err;
+      }
+      saveDb();
+      return 'ok';
+    });
+    if (resetOutcome === 'invalid') return invalid();
+    if (resetOutcome === 'taken') return taken();
     audit(req, 'auth.password.reset', { user });
     json(res, 200, { user: publicUser(user) }, { 'Set-Cookie': sessionCookie(user) });
   }
@@ -1706,7 +1935,7 @@ async function newPasskey(req, res, c, body, ev, user) {
   let verification;
   try {
     verification = await verifyRegistrationResponse({
-      response: body.credential, expectedChallenge: c.challenge, expectedOrigin: ORIGIN, expectedRPID: RP_ID,
+      response: body.credential, expectedChallenge: c.challenge, expectedOrigin: expectedOriginsFor(req), expectedRPID: RP_ID,
       requireUserVerification: false
     });
   } catch (e) {
@@ -1769,12 +1998,17 @@ const passkeyRoutes = {
     const cred = await newPasskey(req, res, c, body, 'auth.passkey.fail', user);
     if (!cred) return;
     if (readSession(req) !== user || sessionVersion(user) !== c.sv) return notSignedIn(res);
-    const added = addPasskeyRecord(db, user.id, cred);
+    const added = runInTransaction(getSqliteInstance(DATA), () => {
+      const r = addPasskeyRecord(db, user.id, cred);
+      if (r.error) return r;
+      upsertCredSqlite(DATA, r.row, null);
+      saveDb();
+      return r;
+    });
     if (added.error) {
       audit(req, 'auth.passkey.fail', { ok: false, user, msg: added.code });
       return json(res, 409, { error: added.error, code: added.code });
     }
-    saveDb();
     audit(req, 'auth.passkey.add', { user, msg: c.proof });
     json(res, 200, { ok: true, ...passkeyState(user) });
   },
@@ -1807,11 +2041,15 @@ const passkeyRoutes = {
     const proof = await proveOwner(req, res, user, body, 'passkey-remove');
     if (!proof) return;
     if (readSession(req) !== user) return notSignedIn(res);
-    if (proof === 'passkey') saveDb();   // the confirming passkey's counter and last use
-    const r = removePasskeyRecord(db, user.id, id, passwordWayIn(user) ? 1 : 0);
+    const r = runInTransaction(getSqliteInstance(DATA), () => {
+      if (proof === 'passkey') saveDb();   // the confirming passkey's counter and last use
+      const removed = removePasskeyRecord(db, user.id, id, passwordWayIn(user) ? 1 : 0);
+      if (removed.error) return removed;
+      dropDeviceLinks(db, user.id);
+      saveDb();
+      return removed;
+    });
     if (r.error) return refuse(r);
-    dropDeviceLinks(db, user.id);
-    saveDb();
     audit(req, 'auth.passkey.remove', { user, msg: r.row.name || null });
     json(res, 200, { ok: true, ...passkeyState(user) });
   },
@@ -1884,28 +2122,48 @@ const passkeyRoutes = {
     const owner = db.users.find(u => u.id === link.userId);
     const cred = await newPasskey(req, res, c, body, 'auth.link.fail', owner || { id: link.userId });
     if (!cred) return;
-    // Everything above awaited: the code may have been used, replaced or dropped since (a sign-out
-    // everywhere, a new password, a disable), and the profile may be gone or locked.
-    const user = db.users.find(u => u.id === link.userId);
-    if (findDeviceLink(db, code) !== link || !user || user.disabled) {
+    // Everything above awaited: valida e consome o device link atomicamente dentro de BEGIN IMMEDIATE.
+    const recovery = link.kind === 'recovery';
+    let linkOutcome;
+    try {
+      linkOutcome = runInTransaction(getSqliteInstance(DATA), () => {
+        const user = db.users.find(u => u.id === link.userId);
+        if (findDeviceLink(db, code) !== link || !user || user.disabled) {
+          return { kind: 'invalid' };
+        }
+        const consumed = consumeDeviceLinkSqlite(DATA, link.h);
+        if (!consumed) {
+          return { kind: 'invalid' };
+        }
+        let dropped = null;
+        const credsBefore = recovery ? db.creds.slice() : null;
+        if (recovery && passkeyCount(user) >= MAX_PASSKEYS) {
+          const oldest = listPasskeys(db, user.id).slice().sort((a, b) => String(a.lastUsed || a.created || '').localeCompare(String(b.lastUsed || b.created || '')))[0];
+          if (oldest && !removePasskeyRecord(db, user.id, oldest.id, 1).error) dropped = oldest;
+        }
+        const added = addPasskeyRecord(db, user.id, cred);
+        if (added.error) {
+          if (credsBefore) db.creds = credsBefore;
+          throw Object.assign(new Error(added.error), { addedError: added, user });
+        }
+        added.row.lastUsed = added.row.created;
+        burnDeviceLink(db, link);
+        saveDb();
+        return { kind: 'ok', user, added, dropped };
+      });
+    } catch (err) {
+      if (err?.addedError) {
+        audit(req, 'auth.link.fail', { ok: false, user: err.user, msg: err.addedError.code });
+        return json(res, 409, { error: err.addedError.error, code: err.addedError.code });
+      }
+      throw err;
+    }
+
+    if (linkOutcome.kind === 'invalid') {
       audit(req, 'auth.link.fail', { ok: false, uid: link.userId, msg: 'link-invalid' });
       return json(res, 400, LINK_INVALID);
     }
-    const recovery = link.kind === 'recovery';
-    // Recovery on a full profile: the passkey used longest ago goes, to make room for this one.
-    let dropped = null;
-    if (recovery && passkeyCount(user) >= MAX_PASSKEYS) {
-      const oldest = listPasskeys(db, user.id).slice().sort((a, b) => String(a.lastUsed || a.created || '').localeCompare(String(b.lastUsed || b.created || '')))[0];
-      if (oldest && !removePasskeyRecord(db, user.id, oldest.id, 1).error) dropped = oldest;
-    }
-    const added = addPasskeyRecord(db, user.id, cred);
-    if (added.error) {
-      audit(req, 'auth.link.fail', { ok: false, user, msg: added.code });
-      return json(res, 409, { error: added.error, code: added.code });
-    }
-    added.row.lastUsed = added.row.created;
-    burnDeviceLink(db, link);
-    saveDb();
+    const { user, added, dropped } = linkOutcome;
     audit(req, recovery ? 'auth.recovery.ok' : 'auth.link.ok', { user, msg: [added.row.name, dropped && `replaced ${dropped.name || 'a passkey'}`].filter(Boolean).join(', ') || null });
     json(res, 200, { user: publicUser(user) }, { 'Set-Cookie': sessionCookie(user) });
   }
@@ -1918,7 +2176,13 @@ const passkeyRoutes = {
 // either way: an admin deleting a profile must still remove files uploaded while it was on.
 const MEDIA_LIMITS = mediaLimits(process.env);
 const MEDIA_ON = MEDIA_LIMITS.enabled;
-const MEDIA = createMediaStore({ dir: path.join(DATA, 'uploads'), limits: MEDIA_LIMITS, readState });
+const TENANT_MEDIA_QUOTA_MB = MEDIA_LIMITS.quotaMB === 0 ? 0 : Math.max(MEDIA_LIMITS.quotaMB, 2048);
+const MEDIA = createMediaStore({
+  dir: path.join(DATA, 'uploads'),
+  limits: MEDIA_LIMITS,
+  readState: uid => (isTenantMediaBucket(uid) ? readTenantMediaState(DATA, tenantIdFromMediaBucket(uid)) : readState(uid)),
+  quotaMBFor: uid => (isTenantMediaBucket(uid) ? TENANT_MEDIA_QUOTA_MB : MEDIA_LIMITS.quotaMB)
+});
 // Leftovers of uploads the previous process was receiving when it stopped.
 try { MEDIA.cleanTmp(); } catch (e) { console.error('media: boot cleanup failed', e.message); }
 // Per profile, not per address: every upload is signed in, and behind a proxy one address can be
@@ -1960,7 +2224,9 @@ function mediaThrottle(req, user, win) {
 // that is redeployed more often than hourly still gets one.
 function mediaSweepAll() {
   try {
-    const r = MEDIA.sweepAll({ uids: db.users.map(u => u.id) });
+    const tenantBuckets = [tenantMediaBucket('default'), ...listTenants(DATA, db).map(t => tenantMediaBucket(t.id))];
+    const uids = [...new Set([...db.users.map(u => u.id), ...tenantBuckets])];
+    const r = MEDIA.sweepAll({ uids });
     if (r.removed || r.tmp) console.log(`media: swept ${r.removed} unreferenced file(s), ${(r.freedBytes / 1048576).toFixed(1)} MB, ${r.tmp} stale upload(s)`);
   } catch (e) { console.error('media: sweep failed', e); }
 }
@@ -2012,9 +2278,14 @@ const mediaRoutes = {
   'GET /api/media/{hash}': async (req, res) => {
     const user = readSession(req);
     if (!user) return json(res, 401, { error: 'not signed in' });
-    // Only ever the caller's own folder: another profile's file is exactly as missing as one
-    // that was never uploaded.
-    const f = MEDIA.file(user.id, req.mediaHash);
+    // Only ever the caller's own folder, or an active exercise video/image belonging strictly to the caller's tenant.
+    let f = MEDIA.file(user.id, req.mediaHash);
+    if (!f && MEDIA_ON) {
+      const tid = resolveEffectiveTenantId(req, user);
+      if (tenantHasMediaHash(DATA, tid, req.mediaHash)) {
+        f = MEDIA.file(tenantMediaBucket(tid), req.mediaHash);
+      }
+    }
     if (!f) throw new MediaError(404, 'media-missing');
     await sendMediaFile(res, f, req.mediaHash);
   },
@@ -2103,8 +2374,15 @@ const routes = {
     // holds was made for a session: without the key it cannot tell "no Coach here" from "you
     // were not signed in when you asked", and would re-ask on every sign-in on every instance
     // that has no Coach. The key's absence is that answer.
+    const sessionUsr = readSession(req);
+    const tenantId = resolveEffectiveTenantId(req, sessionUsr);
+    const tenantRec = tenantId !== 'default' ? getTenant(DATA, tenantId) : null;
+    const effInviteOnly = INVITE_ONLY || Boolean(tenantRec?.settings?.inviteOnly);
+    const effAllowGuest = tenantRec ? Boolean(tenantRec.settings?.allowGuest) : ALLOW_GUEST;
+    const includeTenantId = tenantId !== 'default' || resolveTenantId(req) !== 'default';
     json(res, 200, {
-      invite_only: INVITE_ONLY, allow_guest: ALLOW_GUEST,
+      ...(includeTenantId ? { tenant_id: tenantId } : {}),
+      invite_only: effInviteOnly, allow_guest: effAllowGuest,
       // Only when on, so an instance without passwords answers exactly as it did before (#118).
       ...(PASSWORD_LOGIN ? { password_login: true } : {}),
       // Public: the sign-in screen is the first thing that reads it.
@@ -2112,10 +2390,10 @@ const routes = {
       // Public like the two flags above: the caps are not a secret, and the absence of the
       // block is how the app knows this server does not take photos and videos at all.
       ...(MEDIA_ON ? { media: mediaConfig(MEDIA_LIMITS) } : {}),
-      ...(readSession(req) ? { coach: coachConfig.publicConfig() } : {}),
+      ...(sessionUsr ? { coach: coachConfig.publicConfig() } : {}),
       // Which integrations this server offers (only to a session, like the Coach block). Absent
       // with INTEGRATIONS unset, which is how the app knows to show the server cards as off.
-      ...(readSession(req) && integrations.publicConfig() ? { integrations: integrations.publicConfig() } : {})
+      ...(sessionUsr && integrations.publicConfig() ? { integrations: integrations.publicConfig() } : {})
     });
   },
 
@@ -2138,11 +2416,14 @@ const routes = {
     const body = await readBody(req);
     const name = text(body.name).trim().slice(0, 40);
     if (!name) return json(res, 400, { error: 'name required' });
-    const code = text(body.code).trim().toUpperCase();
-    if (INVITE_ONLY && !db.invites.some(i => i.code === code && !i.usedBy && !i.revoked)) {
-      // The rejected code itself is never recorded — a near-miss guess in the log is a liability.
+    const ctx = resolveSignupContext(req, body.code);
+    if (ctx.inviteRequired && !ctx.inv) {
       audit(req, 'auth.register.denied', { ok: false, name, msg: 'invite-rejected' });
       return json(res, 403, { error: 'a valid invite code is required', code: 'invite' });
+    }
+    const blocked = signupTenantBlockedReason(ctx.signupTenant, ctx.tenant);
+    if (blocked) {
+      return json(res, blocked.status, { error: blocked.error, ...(blocked.code ? { code: blocked.code } : {}) });
     }
     const uid = crypto.randomBytes(12).toString('base64url');
     const options = await generateRegistrationOptions({
@@ -2152,7 +2433,7 @@ const routes = {
       authenticatorSelection: { residentKey: 'required', userVerification: 'preferred' },
       excludeCredentials: []
     });
-    const cid = putChallenge({ kind: 'register', challenge: options.challenge, name, uid, code });
+    const cid = putChallenge({ kind: 'register', challenge: options.challenge, name, uid, code: ctx.code, tenantId: ctx.signupTenant });
     json(res, 200, { cid, options });
   },
 
@@ -2168,7 +2449,7 @@ const routes = {
       verification = await verifyRegistrationResponse({
         response: body.credential,
         expectedChallenge: c.challenge,
-        expectedOrigin: ORIGIN,
+        expectedOrigin: expectedOriginsFor(req),
         expectedRPID: RP_ID,
         requireUserVerification: false
       });
@@ -2182,34 +2463,79 @@ const routes = {
       return json(res, 400, { error: 'not verified' });
     }
     const { credential } = verification.registrationInfo;
-    if (db.creds.find(x => x.id === credential.id)) {
+    let outcome;
+    try {
+      outcome = runInTransaction(getSqliteInstance(DATA), () => {
+        if (db.creds.find(x => x.id === credential.id)) {
+          return { kind: 'credential-exists' };
+        }
+        const ctx = resolveSignupContext(req, c.code);
+        const invite = ctx.inv;
+        const signupTenant = invite?.tenantId || (c.tenantId && c.tenantId !== 'default' ? c.tenantId : ctx.reqTenant);
+        const tenant = signupTenant !== 'default' ? getTenant(DATA, signupTenant) : null;
+        const inviteRequired = INVITE_ONLY || Boolean(tenant?.settings?.inviteOnly);
+        if (inviteRequired && !invite) {
+          return { kind: 'invite-invalid' };
+        }
+        const blocked = signupTenantBlockedReason(signupTenant, tenant);
+        if (blocked) {
+          return { kind: 'blocked', blocked };
+        }
+        const user = {
+          id: c.uid, name: c.name, created: new Date().toISOString(),
+          ...(signupTenant !== 'default' ? { tenantId: signupTenant, saasRole: 'student', role: 'student' } : {})
+        };
+        if (invite) {
+          const consumed = consumeInviteSqlite(DATA, invite.code, user.id, user.created);
+          if (!consumed.ok) {
+            return { kind: 'invite-invalid' };
+          }
+          user.invitedBy = invite.code;
+        }
+        const credRow = {
+          id: credential.id, userId: user.id,
+          publicKey: Buffer.from(credential.publicKey).toString('base64url'),
+          counter: credential.counter || 0,
+          transports: transportsOf(body.credential?.response?.transports),
+          created: user.created, lastUsed: user.created
+        };
+        try {
+          upsertUserSqlite(DATA, user, null);
+          upsertCredSqlite(DATA, credRow, null);
+        } catch (sqliteErr) {
+          if (isSqliteUniqueConstraintError(sqliteErr)) {
+            throw Object.assign(new Error('credential-exists'), { conflictKind: 'credential-exists' });
+          }
+          throw sqliteErr;
+        }
+        if (invite) {
+          invite.usedBy = user.id;
+          invite.usedAt = user.created;
+        }
+        if (signupTenant === 'default') claimFirstAdmin(req, user);
+        db.users.push(user);
+        db.creds.push(credRow);
+        saveDb();
+        return { kind: 'ok', user, invite };
+      });
+    } catch (err) {
+      if (err?.conflictKind) outcome = { kind: err.conflictKind };
+      else throw err;
+    }
+
+    if (outcome.kind === 'credential-exists') {
       audit(req, 'auth.register.fail', { ok: false, name: c.name, msg: 'credential-exists' });
       return json(res, 409, { error: 'credential already registered' });
     }
-    // Re-check the invite at the last moment (it may have been used/revoked since options), then burn it.
-    let invite = null;
-    if (INVITE_ONLY) {
-      invite = db.invites.find(i => i.code === c.code && !i.usedBy && !i.revoked);
-      if (!invite) {
-        audit(req, 'auth.register.fail', { ok: false, name: c.name, msg: 'invite-invalid' });
-        return json(res, 403, { error: 'invite code is no longer valid, ask for a new one', code: 'invite' });
-      }
+    if (outcome.kind === 'invite-invalid') {
+      audit(req, 'auth.register.fail', { ok: false, name: c.name, msg: 'invite-invalid' });
+      return json(res, 403, { error: 'invite code is no longer valid, ask for a new one', code: 'invite' });
     }
-    const user = { id: c.uid, name: c.name, created: new Date().toISOString() };
-    if (invite) { user.invitedBy = invite.code; invite.usedBy = user.id; invite.usedAt = user.created; }
-    claimFirstAdmin(req, user);
-    db.users.push(user);
-    db.creds.push({
-      id: credential.id, userId: user.id,
-      publicKey: Buffer.from(credential.publicKey).toString('base64url'),
-      counter: credential.counter || 0,
-      transports: transportsOf(body.credential?.response?.transports),
-      // What Settings → Passkeys shows (#95); a passkey from before then has neither.
-      created: user.created, lastUsed: user.created
-    });
-    saveDb();
-    audit(req, 'auth.register.ok', { user, msg: invite ? invite.code : null });
-    json(res, 200, { user: publicUser(user) }, { 'Set-Cookie': sessionCookie(user) });
+    if (outcome.kind === 'blocked') {
+      return json(res, outcome.blocked.status, { error: outcome.blocked.error, ...(outcome.blocked.code ? { code: outcome.blocked.code } : {}) });
+    }
+    audit(req, 'auth.register.ok', { user: outcome.user, msg: outcome.invite ? outcome.invite.code : null });
+    json(res, 200, { user: publicUser(outcome.user) }, { 'Set-Cookie': sessionCookie(outcome.user) });
   },
 
   'POST /api/login/options': async (req, res) => {
@@ -2240,7 +2566,7 @@ const routes = {
       verification = await verifyAuthenticationResponse({
         response: body.credential,
         expectedChallenge: c.challenge,
-        expectedOrigin: ORIGIN,
+        expectedOrigin: expectedOriginsFor(req),
         expectedRPID: RP_ID,
         requireUserVerification: false,
         credential: {
@@ -2269,6 +2595,10 @@ const routes = {
     if (user.disabled) {
       audit(req, 'auth.login.fail', { ok: false, user, msg: 'account-disabled' });
       return json(res, 403, { error: 'this account has been disabled', code: 'disabled' });
+    }
+    if (user.tenantId && user.saasRole !== 'superadmin' && isTenantSuspended(DATA, user.tenantId)) {
+      audit(req, 'auth.login.fail', { ok: false, user, msg: 'tenant-suspended' });
+      return json(res, 403, { error: 'O acesso desta academia está suspenso no momento.' });
     }
     audit(req, 'auth.login.ok', { user });
     json(res, 200, { user: publicUser(user) }, { 'Set-Cookie': sessionCookie(user) });
@@ -2399,17 +2729,21 @@ const routes = {
   'POST /api/watch/redeem': async (req, res) => {
     const body = await readBody(req);
     if (addressPaused(req, res, 'watch')) return;
-    const uid = takeWatchCode(watchCodes, text(body.code));
-    const user = uid && db.users.find(u => u.id === uid);
-    if (!user || user.disabled) {
+    const redeemed = runInTransaction(getSqliteInstance(DATA), () => {
+      const uid = takeWatchCode(watchCodes, text(body.code));
+      const user = uid && db.users.find(u => u.id === uid);
+      if (!user || user.disabled) return null;
+      const { token, link } = createWatchLink(db, user.id, sessionVersion(user), text(body.name));
+      saveDb();
+      return { token, link, user };
+    });
+    if (!redeemed) {
       strikeAddress(req, 'watch');
       auditFail(req, 'auth.watch.fail', { ok: false, msg: 'code-invalid' });
       return json(res, 400, { error: 'invalid or expired code', code: 'pair-invalid' });
     }
-    const { token, link } = createWatchLink(db, user.id, sessionVersion(user), text(body.name));
-    saveDb();
-    audit(req, 'auth.watch.ok', { user, msg: link.name });
-    json(res, 200, { token, id: link.id, name: user.name || '' });
+    audit(req, 'auth.watch.ok', { user: redeemed.user, msg: redeemed.link.name });
+    json(res, 200, { token: redeemed.token, id: redeemed.link.id, name: redeemed.user.name || '' });
   },
   'GET /api/watch/links': async (req, res) => {
     const user = readSession(req);
@@ -2421,9 +2755,11 @@ const routes = {
     if (!user) return json(res, 401, { error: 'not signed in' });
     const body = await readBody(req);
     const id = text(body.id) || null;
-    if (dropWatchLinks(db, user.id, id)) saveDb();
-    // The last watch gone: nothing is left to read the mailbox.
-    if (!listWatchLinks(db, user.id).length) { try { fs.unlinkSync(watchFile(user.id)); } catch { /* none */ } }
+    runInTransaction(getSqliteInstance(DATA), () => {
+      if (dropWatchLinks(db, user.id, id)) saveDb();
+      // The last watch gone: nothing is left to read the mailbox.
+      if (!listWatchLinks(db, user.id).length) { try { deleteWatchBoxSqlite(DATA, user.id); } catch { /* none */ } }
+    });
     audit(req, 'auth.watch.unlink', { user });
     json(res, 200, { ok: true, links: listWatchLinks(db, user.id) });
   },
@@ -2433,9 +2769,13 @@ const routes = {
     if (!user) return json(res, 401, { error: 'not signed in' });
     const body = await readBody(req);
     if (!listWatchLinks(db, user.id).length) return json(res, 409, { error: 'no watch paired', code: 'no-watch' });
-    const box = readBox(user.id);
-    if (!putSnapshot(box, body.json)) return json(res, 400, { error: 'not a snapshot' });
-    writeBox(user.id, box);
+    const okSnap = runInTransaction(getSqliteInstance(DATA), () => {
+      const box = readBox(user.id);
+      if (!putSnapshot(box, body.json)) return false;
+      writeBox(user.id, box);
+      return true;
+    });
+    if (!okSnap) return json(res, 400, { error: 'not a snapshot' });
     json(res, 200, { ok: true });
   },
   'GET /api/watch/events': async (req, res) => {
@@ -2449,8 +2789,10 @@ const routes = {
     const user = readSession(req);
     if (!user) return json(res, 401, { error: 'not signed in' });
     const body = await readBody(req);
-    const box = readBox(user.id);
-    if (ackEvents(box, body.ids)) writeBox(user.id, box);
+    runInTransaction(getSqliteInstance(DATA), () => {
+      const box = readBox(user.id);
+      if (ackEvents(box, body.ids)) writeBox(user.id, box);
+    });
     json(res, 200, { ok: true });
   },
   // The watch's side (its Side Service, with the watch token): the snapshot, and its events.
@@ -2464,10 +2806,13 @@ const routes = {
     const link = watchLinkFor(req);
     if (!link) return json(res, 401, { error: 'not paired', code: 'watch-unpaired' });
     const body = await readBody(req);
-    const box = readBox(link.userId);
-    const accepted = pushEvents(box, body.events);
-    if (accepted.length) writeBox(link.userId, box);
-    json(res, 200, { accepted, json: box.snapshot, at: box.snapAt });
+    const { accepted, snapshot, snapAt } = runInTransaction(getSqliteInstance(DATA), () => {
+      const box = readBox(link.userId);
+      const acc = pushEvents(box, body.events);
+      if (acc.length) writeBox(link.userId, box);
+      return { accepted: acc, snapshot: box.snapshot, snapAt: box.snapAt };
+    });
+    json(res, 200, { accepted, json: snapshot, at: snapAt });
   },
 
   // Absent entirely while PASSWORD_LOGIN is off, so each of them is a plain 404.
@@ -2561,70 +2906,65 @@ const routes = {
     // before revisions, or a deliberate replace such as a backup import) overwrites, as before.
     // readState and atomicWrite are synchronous with nothing awaited between them, so the
     // compare-and-write is atomic for this process.
-    const cur = readStateStrict(user.id);
-    if (cur === UNREADABLE) { console.error('state file unreadable for', user.id); return json(res, 503, { error: 'state unreadable' }); }
-    const curRev = cur?._rev || 0;
-    // `_rev` is a counter, so after the data directory went back in time (a restored backup, a
-    // write lost to a power cut) the same number names a different document. Every write also gets
-    // a write id (`_wid`) and keeps its ancestors' (`_wids`): a client quoting the id it last saw
-    // (`baseWid`) is refused when the stored document is not that one, whatever the numbers say,
-    // and a client reading a document can tell whether it descends from its own (useStore pullState).
-    if ((body.baseRev != null && body.baseRev !== curRev) ||
-        (body.baseRev != null && typeof body.baseWid === 'string' && cur?._wid && body.baseWid !== cur._wid)) {
-      return json(res, 409, { error: 'conflict', rev: curRev, state: forClient(cur) });
+    // Conditional write atomizado em transação SQLite (`BEGIN IMMEDIATE` + Compare-And-Swap em `_rev`):
+    // impede lost updates quando duas abas/dispositivos ou uma prescrição do professor escrevem simultaneamente.
+    const putOutcome = runInTransaction(getSqliteInstance(DATA), () => {
+      const cur = readStateStrict(user.id);
+      if (cur === UNREADABLE) return { kind: 'unreadable' };
+      const curRev = cur?._rev || 0;
+      if ((body.baseRev != null && body.baseRev !== curRev) ||
+          (body.baseRev != null && typeof body.baseWid === 'string' && cur?._wid && body.baseWid !== cur._wid)) {
+        return { kind: 'conflict', curRev, cur };
+      }
+      delete body.state.active;
+      const storedReset = Number(cur?.resetAt) || 0;
+      if (storedReset > (Number(body.state.resetAt) || 0)) {
+        body.state.resetAt = cur.resetAt;
+        if (cur.resetIds && typeof cur.resetIds === 'object') body.state.resetIds = cur.resetIds;
+        else delete body.state.resetIds;
+      }
+      const report = {};
+      try { stampPut(cur, body.state, { overRead: body.baseRev != null && body.baseRev === curRev, stamped: body.stamped === true, report }); }
+      catch (e) { if (e instanceof RangeError) return { kind: 'invalid' }; throw e; }
+      body.state._rev = curRev + 1;
+      if (report.changed) body.state._rev = curRev + 2;
+      body.state._wids = [...(Array.isArray(cur?._wids) ? cur._wids : []), ...(cur?._wid ? [cur._wid] : [])]
+        .filter(x => typeof x === 'string').slice(-WID_KEEP);
+      body.state._wid = crypto.randomBytes(8).toString('hex');
+      let text;
+      try { text = JSON.stringify(body.state); }
+      catch (e) { if (e instanceof RangeError) return { kind: 'invalid' }; throw e; }
+
+      const cas = writeUserStateCasSqlite(DATA, user.id, body.state, body.baseRev != null ? curRev : null, text);
+      if (!cas.ok) {
+        const latest = readState(user.id);
+        return { kind: 'conflict', curRev: cas.rev ?? (latest?._rev || 0), cur: latest };
+      }
+      stateCache.delete(user.id);
+      return { kind: 'ok', cur, rev: curRev + 1, wid: body.state._wid, ts: body.state._ts || null };
+    });
+
+    if (putOutcome.kind === 'unreadable') {
+      console.error('state file unreadable for', user.id);
+      return json(res, 503, { error: 'state unreadable' });
     }
-    delete body.state.active;              // in-progress workouts stay device-local
-    // "Reset everything" stamps the profile (`resetAt`, with `resetIds`: what it wiped). The stamp
-    // only moves forward: a write without it, or with an older one — a client from before it, a
-    // backup restored over the profile — keeps the stored stamp. Otherwise every device that saw
-    // the reset would take that copy for one older than the reset, and wipe it again on its next
-    // merge (frontend/src/lib/sync-merge.js).
-    const storedReset = Number(cur?.resetAt) || 0;
-    if (storedReset > (Number(body.state.resetAt) || 0)) {
-      body.state.resetAt = cur.resetAt;
-      if (cur.resetIds && typeof cur.resetIds === 'object') body.state.resetIds = cur.resetIds;
-      else delete body.state.resetIds;
+    if (putOutcome.kind === 'conflict') {
+      return json(res, 409, { error: 'conflict', rev: putOutcome.curRev, state: forClient(putOutcome.cur) });
     }
-    // The records of removals and edits only grow, and what a writer that does not stamp its own
-    // changes (an older app, an API script) changed is stamped here, so it is neither wiped nor
-    // undone by the next device that merges (sync-stamps.js).
-    // A document nested too deep to compare is the bad request the stringify below refuses too.
-    const report = {};
-    try { stampPut(cur, body.state, { overRead: body.baseRev != null && body.baseRev === curRev, stamped: body.stamped === true, report }); }
-    catch (e) { if (e instanceof RangeError) return json(res, 400, { error: 'invalid state' }); throw e; }
-    body.state._rev = curRev + 1;          // server-owned; whatever the client sent is ignored
-    // A writer that does not stamp (an older app) takes the revision it is told for the document it
-    // sent, and only reads the profile again once the revision moves. When the server put back
-    // something it left out or set back (sync-stamps.js), the document stored is not that one: it
-    // goes in one revision further, so the writer's next check of the revision (every half minute)
-    // finds it moved and reads it, and its next push over the one it was told is a conflict to merge.
-    if (report.changed) body.state._rev = curRev + 2;
-    body.state._wids = [...(Array.isArray(cur?._wids) ? cur._wids : []), ...(cur?._wid ? [cur._wid] : [])]
-      .filter(x => typeof x === 'string').slice(-WID_KEEP);
-    body.state._wid = crypto.randomBytes(8).toString('hex');
-    // JSON.parse takes any nesting, JSON.stringify recurses and runs out of stack on a document
-    // nested some thousands deep. No client builds one; it is a bad request, not a server error.
-    let text;
-    try { text = JSON.stringify(body.state); }
-    catch (e) { if (e instanceof RangeError) return json(res, 400, { error: 'invalid state' }); throw e; }
-    atomicWrite(stateFile(user.id), text);
-    // The stat cache cannot see this write on its own: mtime granularity is 4 ms here (ext4 on
-    // this kernel — 3901 of 3999 back-to-back same-size writes shared one timestamp), and a
-    // `_rev` going from 7 to 8 does not change the file's size, so two writes inside one 4 ms
-    // tick are the same (mtimeMs, size) key. A reader that sampled between them would then serve
-    // the old revision until some later write happened to land on a different tick. This is the
-    // only writer of a state file in the tree, so evicting here is the whole fix.
-    stateCache.delete(user.id);
-    // Starts (or stops) the grace clock of every stored file this write stopped (or started)
-    // referencing. Bookkeeping only: the state is already saved, so nothing here may turn a
-    // successful write into an error.
+    if (putOutcome.kind === 'invalid') {
+      return json(res, 400, { error: 'invalid state' });
+    }
+
+    const { cur, rev, wid, ts } = putOutcome;
     if (MEDIA_ON) {
       try { MEDIA.noteState(user.id, body.state); } catch (e) { console.error('media noteState', e); }
     }
-    // A finished workout, a record or a weigh-in the profile's integrations asked to hear about:
-    // queued for delivery (integrations/outbox.js), never sent from inside this request.
     try { integrations.onStateWrite(user.id, cur, body.state); } catch (e) { console.error('integrations onStateWrite', e); }
-    json(res, 200, { ok: true, ts: body.state._ts || null, rev: curRev + 1, wid: body.state._wid });
+    try {
+      notifyWorkoutCompletedIfAny({ dataDir: DATA, user, curState: cur, newState: body.state, db, catalogueById: getCatalogueIndex().byId })
+        .catch(e => console.error('[WhatsApp Hook]', e.message));
+    } catch (e) { /* non-blocking */ }
+    json(res, 200, { ok: true, ts, rev, wid });
   },
 
   'GET /api/push/public-key': async (req, res) => json(res, 200, { key: vapid.publicKey }),
@@ -2655,24 +2995,23 @@ const routes = {
     // account's reminders arriving on a device somebody else is using.
     const keyDigest = k => crypto.createHash('sha256').update(`${k?.p256dh}\n${k?.auth}`).digest();
     const sameKeys = k => crypto.timingSafeEqual(keyDigest(k), keyDigest(keys));
-    if (db.subs.some(s => s.endpoint === sub.endpoint && s.userId !== user.id && !sameKeys(s.keys))) {
-      return json(res, 409, { error: 'this subscription belongs to another account' });
-    }
-    const prev = db.subs.find(s => s.endpoint === sub.endpoint);
-    // No usable id in the request (none, or not a short token) leaves the id the row already
-    // has: the request is a re-send, not a request to forget which device the row is.
-    const storedDevice = deviceId || prev?.deviceId;
-    db.subs = db.subs.filter(s => s.endpoint !== sub.endpoint);
-    // A browser holds one subscription per device, so this cap is far above real use. Without
-    // it a single account could pile up endpoints without limit — every one of them a target
-    // sendPush() would then contact, and a whole rewrite of db.json per addition.
-    const mine = db.subs.filter(s => s.userId === user.id);
-    if (mine.length >= MAX_SUBS_PER_USER) {
-      const drop = new Set(mine.slice(0, mine.length - MAX_SUBS_PER_USER + 1).map(s => s.endpoint));
-      db.subs = db.subs.filter(s => !drop.has(s.endpoint));
-    }
-    db.subs.push({ userId: user.id, endpoint: sub.endpoint, keys, ...(storedDevice ? { deviceId: storedDevice } : {}), created: prev?.created || new Date().toISOString() });
-    saveDb();
+    const subOk = runInTransaction(getSqliteInstance(DATA), () => {
+      if (db.subs.some(s => s.endpoint === sub.endpoint && s.userId !== user.id && !sameKeys(s.keys))) {
+        return false;
+      }
+      const prev = db.subs.find(s => s.endpoint === sub.endpoint);
+      const storedDevice = deviceId || prev?.deviceId;
+      db.subs = db.subs.filter(s => s.endpoint !== sub.endpoint);
+      const mine = db.subs.filter(s => s.userId === user.id);
+      if (mine.length >= MAX_SUBS_PER_USER) {
+        const drop = new Set(mine.slice(0, mine.length - MAX_SUBS_PER_USER + 1).map(s => s.endpoint));
+        db.subs = db.subs.filter(s => !drop.has(s.endpoint));
+      }
+      db.subs.push({ userId: user.id, endpoint: sub.endpoint, keys, ...(storedDevice ? { deviceId: storedDevice } : {}), created: prev?.created || new Date().toISOString() });
+      saveDb();
+      return true;
+    });
+    if (!subOk) return json(res, 409, { error: 'this subscription belongs to another account' });
     json(res, 200, { ok: true });
   },
 
@@ -2979,6 +3318,62 @@ const routes = {
   // integrations/routes.js, handed the same helpers. With INTEGRATIONS unset they answer an empty
   // list (GET) or 404 "off", so the routes exist on every server and the app can tell.
   ...integrationRoutes({ json, readBody, readSession, hub: integrations, audit }),
+  ...createSaasRoutes({
+    json,
+    readBody,
+    readRawBody,
+    readSession: readSaasSession,
+    isAdmin,
+    db,
+    saveDb,
+    dataDir: DATA,
+    audit,
+    makeSession,
+    sessionCookie,
+    livePresence,
+    removeAccount,
+    passwordAttempt,
+    acctKey,
+    auditReader: limit => auditKeep(auditLines()).reverse().slice(0, limit),
+    mediaStore: MEDIA_ON ? MEDIA : null,
+    mediaConfigObj: MEDIA_ON ? { ...mediaConfig(MEDIA_LIMITS), quotaMB: TENANT_MEDIA_QUOTA_MB } : null,
+    mediaBurst: MEDIA_BURST,
+    mediaThrottleFn: mediaThrottle,
+    sendMediaFileFn: sendMediaFile,
+    stateOps: (() => {
+      const evictCache = uid => { stateCache.delete(uid); stateSummaries.delete(uid); evictStudentSummary(uid); };
+      const persistStampedState = (uid, nextState, cur) => {
+        const curRev = cur?._rev || 0;
+        const now = Date.now();
+        try { stampPut(cur, nextState, { overRead: true, stamped: false, now }); } catch { /* ignore */ }
+        nextState._rev = curRev + 1;
+        nextState._ts = now;
+        nextState._wids = [...(Array.isArray(cur?._wids) ? cur._wids : []), ...(cur?._wid ? [cur._wid] : [])]
+          .filter(x => typeof x === 'string')
+          .slice(-WID_KEEP);
+        nextState._wid = crypto.randomBytes(8).toString('hex');
+        writeUserStateSqlite(DATA, uid, nextState);
+        evictCache(uid);
+        return nextState;
+      };
+      return {
+        readState: readStateCached,
+        evictCache,
+        writeState: (uid, nextState, prevState) => runInTransaction(getSqliteInstance(DATA), () => {
+          const cur = prevState !== undefined ? prevState : readState(uid);
+          return persistStampedState(uid, nextState, cur);
+        }),
+        updateAtomic: (uid, mutateFn) => runInTransaction(getSqliteInstance(DATA), () => {
+          const cur = readState(uid);
+          const out = mutateFn(cur);
+          if (out === null) return null;
+          const nextState = out.state || out;
+          persistStampedState(uid, nextState, cur);
+          return out.result !== undefined ? out.result : nextState;
+        })
+      };
+    })()
+  }),
 
   /* ---------- photos & videos ---------- */
   // Absent, not refusing, when MEDIA_UPLOADS=0: a 404 is what a server from before the feature
@@ -2990,6 +3385,7 @@ const routes = {
 // A job that was running when the process died is not coming back; say so rather than leaving
 // a spinner that never resolves.
 coachJobs.recoverOnBoot();
+recoverWebhookQueueOnBoot(DATA, { audit });
 // A ready proposal is the one Coach event worth a notification. Failures and "nothing to
 // change" stay silent on purpose (FR-38/E4).
 coachJobs.setProposalHook((uid, pending) => {
@@ -3004,6 +3400,17 @@ coachJobs.setProposalHook((uid, pending) => {
 integrations.start();
 startCadence({ users: () => db.users.filter(u => !u.disabled), userNow, skip: uid => !stateSummary(uid)?.consent });
 startWarmup();
+if (process.env.SAAS_AUTO_SEED === '1') {
+  ensureSaasDemoSeed({
+    dataDir: DATA,
+    db,
+    saveDb,
+    stateOps: {
+      readState,
+      evictCache: uid => { stateCache.delete(uid); stateSummaries.delete(uid); }
+    }
+  }).catch(e => console.error('saas seed:', e.message));
+}
 
 // node's requestTimeout is one number for every route, and it is half an hour (below) for the
 // sake of one: a video uploaded over a slow uplink. Every other request keeps node's old five
@@ -3027,16 +3434,47 @@ function bodyDeadline(req) {
 }
 
 // The Capacitor WebView origins of the Android and iOS app.
-const APP_ORIGINS = new Set(['https://localhost', 'capacitor://localhost', 'http://localhost']);
+const APP_ORIGINS = new Set(['https://localhost', 'capacitor://localhost']);
+
+function isAllowedOrigin(orig) {
+  if (!orig) return false;
+  if (originsMatch(orig, ORIGIN)) return true;
+  if (APP_ORIGINS.has(orig)) return true;
+  if (process.env.NODE_ENV !== 'production' && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(orig)) return true;
+  try {
+    const origHost = new URL(ORIGIN).hostname;
+    const reqHost = new URL(orig).hostname;
+    if (reqHost === origHost || reqHost.endsWith('.' + origHost)) return true;
+    if (RP_ID && RP_ID !== 'localhost') {
+      if (reqHost === RP_ID || reqHost.endsWith('.' + RP_ID)) return true;
+    }
+  } catch { /* ignore */ }
+  const portalUrl = process.env.PORTAL_URL || process.env.VITE_PORTAL_URL;
+  if (portalUrl) {
+    if (originsMatch(orig, portalUrl)) return true;
+    try {
+      const pHost = new URL(portalUrl).hostname;
+      const reqHost = new URL(orig).hostname;
+      if (reqHost === pHost || reqHost.endsWith('.' + pHost)) return true;
+    } catch { /* ignore */ }
+  }
+  return false;
+}
 
 const server = http.createServer(async (req, res) => {
   bodyDeadline(req);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   // Same-origin (the deployed nginx-proxied web app) never triggers CORS, so this only matters
-  // for the paired mobile app calling in from its own WebView origin. It carries no cookie
-  // (auth is the Authorization header instead), so Allow-Credentials is deliberately never set —
-  // reflecting the origin here can't expose the cookie session to anyone.
+  // for the paired mobile app calling in from its own WebView origin and B2B portal origins.
+  // Allow-Credentials is deliberately never set, so reflecting authorized origins can't expose
+  // the cookie session to untrusted sites.
   const origin = req.headers.origin;
-  if (origin) { res.setHeader('Access-Control-Allow-Origin', origin); res.setHeader('Vary', 'Origin'); }
+  if (origin && isAllowedOrigin(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
   if (req.method === 'OPTIONS') {
     // Chrome's Private Network Access asks before a page reaches a LAN address (a phone pairing
     // with 192.168.x.x); an answer without this header is refused like a CORS failure (#329).
@@ -3048,7 +3486,7 @@ const server = http.createServer(async (req, res) => {
       'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
       // The CF-Access-* pair: a phone's Cloudflare Access service token (frontend lib/cf-access.js),
       // for an Access application that passes OPTIONS through to the origin.
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, CF-Access-Client-Id, CF-Access-Client-Secret',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, CF-Access-Client-Id, CF-Access-Client-Secret, X-Tenant-Id, Idempotency-Key',
       'Access-Control-Max-Age': '86400',
       ...(pna ? { 'Access-Control-Allow-Private-Network': 'true' } : {})
     });
@@ -3068,8 +3506,8 @@ const server = http.createServer(async (req, res) => {
   let key = req.method + ' ' + url.pathname;
   // The one route with a parameter in its path. Mapped onto its template key here so the table
   // above stays a plain lookup, and so csrfOk and the catch-all see one name for every file.
-  const mm = /^\/api\/media\/([0-9a-f]{64})$/.exec(url.pathname);
-  if (mm) { key = req.method + ' /api/media/{hash}'; req.mediaHash = mm[1]; }
+  const mm = /^\/api\/(media|gym\/media)\/([0-9a-f]{64})$/.exec(url.pathname);
+  if (mm) { key = `${req.method} /api/${mm[1]}/{hash}`; req.mediaHash = mm[2]; }
   const handler = routes[key];
   if (!handler) return json(res, 404, { error: 'not found' });
   if (!csrfOk(req, key)) {
@@ -3077,7 +3515,7 @@ const server = http.createServer(async (req, res) => {
     // is simply not signed in. That is the paired app once its token is revoked or expired, and it
     // needs the 401 to know it (lib/api.js callers and the boot path act on the status), not a 403
     // and a log line that blames ORIGIN. Still refused before any handler runs.
-    if ((req.headers.authorization || '').startsWith('Bearer ') && !cookieToken(req) && !bearerAuthenticates(req)) {
+    if ((req.headers.authorization || '').startsWith('Bearer ') && !cookieToken(req) && (SAAS_BEARER_RE.test(key) ? !hasValidSaasBearer(req) : !bearerAuthenticates(req))) {
       return json(res, 401, { error: 'not signed in' });
     }
     // Logged, not audited: this is reachable without a session, and an audit entry per attempt
