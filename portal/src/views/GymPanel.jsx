@@ -1185,13 +1185,13 @@ export default function GymPanel({
                 <Icon name="phoneScreen" />
                 <span>Abrir App do Aluno</span>
               </a>
-              <Button variant="primary" icon="userPlus" onClick={openEnrollModal}>
+              <Button variant="primary" icon="userPlus" data-tour="gym-enroll-btn" onClick={openEnrollModal}>
                 Matricular Aluno
               </Button>
             </div>
           </div>
 
-          <div className="b2b-kpi-grid">
+          <div className="b2b-kpi-grid" data-tour="gym-kpis">
             <KpiTile
               label="Alunos Ativos"
               value={`${kpis.totalStudents || 0} / ${tenant.limits?.maxStudents >= 100000 ? 'Ilimitado' : (tenant.limits?.maxStudents || 'Ilimitado')}`}
@@ -1298,7 +1298,7 @@ export default function GymPanel({
             </div>
           </div>
 
-          <div className="card">
+          <div className="card" data-tour="gym-churn">
             <CardHead
               icon="warning"
               iconTint="var(--orange)"
@@ -1416,7 +1416,7 @@ export default function GymPanel({
               <p>Gerencie o prontuário individual, prescreva fichas personalizadas no app e acompanhe a evolução de cargas.</p>
             </div>
             <div className="b2b-head-actions">
-              <Button variant="primary" icon="userPlus" onClick={openEnrollModal}>
+              <Button variant="primary" icon="userPlus" data-tour="gym-enroll-btn" onClick={openEnrollModal}>
                 Matricular Aluno
               </Button>
             </div>
@@ -1571,7 +1571,7 @@ export default function GymPanel({
          ================================================================= */}
       {activeTab === 'templates' && (
         <div>
-          <div className="b2b-page-head">
+          <div className="b2b-page-head" data-tour="gym-templates-head">
             <div>
               <h1>{isPersonal ? 'Meus Modelos de Fichas' : 'Modelos de Fichas da Academia'}</h1>
               <p>
@@ -1694,7 +1694,7 @@ export default function GymPanel({
          ================================================================= */}
       {activeTab === 'team' && (
         <div>
-          <div className="b2b-page-head">
+          <div className="b2b-page-head" data-tour="gym-team-head">
             <div>
               <h1>{isPersonal ? 'Meu Perfil & Equipe' : 'Equipe & Professores'}</h1>
               <p>
@@ -1811,7 +1811,7 @@ export default function GymPanel({
           </div>
 
           <div className="b2b-grid-2">
-            <div className="card" style={{ margin: 0 }}>
+            <div className="card" style={{ margin: 0 }} data-tour="gym-qr-card">
               <CardHead
                 icon="qr"
                 iconTint="var(--acc)"
@@ -1872,7 +1872,7 @@ export default function GymPanel({
               )}
             </div>
 
-            <div className="card" style={{ margin: 0 }}>
+            <div className="card" style={{ margin: 0 }} data-tour="gym-invite-card">
               <CardHead
                 icon="key"
                 iconTint="var(--orange)"
@@ -1966,7 +1966,7 @@ export default function GymPanel({
          ================================================================= */}
       {activeTab === 'billing' && (
         <div>
-          <div className="b2b-page-head">
+          <div className="b2b-page-head" data-tour="gym-billing-head">
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                 <h1>Minha Assinatura</h1>
@@ -2267,7 +2267,7 @@ export default function GymPanel({
           </div>
 
           <div className="b2b-grid-2" style={{ alignItems: 'start' }}>
-            <form className="card" style={{ margin: 0 }} onSubmit={handleSaveBranding}>
+            <form className="card" style={{ margin: 0 }} data-tour="gym-branding-card" onSubmit={handleSaveBranding}>
               <CardHead
                 icon="gear"
                 iconTint="var(--acc)"
@@ -2429,7 +2429,7 @@ export default function GymPanel({
                 </div>
 
                 {/* Automação WhatsApp & Notificação de Treinos */}
-                <div style={{ padding: '16px 14px', borderRadius: 12, background: 'var(--surface-2)', border: '1px solid var(--sep)' }}>
+                <div data-tour="gym-whatsapp-box" style={{ padding: '16px 14px', borderRadius: 12, background: 'var(--surface-2)', border: '1px solid var(--sep)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
                       <Icon name="chat" size={18} style={{ color: 'var(--green)' }} />

@@ -162,7 +162,7 @@ const FAQ_RIGHT = [
   }
 ];
 
-export default function LandingView({ onOpenLogin }) {
+export default function LandingView({ onOpenLogin, onOpenSignup }) {
   const [heroScreen, setHeroScreen] = useState(HERO_SCREENS[0].src);
   const [heroFading, setHeroFading] = useState(false);
   const [activeGallery, setActiveGallery] = useState(GALLERY_ITEMS[0]);
@@ -246,7 +246,11 @@ export default function LandingView({ onOpenLogin }) {
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" /><polyline points="10 17 15 12 10 7" /><line x1="15" y1="12" x2="3" y2="12" /></svg>
               Fazer login
             </button>
-            <button type="button" onClick={onOpenLogin} className="btn-lime-glow btn-signup-nav">
+            <button
+              type="button"
+              onClick={() => (onOpenSignup ? onOpenSignup({ accountType: 'gym' }) : onOpenLogin())}
+              className="btn-lime-glow btn-signup-nav"
+            >
               Criar conta
               <span className="btn-circle-icon">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="7" y1="17" x2="17" y2="7" /><polyline points="7 7 17 7 17 17" /></svg>
@@ -305,7 +309,8 @@ export default function LandingView({ onOpenLogin }) {
                   className="btn-lime-glow"
                   onClick={() => {
                     setMobileMenuOpen(false);
-                    onOpenLogin();
+                    if (onOpenSignup) onOpenSignup({ accountType: 'gym' });
+                    else onOpenLogin();
                   }}
                 >
                   Criar conta
@@ -337,7 +342,11 @@ export default function LandingView({ onOpenLogin }) {
             </p>
 
             <div className="rit-hero-ctas">
-              <button type="button" onClick={onOpenLogin} className="btn-lime-glow">
+              <button
+                type="button"
+                onClick={() => (onOpenSignup ? onOpenSignup({ accountType: 'gym' }) : onOpenLogin())}
+                className="btn-lime-glow"
+              >
                 Criar minha conta
                 <span className="btn-circle-icon">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="7" y1="17" x2="17" y2="7" /><polyline points="7 7 17 7 17 17" /></svg>
@@ -708,6 +717,19 @@ export default function LandingView({ onOpenLogin }) {
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><rect x="2" y="6" width="20" height="12" rx="2" /><circle cx="12" cy="12" r="2" /></svg>
                 </div>
               </div>
+              <div style={{ marginTop: 18 }}>
+                <button
+                  type="button"
+                  onClick={() => (onOpenSignup ? onOpenSignup({ accountType: 'personal' }) : onOpenLogin())}
+                  className="btn-lime-glow"
+                  style={{ width: '100%', justifyContent: 'space-between', padding: '10px 10px 10px 20px' }}
+                >
+                  <span>Começar como Personal (14 dias grátis)</span>
+                  <span className="btn-circle-icon">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="7" y1="17" x2="17" y2="7" /><polyline points="7 7 17 7 17 17" /></svg>
+                  </span>
+                </button>
+              </div>
             </div>
 
             <div className="rit-plan-center-col">
@@ -758,6 +780,19 @@ export default function LandingView({ onOpenLogin }) {
                   <div>A partir de R$ 169 <span className="sub">/mês no PIX</span></div>
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><rect x="2" y="6" width="20" height="12" rx="2" /><circle cx="12" cy="12" r="2" /></svg>
                 </div>
+              </div>
+              <div style={{ marginTop: 18 }}>
+                <button
+                  type="button"
+                  onClick={() => (onOpenSignup ? onOpenSignup({ accountType: 'gym' }) : onOpenLogin())}
+                  className="btn-lime-glow"
+                  style={{ width: '100%', justifyContent: 'space-between', padding: '10px 10px 10px 20px' }}
+                >
+                  <span>Criar conta da Academia (14 dias grátis)</span>
+                  <span className="btn-circle-icon">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="7" y1="17" x2="17" y2="7" /><polyline points="7 7 17 7 17 17" /></svg>
+                  </span>
+                </button>
               </div>
             </div>
           </div>

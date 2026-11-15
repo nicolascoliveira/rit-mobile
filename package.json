@@ -1,4 +1,8 @@
 {
+  "scripts": {
+    "test:rspec": "npm --prefix api run test:rspec",
+    "test:critical": "npm --prefix api run test:critical"
+  },
   "devDependencies": {
     "js-yaml": "^4.1.0"
   },

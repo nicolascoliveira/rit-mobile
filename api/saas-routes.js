@@ -630,9 +630,9 @@ export function createSaasRoutes({
    * - Rejeita com 422 se a mesma chave for reutilizada com parâmetros diferentes;
    * - Preserva o mesmo `gateway_idempotency_key` (UUID v4) caso o handler falhe com 5xx.
    */
-  const withIdempotency = (req, res, { routeKey, authFn }, handler) => {
+  const withIdempotency = (req, res, { routeKey, authFn = null }, handler) => {
     return (async () => {
-      const actor = authFn(req, res);
+      const actor = authFn ? authFn(req, res) : { id: 'public_signup' };
       if (!actor) return;
 
       const rawKeyHeader = req?.headers?.['idempotency-key'];
@@ -1049,6 +1049,195 @@ export function createSaasRoutes({
         message: 'Administrador configurado com sucesso!'
       }, sessionCookie ? { 'Set-Cookie': sessionCookie(superAdminUser) } : undefined);
     },
+
+    /**
+     * Auto-cadastro B2B (Criação de conta self-service de Academia / Studio / Personal Trainer).
+     * Cria o tenant em período de teste gratuito (`status: 'trial'`), cria o usuário proprietário
+     * (`saasRole: 'gym_owner'`), provisiona os modelos de treino iniciais e já retorna sessão ativa.
+     */
+    'POST /api/saas/auth/register': (req, res) => withIdempotency(
+      req,
+      res,
+      { routeKey: 'POST /api/saas/auth/register', authFn: null },
+      async ({ body, replyJson }) => {
+        const RESERVED_SLUGS = new Set([
+          'default', 'admin', 'superadmin', 'api', 'painel', 'portal',
+          'cadastro', 'criar-conta', 'signup', 'login', 'entrar',
+          'app', 'www', 'rit', 'sistema', 'setup-superadmin', 'site'
+        ]);
+
+        const rawAccountType = String(body?.accountType || '').trim().toLowerCase();
+        if (rawAccountType && rawAccountType !== 'gym' && rawAccountType !== 'personal') {
+          return replyJson(res, 400, { error: 'Tipo de conta inválido (use "gym" ou "personal").' });
+        }
+
+        const plans = listSaasPlans(dataDir);
+        const requestedPlanRaw = String(body?.planId || '').trim().toLowerCase();
+        let accountType = rawAccountType === 'personal' ? 'personal' : 'gym';
+        if (!rawAccountType && requestedPlanRaw && requestedPlanRaw.startsWith('personal')) {
+          accountType = 'personal';
+        }
+
+        const defaultPlanId = accountType === 'personal'
+          ? (plans.find(p => p.accountType === 'personal')?.id || 'personal')
+          : (plans.find(p => p.accountType !== 'personal' && p.id === 'starter')?.id || plans[0]?.id || 'starter');
+        const targetPlanId = requestedPlanRaw || defaultPlanId;
+        const plan = plans.find(p => p.id === targetPlanId);
+        if (!plan) {
+          return replyJson(res, 400, { error: 'Plano selecionado inválido.', code: 'invalid-plan' });
+        }
+
+        const gymName = String(body?.gymName || body?.name || body?.businessName || '').trim();
+        if (gymName.length < 2) {
+          return replyJson(res, 400, {
+            error: accountType === 'personal'
+              ? 'Informe seu nome ou o nome da sua consultoria (mínimo 2 caracteres).'
+              : 'Informe o nome da sua academia ou studio (mínimo 2 caracteres).'
+          });
+        }
+
+        const ownerName = String(body?.ownerName || (accountType === 'personal' ? gymName : '')).trim();
+        if (ownerName.length < 2) {
+          return replyJson(res, 400, { error: 'Informe o nome completo do responsável (mínimo 2 caracteres).' });
+        }
+
+        const email = normalizeEmail(body?.email || body?.identifier || '');
+        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          return replyJson(res, 400, { error: 'Informe um e-mail válido.' });
+        }
+
+        const password = String(body?.password || '');
+        const pwErr = b2bPasswordError(password, ownerName || gymName);
+        if (pwErr) {
+          return replyJson(res, 400, pwErr);
+        }
+
+        const rawExplicitSlug = body?.slug !== undefined ? body.slug : body?.id;
+        const hasExplicitSlug = rawExplicitSlug !== undefined && String(rawExplicitSlug).trim() !== '';
+        const explicitSlug = hasExplicitSlug ? sanitizeTenantId(rawExplicitSlug) : '';
+        if (hasExplicitSlug && (!explicitSlug || explicitSlug.length < 2 || RESERVED_SLUGS.has(explicitSlug))) {
+          return replyJson(res, 400, {
+            error: 'Identificador/URL inválido ou reservado (use letras minúsculas, números e hífens, mín. 2 caracteres).'
+          });
+        }
+
+        const phone = String(body?.phone || '').trim().slice(0, 40);
+        const city = String(body?.city || '').trim().slice(0, 80);
+
+        // Pre-check rápido antes de gastar CPU com scrypt
+        if (db.users.some(u => normalizeEmail(u.email || '') === email)) {
+          return replyJson(res, 409, {
+            error: 'Já existe uma conta cadastrada com este e-mail.',
+            code: 'email-in-use'
+          });
+        }
+
+        const pwHash = await hashPassword(password);
+
+        let result;
+        try {
+          result = runDbMutation(() => {
+            if (db.users.some(u => normalizeEmail(u.email || '') === email)) {
+              const conflictErr = new Error('Já existe uma conta cadastrada com este e-mail.');
+              conflictErr.httpStatus = 409;
+              conflictErr.code = 'email-in-use';
+              throw conflictErr;
+            }
+
+            const existingIds = new Set(listTenants(dataDir, db).map(t => t.id));
+            let cleanSlug = explicitSlug;
+            if (hasExplicitSlug) {
+              if (existingIds.has(cleanSlug)) {
+                const slugErr = new Error('Este identificador/URL já está em uso por outra conta.');
+                slugErr.httpStatus = 409;
+                slugErr.code = 'slug-in-use';
+                throw slugErr;
+              }
+            } else {
+              let base = sanitizeTenantId(gymName) || (accountType === 'personal' ? 'personal' : 'academia');
+              if (base.length < 2) base = accountType === 'personal' ? 'personal' : 'academia';
+              if (RESERVED_SLUGS.has(base)) base = `${base}-fit`;
+              cleanSlug = base;
+              let suffix = 2;
+              while (existingIds.has(cleanSlug) || RESERVED_SLUGS.has(cleanSlug)) {
+                if (suffix > 50) {
+                  cleanSlug = `${base}-${crypto.randomBytes(3).toString('hex')}`;
+                  break;
+                }
+                cleanSlug = `${base}-${suffix++}`;
+              }
+            }
+
+            const nowIso = new Date().toISOString();
+            const ownerId = 'u_' + crypto.randomBytes(8).toString('hex');
+            const ownerUser = {
+              id: ownerId,
+              name: ownerName,
+              email,
+              tenantId: cleanSlug,
+              saasRole: 'gym_owner',
+              role: 'trainer',
+              owner: true,
+              phone,
+              createdAt: nowIso,
+              pw: { h: pwHash, set: nowIso },
+              sv: 1
+            };
+
+            const createdTenant = createTenant(dataDir, {
+              id: cleanSlug,
+              name: gymName,
+              gymName,
+              accountType,
+              ownerName,
+              ownerEmail: email,
+              phone,
+              city,
+              planId: plan.id,
+              status: 'trial',
+              trialDays: 14,
+              ownerUserId: ownerId
+            });
+
+            if (hasSqliteDir) upsertUserSqlite(dataDir, ownerUser, null);
+            db.users.push(ownerUser);
+            saveDb();
+
+            return { createdTenant, ownerUser };
+          });
+        } catch (err) {
+          if (isSqliteUniqueConstraintError(err)) {
+            return replyJson(res, 409, {
+              error: 'Já existe uma conta cadastrada com este e-mail.',
+              code: 'email-in-use'
+            });
+          }
+          const statusCode = err?.httpStatus || (/já está em uso|já existe uma academia/i.test(String(err?.message || '')) ? 409 : 400);
+          return replyJson(res, statusCode, {
+            error: err?.message || 'Não foi possível criar a conta.',
+            ...(err?.code ? { code: err.code } : {})
+          });
+        }
+
+        const tDir = getTenantDir(dataDir, result.createdTenant.id);
+        loadTemplates(tDir, { seedIfMissing: true });
+
+        audit(req, 'saas.auth.register', {
+          user: result.ownerUser,
+          msg: `${result.createdTenant.id}:${accountType}:${plan.id}`
+        });
+
+        const token = makeSession ? makeSession(result.ownerUser, 'b') : null;
+        return replyJson(res, 201, {
+          ok: true,
+          isNewSignup: true,
+          token,
+          user: saasPublicUser(result.ownerUser, isAdmin),
+          tenant: sanitizeTenantForRole(result.createdTenant, true),
+          message: 'Conta criada com sucesso! Seus 14 dias grátis começaram.'
+        }, sessionCookie ? { 'Set-Cookie': sessionCookie(result.ownerUser) } : undefined);
+      }
+    ),
 
     'POST /api/saas/auth/login': async (req, res) => {
       const body = await readBody(req);
@@ -2054,7 +2243,13 @@ export function createSaasRoutes({
             }
 
             const plans = listSaasPlans(dataDir);
-            const planId = String(body?.planId || tenant.planId || 'starter').trim();
+            const requestedPlanId = body?.planId !== undefined && body?.planId !== null
+              ? String(body.planId).trim()
+              : '';
+            if (requestedPlanId && !plans.some(p => p.id === requestedPlanId)) {
+              return replyJson(res, 400, { error: 'Plano inválido ou inexistente' });
+            }
+            const planId = requestedPlanId || String(tenant.planId || 'starter').trim();
             const plan = plans.find(p => p.id === planId) || plans.find(p => p.id === 'starter') || plans[0];
 
             const cycle = body?.cycle === 'annual' ? 'annual' : 'monthly';

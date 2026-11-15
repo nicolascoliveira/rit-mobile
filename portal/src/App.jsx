@@ -1,7 +1,12 @@
-import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import Icon from './components/Icon.jsx';
 import { Button, StatusPill, ToastHost } from './components/ui.jsx';
+import PortalTour from './components/PortalTour.jsx';
 import LandingView from './views/LandingView.jsx';
+import {
+  shouldOfferPortalTour,
+  clearPortalTourProgress
+} from './lib/portal-tour.js';
 import {
   portalApi,
   getStoredToken,
@@ -38,11 +43,14 @@ const GYM_NAV = [
 
 function parsePortalRoute() {
   if (typeof window === 'undefined') {
-    return { isLoginRoute: false, tab: '' };
+    return { isLoginRoute: false, authMode: 'login', signupAccountType: 'gym', tab: '' };
   }
   const isPortalSubdomain = /^(painel|portal|admin|gestao)\./i.test(window.location.hostname || '');
   const rawPath = window.location.pathname.replace(/^\/+|\/+$/g, '').toLowerCase();
   const rawHash = window.location.hash.replace(/^#\/?/, '').toLowerCase();
+  const sp = new URLSearchParams(window.location.search || '');
+  const searchMode = (sp.get('mode') || '').toLowerCase();
+  const searchType = (sp.get('tipo') || sp.get('type') || '').toLowerCase();
 
   // Suporta /painel/<aba>, /<aba> ou legado #<aba>
   let route = rawPath || rawHash;
@@ -54,7 +62,18 @@ function parsePortalRoute() {
   }
 
   const isKnownTab = SUPER_NAV.some(i => i.id === route) || GYM_NAV.some(i => i.id === route);
+  const isSignupRoute =
+    rawPath === 'cadastro' ||
+    rawPath === 'criar-conta' ||
+    rawPath === 'signup' ||
+    rawHash === 'cadastro' ||
+    rawHash === 'criar-conta' ||
+    rawHash === 'signup' ||
+    searchMode === 'signup' ||
+    searchMode === 'cadastro';
+
   const isLoginRoute =
+    isSignupRoute ||
     rawPath === 'login' ||
     rawPath === 'entrar' ||
     rawPath === 'painel' ||
@@ -68,6 +87,8 @@ function parsePortalRoute() {
 
   return {
     isLoginRoute,
+    authMode: isSignupRoute ? 'signup' : 'login',
+    signupAccountType: searchType === 'personal' ? 'personal' : 'gym',
     tab: isKnownTab ? route : ''
   };
 }
@@ -75,6 +96,9 @@ function parsePortalRoute() {
 export default function App() {
   const [theme, setTheme] = useState(() => setStoredTheme(getStoredTheme()));
   const [showLogin, setShowLogin] = useState(() => parsePortalRoute().isLoginRoute);
+  const [authMode, setAuthMode] = useState(() => parsePortalRoute().authMode);
+  const [signupAccountType, setSignupAccountType] = useState(() => parsePortalRoute().signupAccountType);
+  const [tourSession, setTourSession] = useState(null);
   const [booting, setBooting] = useState(() => Boolean(parsePortalRoute().isLoginRoute || getStoredToken()));
   const [bootstrap, setBootstrap] = useState(null);
   const [user, setUser] = useState(null);
@@ -116,8 +140,10 @@ export default function App() {
 
   useEffect(() => {
     const syncFromUrl = () => {
-      const { isLoginRoute, tab } = parsePortalRoute();
+      const { isLoginRoute, authMode: nextMode, signupAccountType: nextType, tab } = parsePortalRoute();
       setShowLogin(isLoginRoute);
+      setAuthMode(nextMode);
+      setSignupAccountType(nextType);
       if (SUPER_NAV.some(i => i.id === tab)) setSuperTab(tab);
       if (GYM_NAV.some(i => i.id === tab)) setGymTab(tab);
     };
@@ -203,10 +229,63 @@ export default function App() {
     }
   }, [isGymMode, activeTenant?.branding?.primaryColor, theme]);
 
+  useEffect(() => {
+    const tenantLocked = Boolean(
+      activeTenant?.accessBlocked ||
+      activeTenant?.status === 'past_due' ||
+      (activeTenant?.status === 'trial' &&
+        activeTenant?.trialEndsAt &&
+        Date.parse(activeTenant.trialEndsAt) <= Date.now())
+    );
+    if (!isGymMode || isSuperUser || tenantLocked) return undefined;
+    if (autoTourCheckedRef.current) return undefined;
+    autoTourCheckedRef.current = true;
+
+    const isNew = pendingNewSignupRef.current;
+    pendingNewSignupRef.current = false;
+    const timer = setTimeout(() => {
+      if (isNew) {
+        setTourSession({ kind: 'offer', isNewSignup: true });
+        return;
+      }
+      const { offer, resumeStep } = shouldOfferPortalTour();
+      if (offer === 'fresh') setTourSession({ kind: 'offer' });
+      else if (offer === 'resume') setTourSession({ kind: 'resume', resumeStep });
+    }, isNew ? 420 : 850);
+
+    return () => clearTimeout(timer);
+  }, [
+    isGymMode,
+    isSuperUser,
+    activeTenant?.accessBlocked,
+    activeTenant?.status,
+    activeTenant?.trialEndsAt
+  ]);
+
   const handleToggleTheme = () => {
     const next = setStoredTheme(theme === 'dark' ? 'light' : 'dark');
     setTheme(next);
   };
+
+  const autoTourCheckedRef = useRef(false);
+  const pendingNewSignupRef = useRef(false);
+
+  const openAuthPortal = useCallback((mode = 'login', accountType = 'gym') => {
+    const nextMode = mode === 'signup' ? 'signup' : 'login';
+    const nextType = accountType === 'personal' ? 'personal' : 'gym';
+    setAuthMode(nextMode);
+    setSignupAccountType(nextType);
+    if (typeof window !== 'undefined') {
+      const targetUrl = nextMode === 'signup'
+        ? (nextType === 'personal' ? '/cadastro?tipo=personal' : '/cadastro')
+        : '/login';
+      window.history.pushState(null, '', targetUrl);
+    }
+    setShowLogin(true);
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, []);
 
   const handleAuthenticated = res => {
     if (!res?.token || !res?.user) return;
@@ -220,12 +299,19 @@ export default function App() {
     } else {
       setTenantOverride(res.user.tenantId || '');
       setActiveTenant(res.tenant || null);
+      if (res.isNewSignup) {
+        clearPortalTourProgress();
+        pendingNewSignupRef.current = true;
+      }
+      autoTourCheckedRef.current = false;
       if (res.billingOnly || res.tenant?.accessBlocked) {
         selectGymTab('billing');
         toast('Regularize sua assinatura via PIX para liberar todos os módulos da academia.');
       } else {
         selectGymTab('dashboard');
-        toast(`Bem-vindo ao painel da ${res.tenant?.name || 'academia'}!`);
+        toast(res.isNewSignup
+          ? `Conta criada! Bem-vindo ao painel da ${res.tenant?.name || 'sua unidade'}!`
+          : `Bem-vindo ao painel da ${res.tenant?.name || 'academia'}!`);
       }
     }
   };
@@ -238,6 +324,10 @@ export default function App() {
     setTenantOverride('');
     setUser(null);
     setActiveTenant(null);
+    setTourSession(null);
+    autoTourCheckedRef.current = false;
+    pendingNewSignupRef.current = false;
+    setAuthMode('login');
     applyPortalAccent(null, theme);
     if (typeof window !== 'undefined') {
       window.history.pushState(null, '', '/login');
@@ -302,11 +392,8 @@ export default function App() {
       return (
         <>
           <LandingView
-            onOpenLogin={() => {
-              window.history.pushState(null, '', '/login');
-              setShowLogin(true);
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }}
+            onOpenLogin={() => openAuthPortal('login', 'gym')}
+            onOpenSignup={({ accountType = 'gym' } = {}) => openAuthPortal('signup', accountType)}
           />
           <ToastHost />
         </>
@@ -320,6 +407,8 @@ export default function App() {
           theme={theme}
           onToggleTheme={handleToggleTheme}
           onRefreshBootstrap={refreshBootstrap}
+          initialMode={authMode}
+          initialAccountType={signupAccountType}
           onBackToLanding={() => {
             if (isPortalSubdomain && typeof window !== 'undefined') {
               const rootHost = window.location.hostname.replace(/^(painel|portal|admin|gestao)\./i, '');
@@ -336,7 +425,7 @@ export default function App() {
     );
   }
 
-  const isPersonalTenant = isGymMode && (activeTenant?.accountType === 'personal' || activeTenant?.planId === 'personal');
+  const isPersonalTenant = isGymMode && (activeTenant?.accountType === 'personal' || String(activeTenant?.planId || '').startsWith('personal'));
   const isTenantBillingLocked = Boolean(
     isGymMode &&
     !isSuperUser &&
@@ -581,6 +670,19 @@ export default function App() {
                   <span>App do Aluno</span>
                 </a>
               )}
+              {isGymMode && !isTenantBillingLocked && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon="sparkles"
+                  data-tour="topbar-tour-btn"
+                  onClick={() => setTourSession({ kind: 'hub' })}
+                  title="Abrir Tour Guiado e Tutoriais do Painel"
+                  style={{ fontSize: 14 }}
+                >
+                  Tour Guiado
+                </Button>
+              )}
               <button
                 type="button"
                 className="b2b-icon-btn"
@@ -621,6 +723,17 @@ export default function App() {
           </main>
         </div>
       </div>
+
+      {isGymMode && !isTenantBillingLocked && (
+        <PortalTour
+          session={tourSession}
+          onSetSession={setTourSession}
+          onClose={() => setTourSession(null)}
+          currentTab={gymTab}
+          onSelectTab={selectGymTab}
+          isPersonal={isPersonalTenant}
+        />
+      )}
 
       <ToastHost />
     </div>

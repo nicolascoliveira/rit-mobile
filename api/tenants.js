@@ -879,6 +879,8 @@ export function createTenant(baseDataDir, payload = {}) {
       city: String(payload.city || '').trim(),
       address: String(payload.address || branding.address || '').trim(),
       planId: plan.id,
+      ...(payload.maxStudentsOverride ? { maxStudentsOverride: Number(payload.maxStudentsOverride) } : {}),
+      ...(payload.maxTrainersOverride ? { maxTrainersOverride: Number(payload.maxTrainersOverride) } : {}),
       mrr,
       status,
       trialEndsAt,
@@ -1036,6 +1038,13 @@ export function recordTenantInvoice(baseDataDir, tenantId, invoiceInput = {}) {
     if (!tRow) throw new Error('Academia não encontrada');
     const t = JSON.parse(tRow.data);
 
+    if (invoiceInput.amount !== undefined && invoiceInput.amount !== null && invoiceInput.amount !== '') {
+      const explicitAmount = Number(invoiceInput.amount);
+      if (!Number.isFinite(explicitAmount) || explicitAmount <= 0) {
+        throw new Error('O valor da fatura deve ser maior que zero');
+      }
+    }
+
     if (invoiceInput.id) {
       const existingRow = inst.stmts.getInvoiceById.get(String(invoiceInput.id));
       if (existingRow && existingRow.tenant_id === cleanId) {
@@ -1096,10 +1105,15 @@ export function recordTenantInvoice(baseDataDir, tenantId, invoiceInput = {}) {
       }
     }
 
+    const resolvedAmount = Number(invoiceInput.amount ?? t.mrr ?? 0);
+    if (!Number.isFinite(resolvedAmount) || resolvedAmount <= 0) {
+      throw new Error('O valor da fatura deve ser maior que zero');
+    }
+
     const inv = {
       id: invoiceInput.id || ('inv_' + crypto.randomBytes(5).toString('hex')),
       refMonth: String(invoiceInput.refMonth || nowIso.slice(0, 7)),
-      amount: Math.max(0, Number(invoiceInput.amount ?? t.mrr ?? 0)),
+      amount: resolvedAmount,
       status: ['paid', 'pending', 'overdue', 'checkout_creating', 'failed', 'expired', 'cancelled'].includes(invoiceInput.status) ? invoiceInput.status : 'paid',
       paidAt: invoiceInput.status === 'paid' || (!invoiceInput.status && invoiceInput.status !== 'pending') ? (invoiceInput.paidAt || nowIso) : null,
       method: String(invoiceInput.method || 'PIX').slice(0, 60),

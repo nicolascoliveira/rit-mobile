@@ -7,7 +7,9 @@
   "license": "AGPL-3.0-or-later",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "test:rspec": "node --test test/critical-flows-rspec.test.js",
+    "test:critical": "node --test test/critical-flows-rspec.test.js test/dockerfile-copy.test.js test/payment-idempotency.test.js test/race-conditions.test.js test/security-migrations.test.js test/server-saas-security.test.js test/tenant-isolation-media.test.js"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.3.3",

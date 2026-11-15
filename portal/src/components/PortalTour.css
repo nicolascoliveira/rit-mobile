@@ -1,0 +1,389 @@
+/* PortalTour.css
+ * Spotlight interativo + modais de boas-vindas e tutoriais rápidos.
+ * Cumpre estritamente:
+ *  - piso tipográfico >= 14px em todos os textos e controles
+ *  - tokens do portal (--surface-raised, --acc, --label, --label-2) sem gradientes genéricos de IA
+ *  - suporte completo a prefers-reduced-motion
+ */
+
+.portal-tour-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(6, 8, 12, 0.58);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.portal-tour-modal {
+  width: 100%;
+  max-width: 480px;
+  background: var(--surface-raised, #16181f);
+  border: 1px solid var(--raised-line, rgba(255, 255, 255, 0.14));
+  border-radius: 18px;
+  padding: 24px 24px 22px;
+  color: var(--label, #f4f6fa);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.portal-tour-modal-wide {
+  max-width: 560px;
+}
+
+.portal-tour-badge-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.portal-tour-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--acc-ink, var(--acc));
+  background: color-mix(in srgb, var(--acc) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--acc) 32%, transparent);
+}
+
+.portal-tour-title {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.25;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--label);
+}
+
+.portal-tour-body {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--label-2);
+}
+
+.portal-tour-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.portal-tour-actions-between {
+  justify-content: space-between;
+}
+
+.portal-tour-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 8px 16px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+  border: 1px solid var(--sep, rgba(255, 255, 255, 0.14));
+  background: var(--surface, rgba(255, 255, 255, 0.05));
+  color: var(--label);
+  transition: background-color 0.16s ease, border-color 0.16s ease, transform 0.14s ease;
+}
+
+.portal-tour-btn:hover:not(:disabled) {
+  background: var(--surface-2, rgba(255, 255, 255, 0.1));
+  border-color: var(--raised-line, rgba(255, 255, 255, 0.24));
+}
+
+.portal-tour-btn:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 2px;
+}
+
+.portal-tour-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.portal-tour-btn-primary {
+  background: var(--acc);
+  color: var(--on-acc, #0a0c10);
+  border-color: var(--acc);
+  font-weight: 700;
+}
+
+.portal-tour-btn-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--acc) 88%, #ffffff 12%);
+  border-color: var(--acc);
+}
+
+.portal-tour-btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--label-2);
+  padding-inline: 10px;
+}
+
+.portal-tour-btn-ghost:hover:not(:disabled) {
+  background: var(--surface-2, rgba(255, 255, 255, 0.08));
+  border-color: transparent;
+  color: var(--label);
+}
+
+.portal-tour-close-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--label-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.portal-tour-close-icon:hover {
+  background: var(--surface-2, rgba(255, 255, 255, 0.08));
+  color: var(--label);
+}
+
+/* Spotlight layer */
+.portal-tour-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 1220;
+  pointer-events: none;
+}
+
+.portal-tour-click-shield {
+  position: fixed;
+  inset: 0;
+  z-index: 1215;
+  background: transparent;
+}
+
+.portal-tour-hole {
+  position: fixed;
+  z-index: 1222;
+  border-radius: 14px;
+  border: 2px solid var(--acc);
+  box-shadow: 0 0 0 220vmax rgba(6, 8, 12, 0.64);
+  pointer-events: none;
+  transition:
+    left 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+    top 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+    width 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+    height 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.portal-tour-card {
+  position: fixed;
+  z-index: 1230;
+  width: 372px;
+  max-width: calc(100vw - 24px);
+  pointer-events: auto;
+  background: var(--surface-raised, #16181f);
+  border: 1px solid var(--raised-line, rgba(255, 255, 255, 0.16));
+  border-radius: 16px;
+  padding: 20px 20px 18px;
+  color: var(--label, #f4f6fa);
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.48);
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  transition:
+    left 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+    top 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.portal-tour-arrow {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: var(--surface-raised, #16181f);
+  border-left: 1px solid var(--raised-line, rgba(255, 255, 255, 0.16));
+  border-top: 1px solid var(--raised-line, rgba(255, 255, 255, 0.16));
+  pointer-events: none;
+}
+
+.portal-tour-arrow-bottom {
+  top: -7px;
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.portal-tour-arrow-top {
+  bottom: -7px;
+  transform: translateX(-50%) rotate(225deg);
+}
+
+.portal-tour-arrow-right {
+  left: -7px;
+  transform: translateY(-50%) rotate(-45deg);
+}
+
+.portal-tour-arrow-left {
+  right: -7px;
+  transform: translateY(-50%) rotate(135deg);
+}
+
+.portal-tour-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.portal-tour-counter {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--acc-ink, var(--acc));
+}
+
+.portal-tour-card-title {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.28;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--label);
+}
+
+.portal-tour-card-body {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--label-2);
+}
+
+.portal-tour-progress {
+  display: flex;
+  gap: 5px;
+  margin-top: 2px;
+}
+
+.portal-tour-dot {
+  height: 4px;
+  flex: 1;
+  border-radius: 99px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.12));
+  transition: background-color 0.18s ease;
+}
+
+.portal-tour-dot.is-done {
+  background: color-mix(in srgb, var(--acc) 55%, transparent);
+}
+
+.portal-tour-dot.is-active {
+  background: var(--acc);
+}
+
+/* Tutorial cards inside completion/hub modal */
+.portal-tutorials-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.portal-tutorial-item {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 13px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--sep, rgba(255, 255, 255, 0.12));
+  background: var(--surface, rgba(255, 255, 255, 0.04));
+  color: var(--label);
+  cursor: pointer;
+  transition: border-color 0.16s ease, background-color 0.16s ease;
+}
+
+.portal-tutorial-item:hover {
+  border-color: var(--acc);
+  background: var(--surface-2, rgba(255, 255, 255, 0.08));
+}
+
+.portal-tutorial-item:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 2px;
+}
+
+.portal-tutorial-ico {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--acc) 14%, transparent);
+  color: var(--acc-ink, var(--acc));
+}
+
+.portal-tutorial-copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.portal-tutorial-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--label);
+}
+
+.portal-tutorial-time {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--label-2);
+  white-space: nowrap;
+}
+
+.portal-tutorial-desc {
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--label-2);
+}
+
+@media (max-width: 640px) {
+  .portal-tour-modal {
+    padding: 20px 18px;
+  }
+
+  .portal-tour-card {
+    width: calc(100vw - 24px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .portal-tour-hole,
+  .portal-tour-card,
+  .portal-tour-btn,
+  .portal-tour-dot,
+  .portal-tutorial-item {
+    transition: none !important;
+  }
+}

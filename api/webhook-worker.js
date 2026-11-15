@@ -151,12 +151,26 @@ async function processClaimedEvent(dataDir, eventRow, deps = {}) {
     return { outcome: 'ignored' };
   }
 
-  const resUpdate = applyGatewayPaymentUpdate(dataDir, tenantId, payment, {
-    invoiceId,
-    mpPaymentId: mpPid,
-    cycle,
-    planId
-  });
+  let resUpdate;
+  try {
+    resUpdate = applyGatewayPaymentUpdate(dataDir, tenantId, payment, {
+      invoiceId,
+      mpPaymentId: mpPid,
+      cycle,
+      planId
+    });
+  } catch (err) {
+    inst.stmts.updateWebhookEventOutcome.run(
+      'failed',
+      Number(eventRow.attempts || 0) + 1,
+      0,
+      Date.now(),
+      null,
+      String(err?.message || err),
+      eventRow.event_id
+    );
+    return { outcome: 'failed', error: String(err?.message || err) };
+  }
 
   if (resUpdate?.amountMismatch) {
     auditFn(null, 'saas.billing.amount_mismatch', {

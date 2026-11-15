@@ -737,7 +737,7 @@ const SIGN_IN_ROUTES = new Set([
   'POST /api/login/password', 'POST /api/register/password', 'POST /api/login/password-reset',
   'POST /api/device-link/options', 'POST /api/device-link/verify',
   'POST /api/saas/auth/login', 'POST /api/saas/auth/demo-login', 'POST /api/saas/demo/seed',
-  'POST /api/saas/auth/setup-admin'
+  'POST /api/saas/auth/setup-admin', 'POST /api/saas/auth/register'
 ]);
 // A verify error as the answer's body: a passkey made at an address that is not ORIGIN/RP_ID gets
 // the same `code` as the origin check's 403, so the app explains both alike.
@@ -1159,6 +1159,7 @@ const THROTTLED = {
   'POST /api/account/delete': null
 };
 THROTTLED['POST /api/saas/auth/login'] = 'password';
+THROTTLED['POST /api/saas/auth/register'] = 'signup';
 THROTTLED['POST /api/saas/auth/demo-login'] = null;
 THROTTLED['POST /api/saas/billing/webhook'] = null;
 

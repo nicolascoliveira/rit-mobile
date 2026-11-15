@@ -1,9 +1,19 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Icon from '../components/Icon.jsx';
-import { Button, TextField, StatusPill } from '../components/ui.jsx';
+import { Button, SelectField, TextField, StatusPill } from '../components/ui.jsx';
 import { portalApi, toast, getStudentAppUrl } from '../lib/api.js';
 
-export default function AuthView({ bootstrap, onAuthenticated, theme, onToggleTheme, onRefreshBootstrap, onBackToLanding }) {
+export default function AuthView({
+  bootstrap,
+  onAuthenticated,
+  theme,
+  onToggleTheme,
+  onRefreshBootstrap,
+  onBackToLanding,
+  initialMode = 'login',
+  initialAccountType = 'gym'
+}) {
+  const [b2bMode, setB2bMode] = useState(() => (initialMode === 'signup' ? 'signup' : 'login'));
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [adminName, setAdminName] = useState('Administrador Geral');
@@ -11,6 +21,57 @@ export default function AuthView({ bootstrap, onAuthenticated, theme, onToggleTh
   const [loginRole, setLoginRole] = useState('b2b');
   const [loading, setLoading] = useState(false);
   const [seeding, setSeeding] = useState(false);
+
+  // Campos do auto-cadastro B2B ("Criar Conta")
+  const [signupType, setSignupType] = useState(() => (initialAccountType === 'personal' ? 'personal' : 'gym'));
+  const [signupGymName, setSignupGymName] = useState('');
+  const [signupOwnerName, setSignupOwnerName] = useState('');
+  const [signupEmail, setSignupEmail] = useState('');
+  const [signupPhone, setSignupPhone] = useState('');
+  const [signupPassword, setSignupPassword] = useState('');
+  const [signupPlanId, setSignupPlanId] = useState(() => (initialAccountType === 'personal' ? 'personal' : 'starter'));
+
+  const availablePlans = useMemo(() => {
+    const list = Array.isArray(bootstrap?.plans) && bootstrap.plans.length
+      ? bootstrap.plans
+      : [
+          { id: 'personal', name: 'Personal Inicial', accountType: 'personal', priceMonthly: 29, maxStudents: 10 },
+          { id: 'personal-pro', name: 'Personal Completo', accountType: 'personal', priceMonthly: 49, maxStudents: 999999 },
+          { id: 'starter', name: 'Estúdio', accountType: 'gym', priceMonthly: 169, maxStudents: 150 },
+          { id: 'pro', name: 'Academia Completa', accountType: 'gym', priceMonthly: 269, maxStudents: 999999 }
+        ];
+    return list;
+  }, [bootstrap?.plans]);
+
+  useEffect(() => {
+    setB2bMode(initialMode === 'signup' ? 'signup' : 'login');
+    if (initialMode === 'signup') setLoginRole('b2b');
+  }, [initialMode]);
+
+  useEffect(() => {
+    const nextType = initialAccountType === 'personal' ? 'personal' : 'gym';
+    setSignupType(nextType);
+    const matching = availablePlans.filter(p => (p.accountType === 'personal' ? 'personal' : 'gym') === nextType);
+    if (matching.length) setSignupPlanId(matching[0].id);
+  }, [initialAccountType, availablePlans]);
+
+  const handleSelectSignupType = nextType => {
+    setSignupType(nextType);
+    const matching = availablePlans.filter(p => (p.accountType === 'personal' ? 'personal' : 'gym') === nextType);
+    if (matching.length && !matching.some(p => p.id === signupPlanId)) {
+      setSignupPlanId(matching[0].id);
+    }
+  };
+
+  const switchB2bMode = nextMode => {
+    setB2bMode(nextMode);
+    if (typeof window !== 'undefined') {
+      const targetPath = nextMode === 'signup' ? '/cadastro' : '/login';
+      if (window.location.pathname !== targetPath) {
+        window.history.replaceState(null, '', targetPath);
+      }
+    }
+  };
 
   const isSetupRoute = typeof window !== 'undefined' && (
     window.location.pathname.replace(/^\/+|\/+$/g, '').toLowerCase() === 'setup-superadmin' ||
@@ -51,6 +112,49 @@ export default function AuthView({ bootstrap, onAuthenticated, theme, onToggleTh
       toast('Administrador Geral configurado com sucesso!');
     } catch (err) {
       toast(err.message || 'Falha ao configurar administrador');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSignup = async e => {
+    e.preventDefault();
+    if (!signupGymName.trim() || signupGymName.trim().length < 2) {
+      toast(signupType === 'personal' ? 'Informe seu nome ou consultoria' : 'Informe o nome da academia');
+      return;
+    }
+    const ownerValue = (signupOwnerName || (signupType === 'personal' ? signupGymName : '')).trim();
+    if (!ownerValue || ownerValue.length < 2) {
+      toast('Informe o nome completo do responsável');
+      return;
+    }
+    if (!signupEmail.trim() || !signupEmail.includes('@')) {
+      toast('Informe um e-mail válido');
+      return;
+    }
+    if (!signupPassword || signupPassword.length < 10) {
+      toast('A senha deve ter no mínimo 10 caracteres');
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await portalApi('/api/saas/auth/register', {
+        method: 'POST',
+        body: {
+          accountType: signupType,
+          gymName: signupGymName.trim(),
+          ownerName: ownerValue,
+          email: signupEmail.trim(),
+          phone: signupPhone.trim(),
+          password: signupPassword,
+          planId: signupPlanId
+        },
+        tenantId: ''
+      });
+      toast(res?.message || 'Conta criada! Seus 14 dias grátis começaram.');
+      onAuthenticated(res);
+    } catch (err) {
+      toast(err.message);
     } finally {
       setLoading(false);
     }
@@ -361,51 +465,275 @@ export default function AuthView({ bootstrap, onAuthenticated, theme, onToggleTh
                   </div>
                 ) : (
                   <>
-                    <h1 style={{ margin: '0 0 6px', fontSize: 24, letterSpacing: '-0.02em' }}>Entrar no Painel</h1>
-                    <p className="muted small" style={{ margin: '0 0 22px', lineHeight: 1.45 }}>
-                      Acesse o painel de gestão com seu <b>e-mail</b> e <b>senha</b> cadastrados.
-                    </p>
-
-                    <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                      <TextField
-                        label="E-mail ou Usuário"
-                        placeholder="ex: contato@suaacademia.com.br"
-                        value={identifier}
-                        onChange={setIdentifier}
-                        autoComplete="username"
-                      />
-                      <TextField
-                        label="Senha"
-                        type="password"
-                        placeholder="Digite sua senha"
-                        value={password}
-                        onChange={setPassword}
-                        autoComplete="current-password"
-                      />
-                      <div style={{ marginTop: 6 }}>
-                        <Button
-                          type="submit"
-                          variant="primary"
-                          icon="key"
-                          block
-                          disabled={loading}
-                        >
-                          {loading ? 'Autenticando...' : 'Acessar Painel'}
-                        </Button>
-                      </div>
-                    </form>
-
-                    <div className="muted small" style={{ marginTop: 16, textAlign: 'center', fontSize: 12.5 }}>
-                      Ainda não possui conta na Rit?{' '}
-                      <a
-                        href="https://wa.me/5591985561302?text=Ol%C3%A1%2C%20quero%20criar%20minha%20conta%20na%20plataforma%20Rit!"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ color: 'var(--acc-ink)', fontWeight: 700, textDecoration: 'none' }}
+                    <div
+                      role="tablist"
+                      aria-label="Ação da conta"
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: '1fr 1fr',
+                        gap: 6,
+                        padding: 4,
+                        borderRadius: 10,
+                        background: 'var(--b2b-input-bg)',
+                        border: '1px solid var(--b2b-input-border)',
+                        marginBottom: 18
+                      }}
+                    >
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={b2bMode === 'login'}
+                        onClick={() => switchB2bMode('login')}
+                        style={{
+                          padding: '8px 10px',
+                          borderRadius: 7,
+                          border: 'none',
+                          cursor: 'pointer',
+                          fontSize: 14,
+                          fontWeight: 700,
+                          background: b2bMode === 'login' ? 'var(--surface-raised)' : 'transparent',
+                          color: b2bMode === 'login' ? 'var(--label)' : 'var(--label-2)',
+                          boxShadow: b2bMode === 'login' ? '0 1px 4px rgba(0,0,0,0.18)' : 'none',
+                          transition: 'all 0.16s ease'
+                        }}
                       >
-                        Falar com especialista →
-                      </a>
+                        Já tenho conta
+                      </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={b2bMode === 'signup'}
+                        onClick={() => switchB2bMode('signup')}
+                        style={{
+                          padding: '8px 10px',
+                          borderRadius: 7,
+                          border: 'none',
+                          cursor: 'pointer',
+                          fontSize: 14,
+                          fontWeight: 700,
+                          background: b2bMode === 'signup' ? 'var(--acc)' : 'transparent',
+                          color: b2bMode === 'signup' ? 'var(--on-acc)' : 'var(--label-2)',
+                          transition: 'all 0.16s ease'
+                        }}
+                      >
+                        Criar Conta Grátis
+                      </button>
                     </div>
+
+                    {b2bMode === 'signup' ? (
+                      <>
+                        <h1 style={{ margin: '0 0 6px', fontSize: 24, letterSpacing: '-0.02em' }}>
+                          Teste grátis por 14 dias
+                        </h1>
+                        <p className="muted" style={{ margin: '0 0 18px', fontSize: 14, lineHeight: 1.45 }}>
+                          Configure o painel da sua {signupType === 'personal' ? 'consultoria' : 'academia'} agora mesmo — sem cartão de crédito.
+                        </p>
+
+                        <form onSubmit={handleSignup} style={{ display: 'flex', flexDirection: 'column', gap: 13 }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            <span className="b2b-field-lbl" style={{ fontSize: 14 }}>Tipo de Operação</span>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                              <button
+                                type="button"
+                                onClick={() => handleSelectSignupType('gym')}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: 7,
+                                  minHeight: 42,
+                                  padding: '8px 10px',
+                                  borderRadius: 10,
+                                  cursor: 'pointer',
+                                  fontSize: 14,
+                                  fontWeight: 700,
+                                  border: signupType === 'gym' ? '1.5px solid var(--acc)' : '1px solid var(--b2b-input-border)',
+                                  background: signupType === 'gym' ? 'color-mix(in srgb, var(--acc) 14%, transparent)' : 'var(--b2b-input-bg)',
+                                  color: signupType === 'gym' ? 'var(--label)' : 'var(--label-2)'
+                                }}
+                              >
+                                <Icon name="building" size={16} />
+                                <span>Academia / Studio</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleSelectSignupType('personal')}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: 7,
+                                  minHeight: 42,
+                                  padding: '8px 10px',
+                                  borderRadius: 10,
+                                  cursor: 'pointer',
+                                  fontSize: 14,
+                                  fontWeight: 700,
+                                  border: signupType === 'personal' ? '1.5px solid var(--acc)' : '1px solid var(--b2b-input-border)',
+                                  background: signupType === 'personal' ? 'color-mix(in srgb, var(--acc) 14%, transparent)' : 'var(--b2b-input-bg)',
+                                  color: signupType === 'personal' ? 'var(--label)' : 'var(--label-2)'
+                                }}
+                              >
+                                <Icon name="dumbbell" size={16} />
+                                <span>Personal Trainer</span>
+                              </button>
+                            </div>
+                          </div>
+
+                          <SelectField
+                            label="Plano para o teste gratuito (14 dias)"
+                            value={signupPlanId}
+                            onChange={setSignupPlanId}
+                            options={availablePlans
+                              .filter(p => (p.accountType === 'personal' ? 'personal' : 'gym') === signupType)
+                              .map(p => ({
+                                value: p.id,
+                                label: `${p.name} · R$ ${p.priceMonthly}/mês (${p.maxStudents >= 100000 ? 'Alunos ilimitados' : `até ${p.maxStudents} alunos`})`
+                              }))}
+                          />
+
+                          <TextField
+                            label={signupType === 'personal' ? 'Nome da Consultoria ou Marca' : 'Nome da Academia ou Studio'}
+                            placeholder={signupType === 'personal' ? 'ex: Team Ana Silva' : 'ex: Iron Power Academia'}
+                            value={signupGymName}
+                            onChange={setSignupGymName}
+                            required
+                          />
+                          <TextField
+                            label="Seu Nome Completo"
+                            placeholder="ex: João Carlos Souza"
+                            value={signupOwnerName}
+                            onChange={setSignupOwnerName}
+                            autoComplete="name"
+                            required
+                          />
+                          <TextField
+                            label="E-mail de Acesso"
+                            type="email"
+                            placeholder="ex: contato@suaacademia.com.br"
+                            value={signupEmail}
+                            onChange={setSignupEmail}
+                            autoComplete="email"
+                            required
+                          />
+                          <TextField
+                            label="WhatsApp / Telefone (opcional)"
+                            type="tel"
+                            placeholder="ex: (11) 99999-9999"
+                            value={signupPhone}
+                            onChange={setSignupPhone}
+                            autoComplete="tel"
+                          />
+                          <TextField
+                            label="Crie uma Senha (mínimo 10 caracteres)"
+                            type="password"
+                            placeholder="Defina uma senha forte"
+                            value={signupPassword}
+                            onChange={setSignupPassword}
+                            autoComplete="new-password"
+                            required
+                          />
+
+                          <div style={{ marginTop: 4 }}>
+                            <Button
+                              type="submit"
+                              variant="primary"
+                              icon="userPlus"
+                              block
+                              disabled={loading}
+                            >
+                              {loading ? 'Criando sua conta...' : 'Começar 14 dias grátis'}
+                            </Button>
+                          </div>
+                        </form>
+
+                        <div className="muted" style={{ marginTop: 16, textAlign: 'center', fontSize: 14 }}>
+                          Já possui conta na Rit?{' '}
+                          <button
+                            type="button"
+                            onClick={() => switchB2bMode('login')}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              padding: 0,
+                              cursor: 'pointer',
+                              color: 'var(--acc-ink)',
+                              fontWeight: 700,
+                              fontSize: 14
+                            }}
+                          >
+                            Entrar no Painel →
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <h1 style={{ margin: '0 0 6px', fontSize: 24, letterSpacing: '-0.02em' }}>Entrar no Painel</h1>
+                        <p className="muted" style={{ margin: '0 0 22px', fontSize: 14, lineHeight: 1.45 }}>
+                          Acesse o painel de gestão com seu <b>e-mail</b> e <b>senha</b> cadastrados.
+                        </p>
+
+                        <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                          <TextField
+                            label="E-mail ou Usuário"
+                            placeholder="ex: contato@suaacademia.com.br"
+                            value={identifier}
+                            onChange={setIdentifier}
+                            autoComplete="username"
+                          />
+                          <TextField
+                            label="Senha"
+                            type="password"
+                            placeholder="Digite sua senha"
+                            value={password}
+                            onChange={setPassword}
+                            autoComplete="current-password"
+                          />
+                          <div style={{ marginTop: 6 }}>
+                            <Button
+                              type="submit"
+                              variant="primary"
+                              icon="key"
+                              block
+                              disabled={loading}
+                            >
+                              {loading ? 'Autenticando...' : 'Acessar Painel'}
+                            </Button>
+                          </div>
+                        </form>
+
+                        <div style={{ marginTop: 16, textAlign: 'center', fontSize: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          <div className="muted">
+                            Ainda não possui conta?{' '}
+                            <button
+                              type="button"
+                              onClick={() => switchB2bMode('signup')}
+                              style={{
+                                background: 'none',
+                                border: 'none',
+                                padding: 0,
+                                cursor: 'pointer',
+                                color: 'var(--acc-ink)',
+                                fontWeight: 700,
+                                fontSize: 14
+                              }}
+                            >
+                              Criar conta grátis (14 dias) →
+                            </button>
+                          </div>
+                          <div>
+                            <a
+                              href="https://wa.me/5591985561302?text=Ol%C3%A1%2C%20quero%20tirar%20d%C3%BAvidas%20sobre%20a%20plataforma%20Rit!"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{ color: 'var(--label-2)', fontSize: 14, fontWeight: 600, textDecoration: 'underline' }}
+                            >
+                              Falar com especialista no WhatsApp
+                            </a>
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </>
                 )}
               </>
