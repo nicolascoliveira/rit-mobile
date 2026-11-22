@@ -21,7 +21,8 @@ import { countChanges, syncFingerprint } from '../lib/sync-changes.js'
 import { saveWorkoutEdit, deleteEditedWorkout } from '../lib/session-edit.js'
 import { appBase } from '../lib/app-base.js'
 import { linkTokenFromSearch, stripLinkFromUrl } from '../lib/device-link.js'
-import { loadRemote, chooseLocal, forgetRemote, connect, normalizeServerUrl, renewToken } from '../lib/remote.js'
+import { loadRemote, chooseLocal, forgetRemote, connect, connectWithPassword, registerWithPassword, resetPasswordAndConnect, normalizeServerUrl, renewToken } from '../lib/remote.js'
+import { RIT_STUDENT_SERVER } from '../lib/rit-native.js'
 import { loadCfAccess } from '../lib/cf-access.js'
 import { loadCoachDevice, saveCoachDevice, coachDeviceSettings } from '../lib/coach-device.js'
 import { initCoachSchedule } from '../lib/coach-schedule.js'
@@ -613,6 +614,21 @@ export const useStore = create((set, get) => {
     if (now) return write()
     saveTm = setTimeout(write, 800)
     return null
+  }
+  const finishMobileRemote = async (base, user, ask) => {
+    // The account first, the address after: a copy another account still owed is kept aside
+    // for it under the server it belongs to, not the one being paired.
+    get().setUser(user, { adopt: true })
+    if (keeping) { await keeping; keeping = null }
+    pairedBase = base
+    setSync({ server: pairedBase })
+    await get().refreshConfig()   // what this server offers (the Coach, guest mode) — see boot()
+    await get().adoptProfile(ask)
+    await nativePersist(true)   // the file holds this account's copy before anything else can happen
+    // Connected from the first-launch screen: the permission steps come next. From Settings later
+    // on, nothing new is asked here.
+    set(st => ({ needsMobileOnboarding: false, permSteps: st.permSteps || st.needsMobileOnboarding }))
+    return user
   }
 
   // `_ts` is when this device last changed the data — it decides which copy wins on the next
@@ -2019,18 +2035,22 @@ export const useStore = create((set, get) => {
     // account pairing again merges what the phone kept (adoptProfile).
     async connectToServer(url, code, ask) {
       const user = await connect(url, code)   // throws on a bad URL/expired code — caller shows it
-      // The account first, the address after: a copy another account still owed is kept aside
-      // for it under the server it belongs to, not the one being paired.
-      get().setUser(user, { adopt: true })
-      if (keeping) { await keeping; keeping = null }
-      pairedBase = normalizeServerUrl(url)
-      setSync({ server: pairedBase })
-      await get().refreshConfig()   // what this server offers (the Coach, guest mode) — see boot()
-      await get().adoptProfile(ask)
-      await nativePersist(true)   // the file holds this account's copy before anything else can happen
-      // Paired from the first-launch screen: the permission steps come next. From Settings later
-      // on, nothing new is asked here.
-      set(st => ({ needsMobileOnboarding: false, permSteps: st.permSteps || st.needsMobileOnboarding }))
+      return finishMobileRemote(normalizeServerUrl(url), user, ask)
+    },
+    async signInMobileWithPassword(url, name, password, ask) {
+      const targetUrl = url || RIT_STUDENT_SERVER
+      const user = await connectWithPassword(targetUrl, name, password)
+      return finishMobileRemote(normalizeServerUrl(targetUrl), user, ask)
+    },
+    async registerMobileWithPassword(url, payload, ask) {
+      const targetUrl = url || RIT_STUDENT_SERVER
+      const user = await registerWithPassword(targetUrl, payload)
+      return finishMobileRemote(normalizeServerUrl(targetUrl), user, ask)
+    },
+    async resetMobilePassword(url, payload, ask) {
+      const targetUrl = url || RIT_STUDENT_SERVER
+      const user = await resetPasswordAndConnect(targetUrl, payload)
+      return finishMobileRemote(normalizeServerUrl(targetUrl), user, ask)
     },
     // Leaves remote mode and drops back to local-only, the way signOut does: never with changes
     // the server has not seen, unless `force` keeps them aside first. Same result as signOut;

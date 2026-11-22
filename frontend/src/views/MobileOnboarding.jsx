@@ -12,6 +12,7 @@ import { askAddDeviceData } from '../sheets.jsx'
 import { normalizeServerUrl } from '../lib/remote.js'
 import { loadCfAccess, saveCfAccess } from '../lib/cf-access.js'
 import { openPortalNativeApp, rememberStudentNativeMode, RIT_STUDENT_SERVER } from '../lib/rit-native.js'
+import { openMobileSignIn, openMobileRegister } from '../components/MobilePasswordAuth.jsx'
 import { useSheetKeyboard } from '../lib/use-sheet-keyboard.js'
 
 // A plain http:// server works (#428), but whatever the app sends, the pairing code and then its
@@ -141,30 +142,89 @@ export function ConnectSheet({ close, initialUrl = '', again = false }) {
 
 export default function MobileOnboarding() {
   const { chooseLocalMode } = useStore()
-  const head = <>
-    <div style={{ display: 'flex', justifyContent: 'center' }}>
-      <img src="./rit-mark.png" alt="Rit" style={{ width: 64, height: 64, objectFit: 'contain' }} />
-    </div>
-    <h1 className="t-large" style={{ fontWeight: 700, margin: '10px 0 4px' }}>Rit</h1>
-  </>
+  const isLightTheme = typeof document !== 'undefined' && document.documentElement.dataset.theme === 'light'
+  const lastUser = typeof localStorage !== 'undefined' ? (localStorage.getItem('rit_last_username') || '') : ''
+  const firstName = lastUser ? lastUser.split(' ')[0] : ''
   const wrap = { display: 'flex', flexDirection: 'column', justifyContent: 'center', minHeight: '78vh', textAlign: 'center' }
   return (
     <div className="narrow" style={wrap}>
-      {head}
-      <div className="muted" style={{ marginBottom: 34 }}>{t('How do you want to use openGym?')}</div>
-      <Button variant="primary" icon="lock" onClick={() => { rememberStudentNativeMode(); chooseLocalMode() }}>{t('Use on this device')}</Button>
-      <div style={{ height: 10 }} />
-      <Button icon="cloud" onClick={() => {
-        rememberStudentNativeMode()
-        useUI.getState().openSheet(close => <ConnectSheet close={close} initialUrl={RIT_STUDENT_SERVER} />)
-      }}>{t('Connect to my server')}</Button>
-      <div style={{ height: 10 }} />
-      <Button icon="crown" onClick={() => openPortalNativeApp('/login')}>Rit Painel (Personal / Academia)</Button>
-      <div className="dim small" style={{ marginTop: 26, lineHeight: 1.5 }}>
-        {t('Local keeps everything on this phone. Connecting syncs to your own openGym server instead. You can switch later in Settings.')}
+      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 4 }}>
+        <img src={isLightTheme ? './rit-logo-light.png' : './rit-logo.png'} alt="Rit" style={{ height: 52, width: 'auto', objectFit: 'contain' }} />
       </div>
-      <div style={{ height: 18 }} />
-      <Button icon="gear" onClick={() => openCfAccess()}>{t('Connection settings')}</Button>
+      <h1 className="t-large" style={{ fontWeight: 700, margin: '10px 0 4px', display: 'none' }}>Rit</h1>
+      <div className="muted" style={{ fontSize: 16, marginBottom: firstName ? 18 : 28 }}>
+        {t('Your workouts. Your weights. Your profile.')}
+      </div>
+      {firstName && (
+        <div style={{ marginBottom: 20 }}>
+          <span style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            background: 'color-mix(in srgb, var(--acc) 14%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--acc) 30%, transparent)',
+            color: 'var(--acc-ink, var(--acc))',
+            padding: '6px 14px',
+            borderRadius: 20,
+            fontSize: 14,
+            fontWeight: 600
+          }}>
+            <Icon name="person" size={16} />
+            Olá, {firstName}!
+          </span>
+        </div>
+      )}
+      <Button
+        variant="primary"
+        icon="key"
+        onClick={() => {
+          rememberStudentNativeMode()
+          openMobileSignIn()
+        }}
+      >
+        {t('Sign in with password')}
+      </Button>
+      <div style={{ height: 10 }} />
+      <Button
+        icon="plusCircle"
+        onClick={() => {
+          rememberStudentNativeMode()
+          openMobileRegister()
+        }}
+      >
+        {t('Create new profile')}
+      </Button>
+
+      <div style={{ marginTop: 22, paddingTop: 20, borderTop: '1px solid var(--sep)' }}>
+        <div className="muted" style={{ fontSize: 14, marginBottom: 10 }}>
+          Personal trainer ou academia?
+        </div>
+        <Button icon="crown" onClick={() => openPortalNativeApp('/login')}>
+          Rit Painel (Personal / Academia)
+        </Button>
+      </div>
+
+      <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <Button
+          variant="ghost"
+          className="dim"
+          style={{ fontSize: 14 }}
+          onClick={() => { rememberStudentNativeMode(); chooseLocalMode() }}
+        >
+          {t('Use on this device')}
+        </Button>
+        <Button
+          variant="ghost"
+          className="dim"
+          style={{ fontSize: 14 }}
+          onClick={() => {
+            rememberStudentNativeMode()
+            useUI.getState().openSheet(close => <ConnectSheet close={close} initialUrl={RIT_STUDENT_SERVER} />)
+          }}
+        >
+          {t('Connect to my server')}
+        </Button>
+      </div>
     </div>
   )
 }

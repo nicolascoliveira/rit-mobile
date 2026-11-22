@@ -3,7 +3,7 @@ import { t } from './i18n-core.js'
 import { MOBILE } from './mobile.js'
 import { appBase } from './app-base.js'
 import { nativeFetch } from './capacitor-fetch.js'
-import { getActiveTenantSlug } from './branding.js'
+import { getActiveTenantSlug, setBrandingApiBase } from './branding.js'
 
 export const IS_APPLE = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent)
 export const IS_ANDROID = /Android/.test(navigator.userAgent)
@@ -22,7 +22,11 @@ export const webauthnOK = () => typeof window.PublicKeyCredential !== 'undefined
 // same-origin cookies, so remoteBase/remoteToken stay empty and api() behaves exactly as before.
 let remoteBase = ''
 let remoteToken = null
-export function setRemoteAuth(base, token) { remoteBase = base || ''; remoteToken = token || null }
+export function setRemoteAuth(base, token) {
+  remoteBase = base || ''
+  remoteToken = token || null
+  setBrandingApiBase(remoteBase)
+}
 // A Cloudflare Access service token (lib/cf-access.js): sent only to the origin it was entered
 // for, never on a same-origin request, where the browser's own Access session cookie already
 // does the job, and never to a server that merely happens to be paired or typed in.
@@ -31,6 +35,7 @@ let accessOrigin = ''
 export function setAccessHeaders(h, origin) { accessHeaders = Object.assign({}, h); accessOrigin = origin || '' }
 const originOf = base => { try { return new URL(base).origin } catch { return '' } }
 const accessFor = base => (base && accessOrigin && originOf(base) === accessOrigin ? accessHeaders : {})
+export const getAccessHeadersFor = base => accessFor(base)
 const remoteHeaders = () => Object.assign({}, accessFor(remoteBase), remoteToken ? { Authorization: 'Bearer ' + remoteToken } : {})
 // The paired server and what a request to it carries (the token, an Access service token for that
 // origin), for the phone's background check (lib/nudge-check.js), which runs with no WebView and

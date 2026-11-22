@@ -34,9 +34,23 @@ export async function nativeFetch(url, init = {}) {
   })
   const res = init.signal ? await Promise.race([request, abortOf(init.signal)]) : await request
   const text = typeof res.data === 'string' ? res.data : res.data == null ? '' : JSON.stringify(res.data)
+  const rawHeaders = res.headers && typeof res.headers === 'object' ? res.headers : {}
+  const entries = Object.entries(rawHeaders).map(([k, v]) => [
+    String(k).toLowerCase(),
+    Array.isArray(v) ? v.join(', ') : String(v ?? '')
+  ])
+  const responseHeaders = {
+    get(name) {
+      const key = String(name || '').toLowerCase()
+      const hit = entries.find(([k]) => k === key)
+      return hit ? hit[1] : null
+    },
+    raw: rawHeaders
+  }
   return {
     ok: res.status >= 200 && res.status < 300,
     status: res.status,
+    headers: responseHeaders,
     text: async () => text,
     json: async () => JSON.parse(text)
   }

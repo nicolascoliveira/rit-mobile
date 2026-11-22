@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { customAccentVars, cleanHex } from './accent.js'
 import { appBase } from './app-base.js'
+import { MOBILE } from './mobile.js'
+import { nativeFetch } from './capacitor-fetch.js'
 
 const TENANT_STORAGE_KEY = 'rit_active_tenant'
 const LEGACY_STORAGE_KEY = 'opengym_active_tenant'
@@ -219,40 +221,51 @@ export function applyGymBranding(branding, theme = 'dark', meta = {}) {
 
 let lastBrandingFetchTs = 0;
 let lastFetchedSlug = null;
+let brandingApiBase = '';
+
+export function setBrandingApiBase(base) {
+  brandingApiBase = String(base || '').replace(/\/+$/, '');
+}
 
 export async function initGymBranding(force = false) {
   const slug = getActiveTenantSlug();
   const now = Date.now();
   if (!force && lastFetchedSlug === slug && now - lastBrandingFetchTs < 60000) return currentBranding;
+  if (MOBILE && !brandingApiBase) return currentBranding;
   lastBrandingFetchTs = now;
   lastFetchedSlug = slug;
   try {
-    if (typeof fetch !== 'function') return DEFAULT_BRANDING
-    const headers = {}
-    if (slug) headers['X-Tenant-Id'] = slug
-    const qs = slug ? `?tenant=${encodeURIComponent(slug)}` : ''
-    const basePrefix = appBase().replace(/\/$/, '')
-    const res = await fetch(basePrefix + '/api/tenant/branding' + qs, { headers })
+    const reqFetch = MOBILE && brandingApiBase ? nativeFetch : (typeof fetch === 'function' ? fetch : null);
+    if (!reqFetch) return DEFAULT_BRANDING;
+    const headers = {};
+    if (slug) headers['X-Tenant-Id'] = slug;
+    const qs = slug ? `?tenant=${encodeURIComponent(slug)}` : '';
+    const basePrefix = (brandingApiBase || appBase()).replace(/\/$/, '');
+    const res = await reqFetch(basePrefix + '/api/tenant/branding' + qs, { headers });
     if (res.ok) {
-      const data = await res.json()
+      const data = await res.json();
       if (data?.branding) {
-        const resolvedTenant = cleanTenantSlug(data.tenant_id) || slug || 'default'
+        const resolvedTenant = cleanTenantSlug(data.tenant_id) || slug || 'default';
         if (data.locked) {
-          lockedTenant = resolvedTenant
-          syncTenantStorage(resolvedTenant)
-          syncTenantUrl(resolvedTenant)
-          lastFetchedSlug = resolvedTenant === 'default' ? '' : resolvedTenant
+          lockedTenant = resolvedTenant;
+          syncTenantStorage(resolvedTenant);
+          syncTenantUrl(resolvedTenant);
+          lastFetchedSlug = resolvedTenant === 'default' ? '' : resolvedTenant;
         }
-        applyGymBranding(data.branding, 'dark', {
+        const nextBranding = { ...data.branding };
+        if (typeof nextBranding.logoUrl === 'string' && nextBranding.logoUrl.startsWith('/') && /^https?:\/\//i.test(brandingApiBase)) {
+          nextBranding.logoUrl = brandingApiBase + nextBranding.logoUrl;
+        }
+        applyGymBranding(nextBranding, 'dark', {
           tenantId: resolvedTenant,
           accountType: data.accountType || 'gym',
-          isCustomTenant: resolvedTenant !== 'default' || (data.branding.gymName && data.branding.gymName !== 'Rit' && data.branding.gymName !== 'openGym')
-        })
-        return currentBranding
+          isCustomTenant: resolvedTenant !== 'default' || (nextBranding.gymName && nextBranding.gymName !== 'Rit' && nextBranding.gymName !== 'openGym')
+        });
+        return currentBranding;
       }
     }
   } catch {
     // Offline or standalone demo build — keep default branding silently
   }
-  return currentBranding
+  return currentBranding;
 }

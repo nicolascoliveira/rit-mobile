@@ -1561,7 +1561,8 @@ const passwordRoutes = {
       if (!still()) return json(res, 401, WRONG);
     }
     audit(req, 'auth.password.ok', { user });
-    json(res, 200, { user: publicUser(user) }, { 'Set-Cookie': sessionCookie(user) });
+    const mobileToken = body.mobile === true && !req.headers.origin ? { token: makeSession(user) } : {};
+    json(res, 200, { user: publicUser(user), ...mobileToken }, { 'Set-Cookie': sessionCookie(user) });
   },
 
   // For browsers that cannot make a passkey at all: plain http on a LAN address, some Firefox
@@ -1715,7 +1716,8 @@ const passwordRoutes = {
     if (outcome.kind === 'email-taken') return emailRefused();
 
     audit(req, 'auth.register.ok', { user: outcome.user, msg: outcome.inv ? outcome.inv.code + ' · password' : 'password' });
-    json(res, 200, { user: publicUser(outcome.user) }, { 'Set-Cookie': sessionCookie(outcome.user) });
+    const mobileToken = body.mobile === true && !req.headers.origin ? { token: makeSession(outcome.user) } : {};
+    json(res, 200, { user: publicUser(outcome.user), ...mobileToken }, { 'Set-Cookie': sessionCookie(outcome.user) });
   },
 
   // What Settings shows: whether a password is set, and whether it could be removed.
@@ -1930,7 +1932,8 @@ const passwordRoutes = {
     if (resetOutcome === 'invalid') return invalid();
     if (resetOutcome === 'taken') return taken();
     audit(req, 'auth.password.reset', { user });
-    json(res, 200, { user: publicUser(user) }, { 'Set-Cookie': sessionCookie(user) });
+    const mobileToken = body.mobile === true && !req.headers.origin ? { token: makeSession(user) } : {};
+    json(res, 200, { user: publicUser(user), ...mobileToken }, { 'Set-Cookie': sessionCookie(user) });
   }
 };
 

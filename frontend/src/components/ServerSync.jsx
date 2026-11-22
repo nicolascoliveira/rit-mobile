@@ -14,6 +14,8 @@ import { DEMO } from '../lib/demo.js'
 import { askAddDeviceData, menuSheet } from '../sheets.jsx'
 import { ConnectSheet, CfAccessSheet } from '../views/MobileOnboarding.jsx'
 import { passwordOn, openPasswordSignIn } from './PasswordAuth.jsx'
+import { MobilePasswordSignInSheet } from './MobilePasswordAuth.jsx'
+import { isRitDefaultServer, RIT_STUDENT_SERVER } from '../lib/rit-native.js'
 import { Section, Row, Button } from './ui.jsx'
 
 const ui = () => useUI.getState()
@@ -118,6 +120,10 @@ export async function syncNowWithToast() {
 // the address it had where it still has one. The same account merges what the phone kept.
 export function pairAgain() {
   const server = useStore.getState().sync?.server || ''
+  if (isRitDefaultServer(server)) {
+    ui().openSheet(close => <MobilePasswordSignInSheet close={close} initialUrl={server || RIT_STUDENT_SERVER} again />)
+    return
+  }
   ui().openSheet(close => <ConnectSheet close={close} initialUrl={server} again />)
 }
 export function connectServer() {
