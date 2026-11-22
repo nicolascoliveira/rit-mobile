@@ -8,7 +8,7 @@ const h = vi.hoisted(() => {
     poll: vi.fn(async () => ({ ok: true, latestId: 0, notifications: [] })),
     disarm: vi.fn(async () => {}),
     appStateCb: null,
-    remote: { base: 'https://app.treinerit.com.br', headers: { Authorization: 'Bearer TOK' } }
+    remote: { base: 'https://app.treinerit.duckdns.org', headers: { Authorization: 'Bearer TOK' } }
   }
 })
 
@@ -43,7 +43,7 @@ beforeEach(() => {
   h.poll.mockResolvedValue({ ok: true, latestId: 0, notifications: [] })
   h.disarm.mockClear()
   h.appStateCb = null
-  h.remote = { base: 'https://app.treinerit.com.br', headers: { Authorization: 'Bearer TOK' } }
+  h.remote = { base: 'https://app.treinerit.duckdns.org', headers: { Authorization: 'Bearer TOK' } }
 })
 
 afterEach(() => {
@@ -63,7 +63,7 @@ describe('mobile-inbox', () => {
     await vi.advanceTimersByTimeAsync(10)
 
     expect(h.arm).toHaveBeenCalledWith({
-      server: 'https://app.treinerit.com.br',
+      server: 'https://app.treinerit.duckdns.org',
       headers: { Authorization: 'Bearer TOK' },
       userId: 'u-stu'
     })

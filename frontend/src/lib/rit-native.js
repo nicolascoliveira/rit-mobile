@@ -1,6 +1,6 @@
 import { MOBILE } from './mobile.js'
 
-export const RIT_STUDENT_SERVER = 'https://app.treinerit.com.br'
+export const RIT_STUDENT_SERVER = 'https://app.treinerit.duckdns.org'
 const NATIVE_MODE_KEY = 'rit_native_mode'
 const ADMIN_TOKEN_KEY = 'rit_admin_token'
 

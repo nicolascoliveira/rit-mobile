@@ -1,6 +1,6 @@
 const NATIVE_MODE_KEY = 'rit_native_mode';
 const PORTAL_API_BASE_KEY = 'rit_portal_api_base';
-const DEFAULT_PORTAL_API_BASE = 'https://painel.treinerit.com.br';
+const DEFAULT_PORTAL_API_BASE = 'https://painel.treinerit.duckdns.org';
 
 export function isNativePortalApp() {
   const embeddedFlag = typeof import.meta !== 'undefined' && import.meta.env?.VITE_MOBILE_EMBED === '1';

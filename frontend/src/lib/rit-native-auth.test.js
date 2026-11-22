@@ -54,8 +54,8 @@ afterEach(() => {
 
 describe('rit-native token extraction and server check', () => {
   it('detects only the default Rit server URL as Rit default', () => {
-    expect(isRitDefaultServer('https://app.treinerit.com.br')).toBe(true)
-    expect(isRitDefaultServer('app.treinerit.com.br/')).toBe(true)
+    expect(isRitDefaultServer('https://app.treinerit.duckdns.org')).toBe(true)
+    expect(isRitDefaultServer('app.treinerit.duckdns.org/')).toBe(true)
     expect(isRitDefaultServer('https://gym.example.com')).toBe(false)
     expect(isRitDefaultServer('')).toBe(false)
     expect(isRitDefaultServer(null)).toBe(false)

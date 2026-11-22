@@ -25,7 +25,7 @@ import java.util.regex.Pattern;
  * Cross-Origin-Resource-Policy: same-origin, and provides automatic offline playback once cached.
  */
 final class ExerciseMediaProxy {
-    static final String DEFAULT_REMOTE_BASE = "https://app.treinerit.com.br";
+    static final String DEFAULT_REMOTE_BASE = "https://app.treinerit.duckdns.org";
     static final int MAX_FILE_BYTES = 10 * 1024 * 1024;
     private static final int CONNECT_TIMEOUT_MS = 8000;
     private static final int READ_TIMEOUT_MS = 15000;

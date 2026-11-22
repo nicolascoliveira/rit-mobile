@@ -19,7 +19,7 @@ public class ExerciseMediaProxyTest {
         assertTrue(ExerciseMediaProxy.isLocalMediaRequest("localhost", "/exercise-media/clip/0025.mp4"));
         assertTrue(ExerciseMediaProxy.isLocalMediaRequest("127.0.0.1", "/exercise-media/clip/9025.webp"));
 
-        assertFalse(ExerciseMediaProxy.isLocalMediaRequest("app.treinerit.com.br", "/exercise-media/still/0001.webp"));
+        assertFalse(ExerciseMediaProxy.isLocalMediaRequest("app.treinerit.duckdns.org", "/exercise-media/still/0001.webp"));
         assertFalse(ExerciseMediaProxy.isLocalMediaRequest("localhost", "/exercise-media/still/../secret.webp"));
         assertFalse(ExerciseMediaProxy.isLocalMediaRequest("localhost", "/exercise-media/other/0001.webp"));
         assertFalse(ExerciseMediaProxy.isLocalMediaRequest("localhost", "/exercise-media/clip/0001.html"));
@@ -33,8 +33,8 @@ public class ExerciseMediaProxyTest {
         assertEquals("video/mp4", ExerciseMediaProxy.mimeTypeFor("/exercise-media/clip/0001.mp4"));
         assertEquals("image/gif", ExerciseMediaProxy.mimeTypeFor("/exercise-media/clip/0001.gif"));
         assertEquals(
-                "https://app.treinerit.com.br/exercise-media/clip/0001.mp4",
-                ExerciseMediaProxy.buildRemoteUrl("https://app.treinerit.com.br/", "/exercise-media/clip/0001.mp4")
+                "https://app.treinerit.duckdns.org/exercise-media/clip/0001.mp4",
+                ExerciseMediaProxy.buildRemoteUrl("https://app.treinerit.duckdns.org/", "/exercise-media/clip/0001.mp4")
         );
     }
 
@@ -55,9 +55,9 @@ public class ExerciseMediaProxyTest {
         File cacheDir = tmp.newFolder("media-cache");
         AtomicInteger calls = new AtomicInteger(0);
         byte[] payload = new byte[] { 1, 2, 3, 4, 5, 6 };
-        ExerciseMediaProxy proxy = new ExerciseMediaProxy(cacheDir, "https://app.treinerit.com.br", url -> {
+        ExerciseMediaProxy proxy = new ExerciseMediaProxy(cacheDir, "https://app.treinerit.duckdns.org", url -> {
             calls.incrementAndGet();
-            assertEquals("https://app.treinerit.com.br/exercise-media/still/0001.webp", url);
+            assertEquals("https://app.treinerit.duckdns.org/exercise-media/still/0001.webp", url);
             return payload;
         });
 
@@ -72,7 +72,7 @@ public class ExerciseMediaProxyTest {
     @Test
     public void missingRemoteAssetReturnsNullAndWritesNothing() throws IOException {
         File cacheDir = tmp.newFolder("media-cache-miss");
-        ExerciseMediaProxy proxy = new ExerciseMediaProxy(cacheDir, "https://app.treinerit.com.br", url -> null);
+        ExerciseMediaProxy proxy = new ExerciseMediaProxy(cacheDir, "https://app.treinerit.duckdns.org", url -> null);
         assertNull(proxy.loadBytes("/exercise-media/clip/99999.mp4"));
         assertFalse(new File(cacheDir, "exercise-media/clip/99999.mp4").exists());
     }

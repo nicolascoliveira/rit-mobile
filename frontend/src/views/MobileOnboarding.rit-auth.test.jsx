@@ -14,10 +14,10 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('../lib/rit-native.js', () => ({
-  RIT_STUDENT_SERVER: 'https://app.treinerit.com.br',
+  RIT_STUDENT_SERVER: 'https://app.treinerit.duckdns.org',
   openPortalNativeApp: (...a) => h.openPortalNativeApp(...a),
   rememberStudentNativeMode: (...a) => h.rememberStudentNativeMode(...a),
-  isRitDefaultServer: u => u === 'https://app.treinerit.com.br'
+  isRitDefaultServer: u => u === 'https://app.treinerit.duckdns.org'
 }))
 
 vi.mock('../lib/remote.js', async () => {
@@ -122,7 +122,7 @@ describe('MobileOnboarding & web-like mobile password auth', () => {
     type(inputs[1], 'correct-pass-1')
     await act(async () => { buttonByText('Sign in').click() })
     expect(signInMobileWithPassword).toHaveBeenLastCalledWith(
-      'https://app.treinerit.com.br',
+      'https://app.treinerit.duckdns.org',
       'carlos@rit.com',
       'correct-pass-1',
       expect.any(Function)
@@ -139,7 +139,7 @@ describe('MobileOnboarding & web-like mobile password auth', () => {
     type(resetInputs[3], 'brandnewpass10')
     await act(async () => { buttonByText('Set password & sign in').click() })
     expect(resetMobilePassword).toHaveBeenCalledWith(
-      'https://app.treinerit.com.br',
+      'https://app.treinerit.duckdns.org',
       { name: 'carlos@rit.com', code: 'RST999', next: 'brandnewpass10' },
       expect.any(Function)
     )
@@ -163,7 +163,7 @@ describe('MobileOnboarding & web-like mobile password auth', () => {
     type(inviteInput, 'rit500')
     await act(async () => { await vi.advanceTimersByTimeAsync(300) })
 
-    expect(h.previewRemoteInvite).toHaveBeenCalledWith('https://app.treinerit.com.br', 'RIT500')
+    expect(h.previewRemoteInvite).toHaveBeenCalledWith('https://app.treinerit.duckdns.org', 'RIT500')
     expect(host.textContent).toContain('Código válido · Studio Atlas')
     const nameInput = host.querySelector('input[name="username"]')
     expect(nameInput.value).toBe('Mariana')
@@ -174,7 +174,7 @@ describe('MobileOnboarding & web-like mobile password auth', () => {
 
     await act(async () => { buttonByText('Create profile').click() })
     expect(registerMobileWithPassword).toHaveBeenCalledWith(
-      'https://app.treinerit.com.br',
+      'https://app.treinerit.duckdns.org',
       {
         name: 'Mariana',
         password: 'senhasegura123',
