@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useRef, useState } from 'react';
+import React, { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Icon from './Icon.jsx';
 import { subscribeToast } from '../lib/api.js';
@@ -523,6 +523,149 @@ export function ConfirmModal({
         {message}
       </div>
     </Modal>
+  );
+}
+
+export function ActionMenu({
+  items = [],
+  label = 'Ações',
+  buttonLabel = 'Ações',
+  icon = 'menu',
+  align = 'right',
+  disabled = false,
+  className = ''
+}) {
+  const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState(null);
+  const triggerRef = useRef(null);
+  const menuRef = useRef(null);
+  const menuId = useId();
+  const visibleItems = items.filter(Boolean);
+
+  const computePosition = () => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const menuEl = menuRef.current;
+    const menuWidth = menuEl ? menuEl.offsetWidth : 236;
+    const menuHeight = menuEl ? menuEl.offsetHeight : Math.min(340, visibleItems.length * 46 + 18);
+    const pad = 12;
+    const gap = 6;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    let left = align === 'left' ? rect.left : rect.right - menuWidth;
+    left = Math.max(pad, Math.min(left, vw - menuWidth - pad));
+
+    const spaceBelow = vh - rect.bottom - pad;
+    const spaceAbove = rect.top - pad;
+    const openUp = spaceBelow < menuHeight + gap && spaceAbove > spaceBelow;
+    let top = openUp ? rect.top - menuHeight - gap : rect.bottom + gap;
+    top = Math.max(pad, Math.min(top, vh - menuHeight - pad));
+
+    setCoords({ top: Math.round(top), left: Math.round(left), openUp });
+  };
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setCoords(null);
+      return;
+    }
+    computePosition();
+  }, [open, visibleItems.length]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointerDown = e => {
+      if (triggerRef.current?.contains(e.target) || menuRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
+    const onKeyDown = e => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+    const onScroll = e => {
+      if (menuRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
+    const onResize = () => setOpen(false);
+
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onResize);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [open]);
+
+  if (visibleItems.length === 0) return null;
+
+  return (
+    <div className={`b2b-action-menu ${className}`.trim()}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={`btn ghost sm b2b-action-menu-trigger${open ? ' is-open' : ''}`}
+        aria-label={label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
+        title={label}
+        disabled={disabled}
+        onClick={e => {
+          e.stopPropagation();
+          setOpen(prev => !prev);
+        }}
+      >
+        <Icon name={icon} />
+        {buttonLabel && <span className="b2b-action-menu-trigger-label">{buttonLabel}</span>}
+      </button>
+
+      {open &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            ref={menuRef}
+            id={menuId}
+            role="menu"
+            aria-label={label}
+            className={`b2b-action-menu-popover${coords?.openUp ? ' is-up' : ''}`}
+            style={{
+              top: coords ? `${coords.top}px` : '-9999px',
+              left: coords ? `${coords.left}px` : '-9999px',
+              visibility: coords ? 'visible' : 'hidden'
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            {visibleItems.map((item, idx) => (
+              <React.Fragment key={item.key || `${item.label}-${idx}`}>
+                {item.dividerBefore && idx > 0 && <div className="b2b-action-menu-divider" role="separator" />}
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={Boolean(item.disabled)}
+                  className={`b2b-action-menu-item${item.tone ? ` is-${item.tone}` : ''}`}
+                  onClick={() => {
+                    setOpen(false);
+                    item.onSelect?.();
+                  }}
+                >
+                  {item.icon && <Icon name={item.icon} />}
+                  <span>{item.label}</span>
+                </button>
+              </React.Fragment>
+            ))}
+          </div>,
+          document.body
+        )}
+    </div>
   );
 }
 

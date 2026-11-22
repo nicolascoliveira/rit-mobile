@@ -18,7 +18,8 @@ import {
   EmptyState,
   Modal,
   ConfirmModal,
-  LoadingState
+  LoadingState,
+  ActionMenu
 } from '../components/ui.jsx';
 import { LineChart, BarRow } from '../components/Charts.jsx';
 import QrCodeBox from '../components/QrCodeBox.jsx';
@@ -95,11 +96,14 @@ export default function GymPanel({
   demoAllowed = false,
   billingLocked = false
 }) {
-  const isManager =
+  const isManager = Boolean(
     user?.saasRole === 'superadmin' ||
     user?.saasRole === 'gym_owner' ||
     user?.saasRole === 'gym_manager' ||
-    user?.isAdmin;
+    user?.isAdmin ||
+    user?.admin ||
+    user?.owner
+  );
 
   const [overview, setOverview] = useState(null);
   const [students, setStudents] = useState([]);
@@ -807,17 +811,22 @@ export default function GymPanel({
     });
   };
 
-  const handleToggleStudentDisabled = async () => {
-    if (!dossierData?.student) return;
-    const studentId = dossierData.student.id;
-    const next = !dossierData.student.disabled;
+  const handleToggleStudentDisabled = async (targetStudent = null) => {
+    const student = targetStudent || dossierData?.student;
+    if (!student?.id) return;
+    const studentId = student.id;
+    const next = !student.disabled;
     await runSingleFlight(`student-disabled:${studentId}`, setTogglingStudentStatus, async () => {
       try {
         await portalApi('/api/gym/students', {
           method: 'PUT',
           body: { id: studentId, disabled: next }
         });
-        setDossierData(prev => ({ ...prev, student: { ...prev.student, disabled: next } }));
+        setDossierData(prev => (
+          prev?.student?.id === studentId
+            ? { ...prev, student: { ...prev.student, disabled: next } }
+            : prev
+        ));
         toast(next ? 'Matrícula bloqueada.' : 'Matrícula reativada!');
         await loadAllGymData(true);
       } catch (err) {
@@ -826,9 +835,9 @@ export default function GymPanel({
     });
   };
 
-  const handleDeleteStudent = () => {
-    if (!dossierData?.student) return;
-    const student = dossierData.student;
+  const handleDeleteStudent = (targetStudent = null) => {
+    const student = targetStudent || dossierData?.student;
+    if (!student?.id) return;
     setConfirmState({
       title: 'Excluir Aluno Permanentemente?',
       subtitle: student.email || student.phone || student.name,
@@ -846,10 +855,64 @@ export default function GymPanel({
           body: { id: student.id }
         });
         toast('Aluno removido da unidade.');
-        setDossierOpen(false);
+        if (dossierData?.student?.id === student.id) {
+          setDossierOpen(false);
+        }
         await loadAllGymData(true);
       }
     });
+  };
+
+  const buildStudentMenuItems = student => {
+    if (!student?.id) return [];
+    const items = [
+      {
+        key: 'prescribe',
+        label: 'Prescrever ficha',
+        icon: 'plus',
+        tone: 'accent',
+        onSelect: () => openPrescribeForStudent(student)
+      },
+      {
+        key: 'dossier',
+        label: 'Abrir prontuário',
+        icon: 'clipboard',
+        onSelect: () => openStudentDossier(student.id)
+      },
+      {
+        key: 'edit',
+        label: 'Editar cadastro',
+        icon: 'pencil',
+        onSelect: () => openEditStudentModal(student)
+      }
+    ];
+    if (student.phone) {
+      items.push({
+        key: 'whatsapp',
+        label: 'Enviar WhatsApp',
+        icon: 'chat',
+        tone: 'success',
+        onSelect: () => handleOpenStudentWhatsApp(student, 'general')
+      });
+    }
+    items.push({
+      key: 'toggle-status',
+      label: student.disabled ? 'Reativar matrícula' : 'Bloquear acesso',
+      icon: 'lock',
+      dividerBefore: true,
+      disabled: togglingStudentStatus,
+      onSelect: () => handleToggleStudentDisabled(student)
+    });
+    if (isManager) {
+      items.push({
+        key: 'delete',
+        label: 'Excluir aluno',
+        icon: 'trash',
+        tone: 'danger',
+        onSelect: () => handleDeleteStudent(student)
+      });
+    }
+    return items;
   };
 
   // Aplicar Modelo Rápido
@@ -1965,14 +2028,11 @@ export default function GymPanel({
                                       Reenviar Convite WhatsApp
                                     </Button>
                                   )}
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    icon="clipboard"
-                                    onClick={() => openStudentDossier(s.id)}
-                                  >
-                                    Prontuário
-                                  </Button>
+                                  <ActionMenu
+                                    label={`Ações de ${s.name}`}
+                                    buttonLabel="Ações"
+                                    items={buildStudentMenuItems(s)}
+                                  />
                                 </div>
                               </td>
                             </tr>
@@ -2363,7 +2423,7 @@ export default function GymPanel({
                     <th>Fichas no App</th>
                     <th>Frequência</th>
                     <th>Status de Retenção</th>
-                    <th style={{ textAlign: 'right' }}>Prescrição & Prontuário</th>
+                    <th style={{ textAlign: 'right', width: 84 }}>Ações</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2450,43 +2510,11 @@ export default function GymPanel({
                         </td>
                         <td className="b2b-td-actions">
                           <div className="b2b-row-actions">
-                            {s.phone && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                icon="chat"
-                                title="Enviar mensagem via WhatsApp API"
-                                aria-label={`Enviar WhatsApp para ${s.name}`}
-                                style={{ color: 'var(--green)' }}
-                                onClick={() => handleOpenStudentWhatsApp(s, 'general')}
-                              />
-                            )}
-                            <Button
-                              variant="tinted"
-                              size="sm"
-                              icon="pencil"
-                              title="Editar dados cadastrais do aluno"
-                              aria-label={`Editar cadastro de ${s.name}`}
-                              onClick={() => openEditStudentModal(s)}
-                            >
-                              Editar
-                            </Button>
-                            <Button
-                              variant="primary"
-                              size="sm"
-                              icon="plus"
-                              onClick={() => openPrescribeForStudent(s)}
-                            >
-                              Prescrever
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              icon="clipboard"
-                              onClick={() => openStudentDossier(s.id)}
-                            >
-                              Prontuário
-                            </Button>
+                            <ActionMenu
+                              label={`Ações de ${s.name}`}
+                              buttonLabel="Ações"
+                              items={buildStudentMenuItems(s)}
+                            />
                           </div>
                         </td>
                       </tr>
@@ -4799,13 +4827,13 @@ export default function GymPanel({
                   <div style={{ padding: 16, borderRadius: 'var(--r-lg)', background: 'var(--bg-el)', border: 'var(--hair) solid var(--sep)', display: 'flex', flexDirection: 'column', gap: 10 }}>
                     <div style={{ fontWeight: 700 }}>Status da Matrícula</div>
                     <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                      <Button variant="tinted" icon="lock" style={{ flex: 1 }} loading={togglingStudentStatus} onClick={handleToggleStudentDisabled}>
+                      <Button variant="tinted" icon="lock" style={{ flex: 1 }} loading={togglingStudentStatus} onClick={() => handleToggleStudentDisabled(dossierData.student)}>
                         {togglingStudentStatus
                           ? 'Atualizando...'
                           : dossierData.student.disabled ? 'Reativar Matrícula' : 'Trancar / Bloquear Acesso'}
                       </Button>
                       {isManager && (
-                        <Button variant="danger" icon="trash" style={{ flex: 1 }} onClick={handleDeleteStudent}>
+                        <Button variant="danger" icon="trash" style={{ flex: 1 }} onClick={() => handleDeleteStudent(dossierData.student)}>
                           Excluir Aluno
                         </Button>
                       )}
@@ -4958,9 +4986,11 @@ export default function GymPanel({
         open={Boolean(confirmState)}
         onClose={() => !confirmBusy && setConfirmState(null)}
         title={confirmState?.title || 'Confirmar ação'}
+        subtitle={confirmState?.subtitle}
         message={confirmState?.message || ''}
         confirmLabel={confirmState?.confirmLabel || 'Confirmar'}
-        confirmVariant={confirmState?.danger === false ? 'primary' : 'danger'}
+        confirmVariant={confirmState?.confirmVariant || (confirmState?.danger === false ? 'primary' : 'danger')}
+        confirmIcon={confirmState?.confirmIcon || 'check'}
         loading={confirmBusy}
         onConfirm={async () => {
           if (!confirmState?.onConfirm) return;

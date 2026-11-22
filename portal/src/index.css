@@ -452,8 +452,157 @@ body {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
-  flex-wrap: wrap;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.b2b-action-menu {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.b2b-action-menu-trigger {
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0 10px;
+  gap: 7px;
+  border-radius: 10px;
+  border: 1px solid var(--b2b-input-border);
+  background: var(--surface-2);
+  color: var(--label);
+  font-size: 14px;
+  font-weight: 600;
+  transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+}
+
+.b2b-action-menu-trigger:hover:not(:disabled),
+.b2b-action-menu-trigger.is-open {
+  background: var(--surface-3);
+  border-color: var(--b2b-input-border-hover);
+  color: var(--label);
+}
+
+.b2b-action-menu-trigger .icn {
+  width: 18px;
+  height: 18px;
+}
+
+.b2b-action-menu-trigger-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.b2b-action-menu-popover {
+  position: fixed;
+  z-index: 680;
+  min-width: 228px;
+  max-width: calc(100vw - 24px);
+  padding: 6px;
+  border-radius: 14px;
+  background: #202024;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.62);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  opacity: 1;
+  animation: b2bMenuIn 0.1s ease-out;
+}
+
+:root[data-theme="light"] .b2b-action-menu-popover {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.14);
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.18);
+}
+
+@keyframes b2bMenuIn {
+  from {
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    transform: translateY(0) scale(1);
+  }
+}
+
+.b2b-action-menu-popover.is-up {
+  animation-name: b2bMenuInUp;
+}
+
+@keyframes b2bMenuInUp {
+  from {
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    transform: translateY(0) scale(1);
+  }
+}
+
+.b2b-action-menu-item {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 12px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--label);
+  font-family: inherit;
+  font-size: 14.5px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.b2b-action-menu-item .icn {
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+}
+
+.b2b-action-menu-item:hover:not(:disabled),
+.b2b-action-menu-item:focus-visible:not(:disabled) {
+  background: var(--surface-2);
+  outline: none;
+}
+
+.b2b-action-menu-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.b2b-action-menu-item.is-accent {
+  color: var(--acc-ink);
+}
+
+.b2b-action-menu-item.is-success {
+  color: var(--green);
+}
+
+.b2b-action-menu-item.is-danger {
+  color: var(--red);
+}
+
+.b2b-action-menu-item.is-danger:hover:not(:disabled),
+.b2b-action-menu-item.is-danger:focus-visible:not(:disabled) {
+  background: color-mix(in srgb, var(--red) 14%, transparent);
+}
+
+.b2b-action-menu-divider {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--sep);
 }
 
 /* Botões Desktop/B2B (sobrescreve width:100% mobile do rit.css) */
@@ -1682,11 +1831,32 @@ textarea.field {
   }
 
   .b2b-table-stack td.b2b-td-actions .b2b-row-actions {
-    justify-content: flex-start;
+    justify-content: flex-end;
+    flex-wrap: wrap;
   }
 
   .b2b-table-stack td.b2b-td-actions .btn {
     flex: 1 1 auto;
+  }
+
+  .b2b-table-stack td.b2b-td-actions .b2b-action-menu {
+    flex: 0 0 auto;
+    margin-left: auto;
+  }
+
+  .b2b-table-stack td.b2b-td-actions .b2b-action-menu-trigger {
+    flex: 0 0 auto;
+    min-height: 42px;
+    padding: 0 14px;
+  }
+
+  .b2b-table-stack td.b2b-td-actions .b2b-action-menu-trigger-label {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
   }
 
   .b2b-table-stack tr:last-child td.b2b-td-actions {

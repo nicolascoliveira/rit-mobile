@@ -29,6 +29,8 @@ on:
     paths:
       - 'frontend/capacitor.config.json'
       - 'frontend/android/**'
+      - 'frontend/src/**'
+      - 'portal/src/**'
       - 'scripts/android/**'
       - '.github/workflows/android-apk.yml'
 
