@@ -267,6 +267,10 @@
             android:name=".NudgeCheckJob"
             android:permission="android.permission.BIND_JOB_SERVICE"
             android:exported="false" />
+        <service
+            android:name=".RitInboxJob"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="false" />
 
         <!-- Gym reminder (#614): the platform's proximity alert for a gym fires this (GymReminder).
              Explicit, not exported: nothing but that alert's own PendingIntent reaches it. -->

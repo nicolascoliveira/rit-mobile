@@ -75,6 +75,9 @@ import {
   readWatchBoxSqlite,
   writeWatchBoxSqlite,
   deleteWatchBoxSqlite,
+  enqueueMobileNotificationSqlite,
+  listMobileNotificationsSqlite,
+  deleteMobileNotificationsSqlite,
   isSqliteUniqueConstraintError
 } from './sqlite.js';
 
@@ -346,6 +349,13 @@ if (Array.isArray(db.subs)) {
 // own gets nothing: the phone in the bag must not ring for a rest timed on the desktop. The
 // client re-sends its subscription with its id on every boot, so an id that changed heals there.
 async function sendPush(userId, payload, deviceId) {
+  if (payload && typeof payload.title === 'string' && payload.title.trim() && payload.tag !== 'rest-timer' && !deviceId) {
+    try {
+      enqueueMobileNotificationSqlite(DATA, userId, payload);
+    } catch (e) {
+      console.error('mobile-notif enqueue failed', userId, e.message);
+    }
+  }
   let subs = db.subs.filter(s => s.userId === userId);
   if (deviceId) subs = subs.filter(s => !s.deviceId || s.deviceId === deviceId);
   if (!subs.length) return;
@@ -1492,6 +1502,7 @@ function removeAccount(u) {
   // The training history and any Coach credential of theirs, stored in SQLite / disk.
   try { deleteUserStateSqlite(DATA, u.id); } catch { /* already gone */ }
   try { deleteWatchBoxSqlite(DATA, u.id); } catch { /* never had a watch */ }
+  try { deleteMobileNotificationsSqlite(DATA, u.id); } catch { /* never had mobile notifications */ }
   stateCache.delete(u.id);
   stateSummaries.delete(u.id);
   evictStudentSummary(u.id);
@@ -3189,6 +3200,18 @@ const routes = {
     const body = await readBody(req);
     cancelRestTimer(user.id, deviceIdOf(body.deviceId));
     json(res, 200, { ok: true });
+  },
+
+  'GET /api/notifications/pending': async (req, res) => {
+    const user = readSession(req);
+    if (!user) return json(res, 401, { error: 'not signed in' });
+    const sp = new URL(req.url || '', 'http://x').searchParams;
+    const rawSince = Number(sp.get('since') || 0);
+    const sinceId = Number.isInteger(rawSince) && rawSince > 0 ? rawSince : 0;
+    const rawLimit = Number(sp.get('limit') || 20);
+    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(50, Math.round(rawLimit))) : 20;
+    const { latestId, notifications } = listMobileNotificationsSqlite(DATA, user.id, { sinceId, limit });
+    json(res, 200, { ok: true, latestId, notifications });
   },
 
   // Live-workout heartbeat: client pings while a workout is on screen; { active:false } drops it,

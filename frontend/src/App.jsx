@@ -33,6 +33,7 @@ import { useWakeLock } from './lib/wakelock.js'
 import { installViewportGuard } from './lib/viewport-guard.js'
 import { installChipDrag } from './lib/hchips.js'
 import { syncPushSubscription } from './lib/push.js'
+import { startMobileInbox, disarmMobileInbox } from './lib/mobile-inbox.js'
 import { MOBILE, nativePlatform } from './lib/mobile.js'
 import { shouldAutoOpenPortal } from './lib/rit-native.js'
 import { isOn } from './lib/modules.js'
@@ -215,6 +216,19 @@ function Shell() {
   useEffect(() => {
     if (MOBILE || !user || !ready) return
     syncPushSubscription().catch(() => {})
+  }, [user?.id, ready])
+  // Native APK: arm the background notification inbox and poll while foregrounded so
+  // trainer plan updates, weekly frequency summaries and reminders arrive natively.
+  useEffect(() => {
+    if (!MOBILE || !ready) return
+    if (!user?.id) {
+      disarmMobileInbox().catch(() => {})
+      return
+    }
+    return startMobileInbox({
+      userId: user.id,
+      onUpdates: () => { useStore.getState().pullState().catch(() => {}) }
+    })
   }, [user?.id, ready])
   // Opened from a device-link QR code (#95): once boot knows who is here, the sheet that redeems
   // it opens by itself — over the sign-in screen, or over the app for a guest or a signed-in

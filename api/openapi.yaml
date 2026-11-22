@@ -2488,6 +2488,47 @@ paths:
               schema: { $ref: '#/components/schemas/Ok' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /api/notifications/pending:
+    get:
+      tags: [push]
+      operationId: listPendingMobileNotifications
+      summary: Pending notifications for native mobile clients
+      description: >-
+        Returns notifications queued for the signed-in user after `since` (or recent items when
+        `since` is omitted), so native mobile builds without Web Push Service Workers can surface
+        trainer updates, weekly summaries and reminders natively.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+      responses:
+        '200':
+          description: Latest cursor id and pending notifications ordered oldest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  latestId: { type: integer }
+                  notifications:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        title: { type: string }
+                        body: { type: string }
+                        tag: { type: string }
+                        url: { type: string }
+                        createdAt: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /api/integrations:
     get:
       tags: [integrations]

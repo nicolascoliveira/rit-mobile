@@ -291,6 +291,18 @@ export function getSqliteInstance(dirOrTenantDir) {
     );
     CREATE INDEX IF NOT EXISTS idx_tenant_custom_ex_tenant
       ON tenant_custom_exercises(tenant_id, updated_at DESC);
+
+    CREATE TABLE IF NOT EXISTS mobile_notifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      tag TEXT NOT NULL DEFAULT '',
+      url TEXT NOT NULL DEFAULT '#/',
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_mobile_notif_user_id
+      ON mobile_notifications(user_id, id);
   `);
 
   // Evolução idempotente da tabela invites
@@ -716,6 +728,39 @@ export function getSqliteInstance(dirOrTenantDir) {
     `),
     deleteAllTenantCustomExercises: db.prepare(`
       DELETE FROM tenant_custom_exercises WHERE tenant_id = ?
+    `),
+    insertMobileNotif: db.prepare(`
+      INSERT INTO mobile_notifications (user_id, title, body, tag, url, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `),
+    pruneExpiredMobileNotif: db.prepare(`
+      DELETE FROM mobile_notifications WHERE created_at < ?
+    `),
+    pruneUserMobileNotif: db.prepare(`
+      DELETE FROM mobile_notifications
+      WHERE user_id = ? AND id NOT IN (
+        SELECT id FROM mobile_notifications WHERE user_id = ? ORDER BY id DESC LIMIT 50
+      )
+    `),
+    latestMobileNotifId: db.prepare(`
+      SELECT COALESCE(MAX(id), 0) AS latest_id FROM mobile_notifications WHERE user_id = ?
+    `),
+    listMobileNotifSince: db.prepare(`
+      SELECT id, title, body, tag, url, created_at
+      FROM mobile_notifications
+      WHERE user_id = ? AND id > ?
+      ORDER BY id ASC
+      LIMIT ?
+    `),
+    listMobileNotifRecent: db.prepare(`
+      SELECT id, title, body, tag, url, created_at
+      FROM mobile_notifications
+      WHERE user_id = ? AND created_at >= ?
+      ORDER BY id ASC
+      LIMIT ?
+    `),
+    deleteUserMobileNotif: db.prepare(`
+      DELETE FROM mobile_notifications WHERE user_id = ?
     `)
   };
 
@@ -1894,6 +1939,63 @@ export function markApiIdempotencyRetryableSqlite(dataDir, scopeKey) {
 export function getApiIdempotencyRecordSqlite(dataDir, scopeKey) {
   const inst = getSqliteInstance(dataDir);
   return inst.stmts.getApiIdempotencyKey.get(String(scopeKey)) || null;
+}
+
+const MOBILE_NOTIF_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+
+export function enqueueMobileNotificationSqlite(dataDir, userId, payload = {}) {
+  const uid = String(userId || '').trim();
+  const title = String(payload?.title || '').trim().slice(0, 160);
+  if (!uid || !title) return null;
+  const body = String(payload?.body || '').trim().slice(0, 500);
+  const tag = String(payload?.tag || '').trim().slice(0, 80);
+  const url = String(payload?.url || '#/').trim().slice(0, 240) || '#/';
+  const createdAt = Date.now();
+  const inst = getSqliteInstance(dataDir);
+  return runInTransaction(inst, () => {
+    const info = inst.stmts.insertMobileNotif.run(uid, title, body, tag, url, createdAt);
+    inst.stmts.pruneUserMobileNotif.run(uid, uid);
+    inst.stmts.pruneExpiredMobileNotif.run(createdAt - MOBILE_NOTIF_TTL_MS);
+    return {
+      id: Number(info.lastInsertRowid),
+      userId: uid,
+      title,
+      body,
+      tag,
+      url,
+      createdAt
+    };
+  });
+}
+
+export function listMobileNotificationsSqlite(dataDir, userId, { sinceId = 0, limit = 20, initialWindowMs = 15 * 60 * 1000 } = {}) {
+  const uid = String(userId || '').trim();
+  if (!uid) return { latestId: 0, notifications: [] };
+  const safeLimit = Math.max(1, Math.min(50, Math.round(Number(limit) || 20)));
+  const inst = getSqliteInstance(dataDir);
+  const latestRow = inst.stmts.latestMobileNotifId.get(uid);
+  const latestId = Number(latestRow?.latest_id || 0);
+  const rows = sinceId > 0
+    ? inst.stmts.listMobileNotifSince.all(uid, sinceId, safeLimit)
+    : inst.stmts.listMobileNotifRecent.all(uid, Date.now() - initialWindowMs, safeLimit);
+  return {
+    latestId,
+    notifications: rows.map(r => ({
+      id: Number(r.id),
+      title: String(r.title || ''),
+      body: String(r.body || ''),
+      tag: String(r.tag || ''),
+      url: String(r.url || '#/'),
+      createdAt: Number(r.created_at || 0)
+    }))
+  };
+}
+
+export function deleteMobileNotificationsSqlite(dataDir, userId) {
+  const uid = String(userId || '').trim();
+  if (!uid) return;
+  const inst = getSqliteInstance(dataDir);
+  inst.stmts.deleteUserMobileNotif.run(uid);
 }
 
 process.on('exit', () => {
