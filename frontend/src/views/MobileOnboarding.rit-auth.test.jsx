@@ -60,26 +60,47 @@ afterEach(() => {
 })
 
 describe('MobileOnboarding & web-like mobile password auth', () => {
-  it('renders password login, account creation, and Rit Painel without requiring pairing code first', () => {
-    const chooseLocalMode = vi.fn()
-    useStore.setState({ chooseLocalMode })
+  it('renders exclusive student login/invite signup and Rit Painel without free offline or self-hosted bypasses', () => {
     act(() => root.render(<MobileOnboarding />))
 
     expect(buttonByText('Sign in with password')).toBeTruthy()
-    expect(buttonByText('Create new profile')).toBeTruthy()
+    expect(buttonByText('Criar conta com código de convite')).toBeTruthy()
     expect(buttonByText('Rit Painel (Personal / Academia)')).toBeTruthy()
-    expect(buttonByText('Use on this device')).toBeTruthy()
-    expect(buttonByText('Connect to my server')).toBeTruthy()
+    expect(buttonByText('Use on this device')).toBeUndefined()
+    expect(buttonByText('Connect to my server')).toBeUndefined()
+    expect(host.textContent).toContain('Acesso exclusivo para alunos de personal trainers e academias.')
 
     act(() => { buttonByText('Rit Painel (Personal / Academia)').click() })
     expect(h.openPortalNativeApp).toHaveBeenCalledWith('/login')
 
-    act(() => { buttonByText('Use on this device').click() })
-    expect(h.rememberStudentNativeMode).toHaveBeenCalled()
-    expect(chooseLocalMode).toHaveBeenCalled()
-
     act(() => { buttonByText('Sign in with password').click() })
+    expect(h.rememberStudentNativeMode).toHaveBeenCalled()
     expect(useUI.getState().sheets).toHaveLength(1)
+  })
+
+  it('blocks registration without a trainer/gym invite code or with an invalid invite code', async () => {
+    vi.useFakeTimers()
+    const registerMobileWithPassword = vi.fn()
+    useStore.setState({ registerMobileWithPassword })
+    const close = vi.fn()
+
+    await act(async () => root.render(<MobileRegisterSheet close={close} />))
+    type(host.querySelector('input[name="username"]'), 'Visitante')
+    type(host.querySelector('input[name="new-password"]'), 'senhasegura123')
+    type(host.querySelector('input[name="new-password-again"]'), 'senhasegura123')
+
+    await act(async () => { buttonByText('Create profile').click() })
+    expect(registerMobileWithPassword).not.toHaveBeenCalled()
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('código de convite')
+    expect(close).not.toHaveBeenCalled()
+
+    h.previewRemoteInvite.mockRejectedValueOnce(Object.assign(new Error('not found'), { status: 404, code: 'invite' }))
+    type(host.querySelector('input[name="invite-code"]'), 'FAKE99')
+    await act(async () => { await vi.advanceTimersByTimeAsync(300) })
+
+    await act(async () => { buttonByText('Create profile').click() })
+    expect(registerMobileWithPassword).not.toHaveBeenCalled()
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('Convite inválido')
   })
 
   it('signs in with password and supports reset-code mode', async () => {

@@ -123,12 +123,6 @@ export function MobilePasswordSignInSheet({ close, initialUrl = RIT_STUDENT_SERV
     }
   }
 
-  const openPairingFallback = async () => {
-    close()
-    const { ConnectSheet } = await import('../views/MobileOnboarding.jsx')
-    useUI.getState().openSheet(c => <ConnectSheet close={c} initialUrl={targetUrl} again={again} />)
-  }
-
   return (
     <div className="kb-lift">
       <h3>{reset ? t('Reset your password') : t('Sign in with password')}</h3>
@@ -220,16 +214,11 @@ export function MobilePasswordSignInSheet({ close, initialUrl = RIT_STUDENT_SERV
       >
         {reset ? t('Sign in with password') : t('Have a reset code from your admin?')}
       </Button>
-      {again && (
-        <Button type="button" variant="ghost" className="dim" disabled={busy} onClick={openPairingFallback}>
-          Usar código de pareamento
-        </Button>
-      )}
     </div>
   )
 }
 
-export function MobileRegisterSheet({ close, initialUrl = RIT_STUDENT_SERVER, initialCode = '' }) {
+export function MobileRegisterSheet({ close, initialUrl = RIT_STUDENT_SERVER, initialCode = '', requireInvite = true }) {
   const registerMobileWithPassword = useStore(s => s.registerMobileWithPassword)
   const targetUrl = initialUrl || RIT_STUDENT_SERVER
   const cleanInitialCode = String(initialCode || '').trim().toUpperCase()
@@ -238,22 +227,28 @@ export function MobileRegisterSheet({ close, initialUrl = RIT_STUDENT_SERVER, in
   const [email, setEmail] = useState('')
   const [pw, setPw] = useState('')
   const [again, setAgain] = useState('')
-  const [inviteOnly, setInviteOnly] = useState(false)
+  const [inviteOnly, setInviteOnly] = useState(Boolean(requireInvite))
   const [inviteInfo, setInviteInfo] = useState({ status: 'idle', tenantName: '', studentName: '' })
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const codeRef = useRef(null)
   const nameRef = useRef(null)
-  const onFocus = useSheetKeyboard(nameRef, true, { reveal: true })
+  const onFocus = useSheetKeyboard(codeRef, true, { reveal: true })
 
   useEffect(() => {
     let active = true
-    import('../lib/remote.js')
-      .then(({ fetchRemoteConfig }) => fetchRemoteConfig(targetUrl))
-      .then(cfg => { if (active && cfg?.invite_only) setInviteOnly(true) })
-      .catch(() => {})
-    const tm = setTimeout(() => nameRef.current?.focus(), MOBILE_SHEET_SETTLE_MS)
+    if (!requireInvite) {
+      import('../lib/remote.js')
+        .then(({ fetchRemoteConfig }) => fetchRemoteConfig(targetUrl))
+        .then(cfg => { if (active && cfg?.invite_only) setInviteOnly(true) })
+        .catch(() => {})
+    }
+    const tm = setTimeout(() => {
+      if (cleanInitialCode) nameRef.current?.focus()
+      else codeRef.current?.focus()
+    }, MOBILE_SHEET_SETTLE_MS)
     return () => { active = false; clearTimeout(tm) }
-  }, [targetUrl])
+  }, [targetUrl, requireInvite, cleanInitialCode])
 
   useEffect(() => {
     const clean = code.trim().toUpperCase()
@@ -292,9 +287,10 @@ export function MobileRegisterSheet({ close, initialUrl = RIT_STUDENT_SERVER, in
     const n = name.trim()
     const mail = email.trim()
     const cleanCode = code.trim().toUpperCase()
-    const bad = !n ? t('Enter a name')
+    const bad = inviteOnly && !cleanCode ? 'Informe o código de convite do seu personal ou academia.'
+      : inviteInfo.status === 'invalid' ? 'Convite inválido, expirado ou já utilizado.'
+      : !n ? t('Enter a name')
       : mail && !looksLikeEmail(mail) ? t('That is not an e-mail address.')
-      : inviteOnly && !cleanCode ? t('An invite code is required')
       : [...String(pw || '')].length < MIN_PASSWORD ? t('Use at least {0} characters.', MIN_PASSWORD)
       : pw !== again ? t('The two passwords are not the same.')
       : ''
@@ -317,13 +313,14 @@ export function MobileRegisterSheet({ close, initialUrl = RIT_STUDENT_SERVER, in
     <div className="kb-lift">
       <h3>{t('Create your profile')}</h3>
       <div className="muted" style={{ ...NOTE_STYLE, marginBottom: 14 }}>
-        {t('Pick a name and a password. You sign in with both.')}
+        Acesso exclusivo para alunos. Informe o código de convite enviado pelo seu personal ou academia.
       </div>
       <form onSubmit={submit} noValidate>
         <input
+          ref={codeRef}
           className="input"
           name="invite-code"
-          placeholder={t('Invite code')}
+          placeholder={inviteOnly ? 'Código de convite (obrigatório)' : t('Invite code')}
           maxLength={40}
           value={code}
           onFocus={onFocus}
@@ -350,7 +347,7 @@ export function MobileRegisterSheet({ close, initialUrl = RIT_STUDENT_SERVER, in
               : inviteInfo.status === 'invalid'
                 ? 'Convite inválido, expirado ou já utilizado.'
                 : inviteOnly
-                  ? t('This app is invite-only. Enter the code you were given.')
+                  ? 'Obrigatório. Peça o código de convite ao seu personal trainer ou academia.'
                   : 'Opcional. Informe se recebeu um código do seu personal ou academia.'}
         </div>
         <div style={{ height: 10 }} />

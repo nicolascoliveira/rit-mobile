@@ -5,12 +5,16 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.BridgeWebViewClient;
 import com.getcapacitor.WebViewListener;
+import java.util.Map;
 
 public class MainActivity extends BridgeActivity {
     // How much of the status bar (or the camera cutout) and of the navigation bar lies over the
@@ -41,7 +45,40 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(WidgetBridgePlugin.class);
         registerPlugin(WatchBridgePlugin.class);
         super.onCreate(savedInstanceState);
+        installExerciseMediaProxy();
         passSystemBarsToPage();
+    }
+
+    private boolean hasBundledExerciseMedia() {
+        try {
+            String[] entries = getAssets().list("public/exercise-media/still");
+            return entries != null && entries.length > 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void installExerciseMediaProxy() {
+        if (bridge == null || hasBundledExerciseMedia()) return;
+        ExerciseMediaProxy proxy = new ExerciseMediaProxy(getCacheDir());
+        bridge.setWebViewClient(new BridgeWebViewClient(bridge) {
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                if (request != null && "GET".equalsIgnoreCase(request.getMethod())) {
+                    Uri uri = request.getUrl();
+                    if (uri != null && ExerciseMediaProxy.isLocalMediaRequest(uri.getHost(), uri.getPath())) {
+                        String range = null;
+                        Map<String, String> headers = request.getRequestHeaders();
+                        if (headers != null) {
+                            range = headers.get("Range");
+                            if (range == null) range = headers.get("range");
+                        }
+                        return proxy.serve(uri.getPath(), range);
+                    }
+                }
+                return super.shouldInterceptRequest(view, request);
+            }
+        });
     }
 
     @Override

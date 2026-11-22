@@ -141,7 +141,6 @@ export function ConnectSheet({ close, initialUrl = '', again = false }) {
 }
 
 export default function MobileOnboarding() {
-  const { chooseLocalMode } = useStore()
   const isLightTheme = typeof document !== 'undefined' && document.documentElement.dataset.theme === 'light'
   const lastUser = typeof localStorage !== 'undefined' ? (localStorage.getItem('rit_last_username') || '') : ''
   const firstName = lastUser ? lastUser.split(' ')[0] : ''
@@ -152,8 +151,11 @@ export default function MobileOnboarding() {
         <img src={isLightTheme ? './rit-logo-light.png' : './rit-logo.png'} alt="Rit" style={{ height: 52, width: 'auto', objectFit: 'contain' }} />
       </div>
       <h1 className="t-large" style={{ fontWeight: 700, margin: '10px 0 4px', display: 'none' }}>Rit</h1>
-      <div className="muted" style={{ fontSize: 16, marginBottom: firstName ? 18 : 28 }}>
+      <div className="muted" style={{ fontSize: 16, marginBottom: 8 }}>
         {t('Your workouts. Your weights. Your profile.')}
+      </div>
+      <div className="dim" style={{ fontSize: 14, lineHeight: 1.45, marginBottom: firstName ? 18 : 28 }}>
+        Acesso exclusivo para alunos de personal trainers e academias.
       </div>
       {firstName && (
         <div style={{ marginBottom: 20 }}>
@@ -192,37 +194,15 @@ export default function MobileOnboarding() {
           openMobileRegister()
         }}
       >
-        {t('Create new profile')}
+        Criar conta com código de convite
       </Button>
 
-      <div style={{ marginTop: 22, paddingTop: 20, borderTop: '1px solid var(--sep)' }}>
+      <div style={{ marginTop: 26, paddingTop: 22, borderTop: '1px solid var(--sep)' }}>
         <div className="muted" style={{ fontSize: 14, marginBottom: 10 }}>
           Personal trainer ou academia?
         </div>
         <Button icon="crown" onClick={() => openPortalNativeApp('/login')}>
           Rit Painel (Personal / Academia)
-        </Button>
-      </div>
-
-      <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <Button
-          variant="ghost"
-          className="dim"
-          style={{ fontSize: 14 }}
-          onClick={() => { rememberStudentNativeMode(); chooseLocalMode() }}
-        >
-          {t('Use on this device')}
-        </Button>
-        <Button
-          variant="ghost"
-          className="dim"
-          style={{ fontSize: 14 }}
-          onClick={() => {
-            rememberStudentNativeMode()
-            useUI.getState().openSheet(close => <ConnectSheet close={close} initialUrl={RIT_STUDENT_SERVER} />)
-          }}
-        >
-          {t('Connect to my server')}
         </Button>
       </div>
     </div>

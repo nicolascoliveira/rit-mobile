@@ -309,17 +309,18 @@ function Shell() {
     return () => document.body.classList.remove('no-tabbar')
   }, [inWorkout])
   // The chat owns the bottom of the screen as well: its composer sits where the tabs would be.
-  // The first-launch card has no tabs either: they changed the route behind it.
-  const noTabs = inWorkout || loc.pathname === '/coach' || needsMobileOnboarding || permSteps
+  // The first-launch card and student account gate have no tabs either: they changed the route behind it.
+  const mobileLocked = MOBILE && !user
+  const noTabs = inWorkout || loc.pathname === '/coach' || needsMobileOnboarding || mobileLocked || permSteps
 
   const authed = user || isGuest
-  // The first setup is through (sign-in or "Use on this device", and the phone's permission
+  // The first setup is through (sign-in and the phone's permission
   // steps): "Want a 1-minute tour?" once, on a profile with nothing logged yet, or "Finish the
   // tour?" once after one was closed halfway (lib/tour.js). A moment after the screen settles,
   // never over a sheet or a workout, and only once the copy is the account's own.
   const tour = useTour()
   const tourAsked = useRef(false)
-  const setupDone = authed && ready && !needsMobileOnboarding && !permSteps
+  const setupDone = authed && ready && !needsMobileOnboarding && !mobileLocked && !permSteps
   // A tapped NFC sticker (components/Nfc.jsx): one that opened the app waits for the setup.
   useNfcTagLinks(setupDone)
   // A friend's routine link (components/RoutineShare.jsx): the same wait for the setup.
@@ -349,7 +350,7 @@ function Shell() {
     </div>
   )
 
-  const view = l => (!authed ? <Login /> : needsMobileOnboarding ? <MobileOnboarding /> : permSteps ? <PermissionSteps /> : (
+  const view = l => (!authed ? <Login /> : (needsMobileOnboarding || mobileLocked) ? <MobileOnboarding /> : permSteps ? <PermissionSteps /> : (
     <Routes location={l}>
       <Route path="/home" element={<Home />} />
       {/* A module switched off (Settings → Modules, lib/modules.js) takes its screens with it: the
@@ -388,7 +389,7 @@ function Shell() {
       <Route path="*" element={<Navigate to="/home" replace />} />
     </Routes>
   ))
-  const showPreview = !!preview && preview !== loc.pathname && authed && !needsMobileOnboarding && !permSteps
+  const showPreview = !!preview && preview !== loc.pathname && authed && !needsMobileOnboarding && !mobileLocked && !permSteps
 
   return (
     <>
@@ -414,7 +415,7 @@ function Shell() {
       {tour && authed && <Suspense fallback={null}><Tour /></Suspense>}
       {/* Seasonal decoration (lib/seasonal.js): nothing, and nothing loaded, out of season. Never
           over a running workout or the first-launch screens. */}
-      {authed && !needsMobileOnboarding && !permSteps && <SeasonalLayer hidden={inWorkout || loc.pathname === '/workout'} />}
+      {authed && !needsMobileOnboarding && !mobileLocked && !permSteps && <SeasonalLayer hidden={inWorkout || loc.pathname === '/workout'} />}
       {/* Your year in openGym (components/WrappedEntry.jsx): nothing loaded until it is opened. */}
       {authed && isOn(S, 'motivation') && <WrappedLayer ready={setupDone} />}
     </>
