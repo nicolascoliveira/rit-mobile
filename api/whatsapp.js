@@ -28,6 +28,7 @@ import {
   resolveAndVerifyPublicEvolutionHost,
   outboundLookup
 } from './net-guard.js';
+import { buildPrescriptionPlanPdfBytes } from './prescription-pdf.js';
 
 export { validateEvolutionUrl };
 
@@ -538,6 +539,62 @@ export async function sendEvolutionTextMessage({
 }
 
 /**
+ * Envia um arquivo documento (ex.: PDF da ficha de treino) via Evolution API (`/message/sendMedia/{instance}`).
+ */
+export async function sendEvolutionDocumentMessage({
+  phone,
+  fileName = 'ficha-treino.pdf',
+  mediaBase64,
+  mimetype = 'application/pdf',
+  caption = '',
+  config = {},
+  tenantSettings = {},
+  allowPlatformFallback = true,
+  lookup = dns.promises.lookup
+}) {
+  const clean = cleanWhatsAppPhone(phone);
+  if (!clean) return { ok: false, error: 'Telefone do destinatário inválido ou ausente' };
+  const rawBase64 = String(mediaBase64 || '').replace(/^data:[^;]+;base64,/i, '').trim();
+  if (!rawBase64) return { ok: false, error: 'Conteúdo do documento ausente' };
+
+  const cfg = resolveEvolutionTarget({
+    url: config?.url,
+    apiKey: config?.apiKey,
+    instance: config?.instance,
+    tenantSettings,
+    allowPlatformFallback
+  });
+  if (!cfg.ok) {
+    return { ok: false, ...(cfg.status ? { status: cfg.status } : {}), error: cfg.error };
+  }
+
+  const res = await fetchEvolutionJson(
+    cfg.url,
+    `/message/sendMedia/${encodeURIComponent(cfg.instance)}`,
+    {
+      method: 'POST',
+      apiKey: cfg.apiKey,
+      body: {
+        number: clean,
+        mediatype: 'document',
+        mimetype,
+        caption: String(caption || ''),
+        media: rawBase64,
+        fileName: String(fileName || 'ficha-treino.pdf')
+      },
+      timeoutMs: 12000,
+      allowInternalPlatform: cfg.allowInternalPlatform,
+      lookup,
+      timeoutMessage: 'Timeout na conexão com a Evolution API ao enviar documento'
+    }
+  );
+  if (!res.ok) {
+    return { ok: false, status: res.status, error: res.error };
+  }
+  return { ok: true, status: res.status, data: res.data };
+}
+
+/**
  * Testa a conexão e estado da instância na Evolution API.
  */
 export async function testEvolutionConnection({
@@ -726,6 +783,32 @@ export async function fetchEvolutionInstances({
   };
 }
 
+async function sendOutboxItemViaEvolution({ phone, message, document = null, config = {}, tenantSettings = {} }) {
+  if (document?.mediaBase64) {
+    return sendEvolutionDocumentMessage({
+      phone,
+      fileName: document.fileName || 'ficha-treino.pdf',
+      mediaBase64: document.mediaBase64,
+      mimetype: document.mimetype || 'application/pdf',
+      caption: message || '',
+      config,
+      tenantSettings
+    });
+  }
+  return sendEvolutionTextMessage({ phone, message, config, tenantSettings });
+}
+
+function compactSentPayload(payload) {
+  if (!payload?.document) return payload;
+  return {
+    ...payload,
+    document: {
+      fileName: payload.document.fileName || 'ficha-treino.pdf',
+      mimetype: payload.document.mimetype || 'application/pdf'
+    }
+  };
+}
+
 /**
  * Envia mensagem via Evolution API com resiliência (Outbox Queue + Retry Automático + Histórico).
  */
@@ -736,9 +819,11 @@ export async function dispatchWhatsAppWithRetry({
   recipientName = 'Destinatário',
   phone,
   message,
+  document = null,
   tenantSettings = {},
   config = {},
-  dedupKey = null
+  dedupKey = null,
+  meta = null
 }) {
   const clean = cleanWhatsAppPhone(phone);
   if (!clean) {
@@ -755,7 +840,13 @@ export async function dispatchWhatsAppWithRetry({
     evolutionUrl: effectiveSettings.evolutionUrl || '',
     evolutionInstance: effectiveSettings.evolutionInstance || ''
   };
+  const safeDoc = document?.mediaBase64 ? {
+    fileName: String(document.fileName || 'ficha-treino.pdf'),
+    mimetype: String(document.mimetype || 'application/pdf'),
+    mediaBase64: String(document.mediaBase64)
+  } : null;
   const basePayload = {
+    ...(meta && typeof meta === 'object' ? meta : {}),
     id: msgId,
     tenantId,
     kind,
@@ -763,6 +854,7 @@ export async function dispatchWhatsAppWithRetry({
     phone: clean,
     preview,
     message,
+    ...(safeDoc ? { document: safeDoc } : {}),
     tenantSettings: safeSettings,
     attempts: 1,
     maxAttempts: 3,
@@ -801,14 +893,20 @@ export async function dispatchWhatsAppWithRetry({
 
     let result;
     try {
-      result = await sendEvolutionTextMessage({ phone: clean, message, config, tenantSettings: effectiveSettings });
+      result = await sendOutboxItemViaEvolution({
+        phone: clean,
+        message,
+        document: safeDoc,
+        config,
+        tenantSettings: effectiveSettings
+      });
     } catch (err) {
       result = { ok: false, error: err?.message || 'Falha de envio Evolution API' };
     }
 
     if (result.ok) {
       const sentAtIso = new Date().toISOString();
-      const doneData = { ...basePayload, sentAt: sentAtIso, lastError: null };
+      const doneData = compactSentPayload({ ...basePayload, sentAt: sentAtIso, lastError: null });
       runInTransaction(inst, () => {
         inst.stmts.upsertOutboxRow.run(
           msgId, String(tenantId || 'default'), String(kind || 'manual'),
@@ -843,22 +941,31 @@ export async function dispatchWhatsAppWithRetry({
   }
 
   // Caminho em memória para /tmp
-  const result = await sendEvolutionTextMessage({ phone: clean, message, config, tenantSettings: effectiveSettings });
   const store = loadWhatsAppOutbox(dataDir);
+  if (cleanDedup && (store.queue.some(q => q.dedupKey === cleanDedup) || store.history.some(h => h.dedupKey === cleanDedup))) {
+    return { ok: true, skipped: true, deduplicated: true, queued: false };
+  }
+  const result = await sendOutboxItemViaEvolution({
+    phone: clean,
+    message,
+    document: safeDoc,
+    config,
+    tenantSettings: effectiveSettings
+  });
 
   if (result.ok) {
     store.history.unshift({
-      id: msgId, tenantId, kind, recipientName, phone: clean, preview,
+      id: msgId, tenantId, kind, recipientName, phone: clean, preview, dedupKey: cleanDedup,
       status: 'sent', attempts: 1, error: null, createdAt: nowIso, sentAt: nowIso
     });
     saveWhatsAppOutbox(dataDir, store);
     return { ...result, id: msgId, queued: false };
   }
 
-  const queueItem = { ...basePayload, lastError: result.error || 'Falha de conexão com Evolution API', nextRetryAt: Date.now() + 20000 };
+  const queueItem = { ...basePayload, dedupKey: cleanDedup, lastError: result.error || 'Falha de conexão com Evolution API', nextRetryAt: Date.now() + 20000 };
   store.queue.push(queueItem);
   store.history.unshift({
-    id: msgId, tenantId, kind, recipientName, phone: clean, preview,
+    id: msgId, tenantId, kind, recipientName, phone: clean, preview, dedupKey: cleanDedup,
     status: 'queued', attempts: 1, error: queueItem.lastError, createdAt: nowIso, sentAt: null
   });
   saveWhatsAppOutbox(dataDir, store);
@@ -1010,9 +1117,10 @@ export async function flushWhatsAppOutbox(dataDir, { force = false, tenantId = n
       processed++;
       const cleanItem = sanitizeOutboxQueueItem(item);
       const effectiveItemSettings = mergeTenantEvolutionSettings(dataDir, item.tenantId, cleanItem.tenantSettings || {});
-      const res = await sendEvolutionTextMessage({
+      const res = await sendOutboxItemViaEvolution({
         phone: item.phone,
         message: item.message,
+        document: item.document || null,
         tenantSettings: effectiveItemSettings
       });
       const histEntry = store.history.find(h => h.id === item.id);
@@ -1073,9 +1181,10 @@ export async function flushWhatsAppOutbox(dataDir, { force = false, tenantId = n
     const effectiveSettings = mergeTenantEvolutionSettings(dataDir, row.tenant_id, item.tenantSettings || {});
     let res;
     try {
-      res = await sendEvolutionTextMessage({
+      res = await sendOutboxItemViaEvolution({
         phone: item.phone,
         message: item.message,
+        document: item.document || null,
         tenantSettings: effectiveSettings
       });
     } catch (err) {
@@ -1087,12 +1196,12 @@ export async function flushWhatsAppOutbox(dataDir, { force = false, tenantId = n
       if (res.ok) {
         sent++;
         const nextAttempts = Number(row.attempts || 0) + 1;
-        const nextData = {
+        const nextData = compactSentPayload({
           ...item,
           attempts: nextAttempts,
           lastError: null,
           sentAt: new Date(doneNow).toISOString()
-        };
+        });
         inst.stmts.upsertOutboxRow.run(
           row.id, row.tenant_id, row.kind, 'sent', row.dedup_key,
           nextAttempts, 0, null, row.created_at, doneNow, JSON.stringify(nextData)
@@ -1102,11 +1211,11 @@ export async function flushWhatsAppOutbox(dataDir, { force = false, tenantId = n
         const maxAttempts = Number(item.maxAttempts || 3);
         if (nextAttempts >= maxAttempts) {
           failed++;
-          const nextData = {
+          const nextData = compactSentPayload({
             ...item,
             attempts: nextAttempts,
             lastError: res.error || 'Máximo de tentativas excedido'
-          };
+          });
           inst.stmts.upsertOutboxRow.run(
             row.id, row.tenant_id, row.kind, 'failed', row.dedup_key,
             nextAttempts, 0, null, row.created_at, doneNow, JSON.stringify(nextData)
@@ -1161,68 +1270,331 @@ export function getTenantWhatsAppOutbox(dataDir, tenantId = 'default') {
   };
 }
 
-/**
- * Formata mensagem automática para avisar o Aluno que uma nova ficha foi prescrita no app.
- */
-export function formatPrescribedRoutineWhatsAppMessage({
-  studentName = 'Aluno',
-  routine = {},
-  days = [],
-  tenantName = 'Academia',
-  trainerName = ''
-}) {
-  const firstName = String(studentName || 'Aluno').trim().split(' ')[0];
-  const rName = routine?.name || 'Nova Ficha de Treino';
-  const exList = Array.isArray(routine?.ex) ? routine.ex : [];
+export const MAX_WA_MESSAGE_CHARS = 3800;
 
-  const dayLabels = Array.isArray(days)
-    ? days.map(d => WEEKDAY_SHORT_PT[Number(d)]).filter(Boolean)
-    : [];
+function resolveStudentAppUrl(tenantId = 'default', customUrl = '') {
+  if (customUrl && String(customUrl).trim()) return String(customUrl).trim();
+  const rawBase = String(process.env.ORIGIN || 'https://app.treinerit.com.br').trim().replace(/\/+$/, '');
+  if (!tenantId || tenantId === 'default') return rawBase;
+  return `${rawBase}/?tenant=${encodeURIComponent(tenantId)}`;
+}
 
-  const previewEx = exList.slice(0, 6).map((e, i) => {
-    const setsCount = Array.isArray(e?.sets) ? e.sets.length : Number(e?.sets || 3);
-    const setsLabel = `${setsCount} ${setsCount === 1 ? 'série' : 'séries'}`;
-    const reps = Array.isArray(e?.sets) && e.sets[0]?.r ? `${e.sets[0].r} reps` : (e?.reps ? `${e.reps} reps` : '');
-    const detail = [setsLabel, reps].filter(Boolean).join(' • ');
-    return `${i + 1}. *${e?.name || 'Exercício'}*\n   ${detail}`;
-  });
-  if (exList.length > 6) {
-    previewEx.push(`_...e mais ${exList.length - 6} exercício(s)_`);
+function getScheduledDaysForRoutine(routine, explicitDays = null, weekMap = null) {
+  if (Array.isArray(explicitDays) && explicitDays.length > 0) {
+    return [...new Set(explicitDays.map(Number).filter(d => Number.isInteger(d) && d >= 0 && d <= 6))];
+  }
+  if (!weekMap || typeof weekMap !== 'object' || !routine?.id) return [];
+  const out = [];
+  for (let d = 0; d <= 6; d++) {
+    const ids = [].concat(weekMap[String(d)] || []);
+    if (ids.includes(routine.id)) out.push(d);
+  }
+  return out;
+}
+
+function sortDaysMonToSun(days = []) {
+  return [...days].sort((a, b) => ((Number(a) + 6) % 7) - ((Number(b) + 6) % 7));
+}
+
+function formatPrescribedExerciseLine(ex, index) {
+  const setsCount = Array.isArray(ex?.sets) ? ex.sets.length : Number(ex?.sets || 3);
+  const setsLabel = `${setsCount} ${setsCount === 1 ? 'série' : 'séries'}`;
+
+  let repsText = '';
+  if (ex?.repsMin && ex?.repsMax && Number(ex.repsMin) !== Number(ex.repsMax)) {
+    repsText = `${ex.repsMin}-${ex.repsMax} reps`;
+  } else if (Array.isArray(ex?.sets) && ex.sets[0]?.r !== undefined && ex.sets[0]?.r !== '') {
+    repsText = `${ex.sets[0].r} reps`;
+  } else if (ex?.reps !== undefined && ex?.reps !== null && String(ex.reps).trim() !== '') {
+    repsText = `${ex.reps} reps`;
   }
 
-  const senderText = trainerName ? `Seu professor *${trainerName}*` : `A equipe da *${tenantName}*`;
+  const rawWeight = Array.isArray(ex?.sets) ? ex.sets[0]?.w : ex?.weight;
+  const weightFmt = formatKgValuePtBr(rawWeight);
+  const weightPart = weightFmt ? `⚖️ ${weightFmt} kg` : '';
 
-  const lines = [
-    `📋 *Nova Ficha de Treino Disponível!*`,
-    `🏢 *${tenantName}* · _Aplicativo Rit_`,
-    ``,
-    `Olá, *${firstName}*! ${senderText} acabou de publicar uma nova prescrição para você:`,
-    ``,
+  const restNum = Number(ex?.restSec);
+  const restPart = Number.isFinite(restNum) && restNum > 0 ? `⏱️ ${Math.round(restNum)}s descanso` : '';
+
+  const setRepPart = repsText ? `${setsLabel} × ${repsText}` : setsLabel;
+  const detailLine = [setRepPart, weightPart, restPart].filter(Boolean).join(' · ');
+  const noteStr = ex?.note && String(ex.note).trim() ? `\n   _💡 Obs: ${String(ex.note).trim()}_` : '';
+  return `• *${index + 1}. ${ex?.name || 'Exercício'}*\n   ▸ ${detailLine}${noteStr}`;
+}
+
+function formatSingleRoutineSection(routine, idx, totalRoutines, days = []) {
+  const rName = String(routine?.name || `Treino ${idx + 1}`).trim();
+  const exList = Array.isArray(routine?.ex) ? routine.ex : [];
+  const dayLabels = sortDaysMonToSun(days)
+    .map(d => WEEKDAY_SHORT_PT[Number(d)])
+    .filter(Boolean);
+
+  const exerciseBlocks = exList.map((e, i) => formatPrescribedExerciseLine(e, i));
+
+  if (totalRoutines > 1) {
+    const countLabel = `_${exList.length} ${exList.length === 1 ? 'exercício' : 'exercícios'}_`;
+    const metaLine = dayLabels.length > 0
+      ? `📅 *Dias programados:* ${dayLabels.join(', ')} · ${countLabel}`
+      : `🏋️‍♂️ ${countLabel}`;
+    return [
+      `━━━━━━━━━━━━━━━━━━━━`,
+      `🔥 *${idx + 1}. ${rName.toUpperCase()}*`,
+      metaLine,
+      exerciseBlocks.length > 0 ? `\n${exerciseBlocks.join('\n\n')}` : ''
+    ].filter(Boolean).join('\n');
+  }
+
+  return [
     `🏋️‍♂️ *Ficha:* ${rName}`,
     dayLabels.length > 0 ? `📅 *Dias programados:* ${dayLabels.join(', ')}` : null,
-    previewEx.length > 0 ? `\n🔥 *Exercícios Prescritos (${exList.length}):*\n\n${previewEx.join('\n\n')}` : null,
-    ``,
-    `📲 Abra o aplicativo *Rit* para conferir suas séries, cargas e iniciar seu próximo treino!`
-  ].filter(l => l !== null);
-
-  return lines.join('\n');
+    exerciseBlocks.length > 0 ? `\n🔥 *Exercícios Prescritos (${exList.length}):*\n\n${exerciseBlocks.join('\n\n')}` : null
+  ].filter(l => l !== null).join('\n');
 }
 
 /**
- * Notifica o aluno via WhatsApp quando uma ficha é prescrita pelo professor.
+ * Formata uma ou múltiplas fichas prescritas em mensagem(ns) estruturada(s) para o WhatsApp
+ * (sem truncar exercícios, quebrando em partes sequenciais apenas se ultrapassar `maxChars`).
+ */
+export function formatPrescribedRoutinesWhatsAppMessages({
+  studentName = 'Aluno',
+  routine = null,
+  routines = null,
+  days = [],
+  week = null,
+  tenantId = 'default',
+  tenantName = 'Academia',
+  trainerName = '',
+  appUrl = '',
+  maxChars = MAX_WA_MESSAGE_CHARS
+}) {
+  const firstName = String(studentName || 'Aluno').trim().split(' ')[0];
+  const rawList = Array.isArray(routines) && routines.length > 0
+    ? routines
+    : (routine ? [{ routine, days }] : []);
+
+  const items = rawList
+    .map(item => {
+      const rObj = item?.routine || item;
+      if (!rObj || typeof rObj !== 'object') return null;
+      const itemDays = getScheduledDaysForRoutine(rObj, item?.days ?? (rawList.length === 1 ? days : null), week);
+      return { routine: rObj, days: itemDays };
+    })
+    .filter(Boolean);
+
+  if (items.length === 0) return [];
+
+  const totalRoutines = items.length;
+  const senderText = trainerName ? `Seu professor *${trainerName}*` : `A equipe da *${tenantName}*`;
+  const resolvedUrl = resolveStudentAppUrl(tenantId, appUrl);
+
+  const buildHeader = (partIndex = null, partTotal = 1) => {
+    const partBadge = partTotal > 1 && partIndex ? ` — _Parte ${partIndex}/${partTotal}_` : '';
+    const titleLine = totalRoutines > 1
+      ? `🏋️‍♂️ *SEU NOVO PLANO DE TREINO ESTÁ PRONTO!*${partBadge}`
+      : `📋 *Nova Ficha de Treino Disponível!*${partBadge}`;
+    const introLine = totalRoutines > 1
+      ? `Olá, *${firstName}*! Tudo bem? 💪\n${senderText} liberou sua programação completa com *${totalRoutines} fichas de treino*:`
+      : `Olá, *${firstName}*! ${senderText} acabou de publicar uma nova prescrição para você:`;
+    return [
+      titleLine,
+      `🏢 *${tenantName}* · _Aplicativo Rit_`,
+      ``,
+      introLine
+    ].join('\n');
+  };
+
+  const footer = [
+    totalRoutines > 1 ? `━━━━━━━━━━━━━━━━━━━━` : null,
+    ``,
+    `📲 *Acesse seu treino no App Rit:*`,
+    `Abra o aplicativo *Rit* para ver os vídeos de execução, registrar suas cargas e iniciar seu treino:`,
+    `👉 ${resolvedUrl}`,
+    ``,
+    `_Bons treinos! Qualquer dúvida, fale com seu professor._ 🚀`
+  ].filter(l => l !== null).join('\n');
+
+  const sectionStrings = items.map((it, idx) =>
+    formatSingleRoutineSection(it.routine, idx, totalRoutines, it.days)
+  );
+
+  const fullSingle = [buildHeader(null, 1), '', sectionStrings.join('\n\n'), footer].join('\n');
+  const limit = Math.max(800, Number(maxChars) || MAX_WA_MESSAGE_CHARS);
+  if (fullSingle.length <= limit) {
+    return [fullSingle];
+  }
+
+  // Agrupa treinos inteiros em blocos sem exceder `limit` (nunca perde nenhum exercício)
+  const chunkBuckets = [];
+  let currentBucket = [];
+  const headerReserve = buildHeader(1, 9).length + footer.length + 20;
+
+  for (let i = 0; i < sectionStrings.length; i++) {
+    const sec = sectionStrings[i];
+    const candidate = [...currentBucket, sec].join('\n\n');
+    if (currentBucket.length > 0 && headerReserve + candidate.length > limit) {
+      chunkBuckets.push(currentBucket);
+      currentBucket = [sec];
+    } else if (currentBucket.length === 0 && headerReserve + sec.length > limit) {
+      // Se uma ficha única sozinha passar do limite, quebra nos exercícios mantendo o título da ficha
+      const item = items[i];
+      const rObj = item.routine;
+      const exList = Array.isArray(rObj?.ex) ? rObj.ex : [];
+      const dayLabels = sortDaysMonToSun(item.days).map(d => WEEKDAY_SHORT_PT[Number(d)]).filter(Boolean);
+      const secHead = [
+        totalRoutines > 1 ? `━━━━━━━━━━━━━━━━━━━━` : null,
+        `🔥 *${totalRoutines > 1 ? `${i + 1}. ` : ''}${String(rObj?.name || 'Treino').toUpperCase()}*`,
+        dayLabels.length > 0 ? `📅 *Dias programados:* ${dayLabels.join(', ')}` : null
+      ].filter(Boolean).join('\n');
+      let exAcc = [];
+      for (let exIdx = 0; exIdx < exList.length; exIdx++) {
+        const exLine = formatPrescribedExerciseLine(exList[exIdx], exIdx);
+        const testText = `${secHead}\n\n${[...exAcc, exLine].join('\n\n')}`;
+        if (exAcc.length > 0 && headerReserve + testText.length > limit) {
+          chunkBuckets.push([`${secHead}\n\n${exAcc.join('\n\n')}`]);
+          exAcc = [exLine];
+        } else {
+          exAcc.push(exLine);
+        }
+      }
+      if (exAcc.length > 0) {
+        currentBucket = [`${secHead}\n\n${exAcc.join('\n\n')}`];
+      }
+    } else {
+      currentBucket.push(sec);
+    }
+  }
+  if (currentBucket.length > 0) {
+    chunkBuckets.push(currentBucket);
+  }
+
+  const totalParts = chunkBuckets.length;
+  return chunkBuckets.map((bucket, idx) =>
+    [buildHeader(idx + 1, totalParts), '', bucket.join('\n\n'), footer].join('\n')
+  );
+}
+
+/**
+ * Formata mensagem automática para avisar o Aluno que uma ou mais fichas foram prescritas no app.
+ */
+export function formatPrescribedRoutineWhatsAppMessage(opts = {}) {
+  return formatPrescribedRoutinesWhatsAppMessages(opts).join('\n\n');
+}
+
+function buildPrescriptionContentHash({ studentKey, items }) {
+  const canonical = {
+    studentKey: String(studentKey || ''),
+    routines: items.map(it => {
+      const r = it?.routine || it || {};
+      const ex = Array.isArray(r.ex) ? r.ex : [];
+      return {
+        name: String(r.name || '').trim(),
+        days: sortDaysMonToSun(it?.days || []),
+        ex: ex.map(e => ({
+          id: String(e?.id || ''),
+          name: String(e?.name || ''),
+          sets: Array.isArray(e?.sets) ? e.sets.length : Number(e?.sets || 3),
+          reps: e?.reps ?? (Array.isArray(e?.sets) ? e.sets[0]?.r : ''),
+          repsMin: e?.repsMin ?? null,
+          repsMax: e?.repsMax ?? null,
+          weight: Number(Array.isArray(e?.sets) ? e.sets[0]?.w : (e?.weight || 0)),
+          restSec: Number(e?.restSec || 0),
+          note: String(e?.note || '').trim()
+        }))
+      };
+    })
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(canonical)).digest('hex').slice(0, 16);
+}
+
+const recentPrescriptionMemoryDedup = new Map();
+
+/**
+ * Formata legenda curta e escaneável para acompanhar o PDF da(s) ficha(s) de treino no WhatsApp.
+ */
+export function formatPrescribedRoutinesWhatsAppCaption({
+  studentName = 'Aluno',
+  routine = null,
+  routines = null,
+  days = [],
+  week = null,
+  tenantId = 'default',
+  tenantName = 'Academia',
+  trainerName = '',
+  appUrl = ''
+}) {
+  const firstName = String(studentName || 'Aluno').trim().split(' ')[0];
+  const rawList = Array.isArray(routines) && routines.length > 0
+    ? routines
+    : (routine ? [{ routine, days }] : []);
+
+  const items = rawList
+    .map(item => {
+      const rObj = item?.routine || item;
+      if (!rObj || typeof rObj !== 'object') return null;
+      const itemDays = getScheduledDaysForRoutine(rObj, item?.days ?? (rawList.length === 1 ? days : null), week);
+      return { routine: rObj, days: itemDays };
+    })
+    .filter(Boolean);
+
+  if (items.length === 0) return '';
+
+  const total = items.length;
+  const senderText = trainerName ? `Seu professor *${trainerName}*` : `A equipe da *${tenantName}*`;
+  const resolvedUrl = resolveStudentAppUrl(tenantId, appUrl);
+
+  const summaryLines = items.map(it => {
+    const rName = String(it.routine?.name || 'Ficha de Treino').trim();
+    const exCount = Array.isArray(it.routine?.ex) ? it.routine.ex.length : 0;
+    const dayLabels = sortDaysMonToSun(it.days).map(d => WEEKDAY_SHORT_PT[Number(d)]).filter(Boolean);
+    const meta = [
+      dayLabels.length ? dayLabels.join(', ') : null,
+      exCount > 0 ? `${exCount} ${exCount === 1 ? 'exercício' : 'exercícios'}` : null
+    ].filter(Boolean).join(' · ');
+    return meta ? `• *${rName}* (_${meta}_)` : `• *${rName}*`;
+  });
+
+  const introLine = total > 1
+    ? `${senderText} enviou em anexo o PDF completo com suas *${total} fichas de treino*:`
+    : `${senderText} enviou em anexo o PDF completo da sua nova ficha de treino:`;
+
+  return [
+    total > 1 ? `📋 *Novo Plano de Treino Liberado!*` : `📋 *Nova Ficha de Treino Liberada!*`,
+    `🏢 *${tenantName}* · _App Rit_`,
+    ``,
+    `Olá, *${firstName}*! 💪`,
+    introLine,
+    ``,
+    ...summaryLines,
+    ``,
+    `📲 *Abra o app Rit* para ver os vídeos de execução e registrar suas cargas:`,
+    `👉 ${resolvedUrl}`
+  ].join('\n');
+}
+
+/**
+ * Notifica o aluno via WhatsApp enviando o PDF consolidado de todas as fichas prescritas + legenda curta,
+ * com deduplicação por hash de conteúdo e substituição de itens ainda pendentes na fila.
  */
 export async function notifyRoutinePrescribed({
   dataDir,
   tenantId = 'default',
   student,
-  routine,
+  routine = null,
+  routines = null,
   days = [],
+  week = null,
   trainerUser = null,
-  tenant = null
+  tenant = null,
+  cooldownMs = 10 * 60 * 1000
 }) {
   if (!student?.phone) {
     return { ok: false, skipped: true, reason: 'Aluno sem WhatsApp cadastrado' };
   }
+  const cleanPhone = cleanWhatsAppPhone(student.phone);
+  if (!cleanPhone) {
+    return { ok: false, skipped: true, reason: 'Telefone do destinatário inválido ou ausente' };
+  }
+
   const resolvedTenant = tenant || (tenantId !== 'default' ? getTenant(dataDir, tenantId) : null);
   const settings = mergeTenantEvolutionSettings(dataDir, tenantId, resolvedTenant?.settings || {});
 
@@ -1230,26 +1602,310 @@ export async function notifyRoutinePrescribed({
     return { ok: false, skipped: true, reason: 'Aviso de prescrição desativado nas configurações' };
   }
 
+  const rawList = Array.isArray(routines) && routines.length > 0
+    ? routines
+    : (routine ? [{ routine, days }] : []);
+
+  const normalizedItems = rawList
+    .map(item => {
+      const rObj = item?.routine || item;
+      if (!rObj || typeof rObj !== 'object') return null;
+      const itemDays = getScheduledDaysForRoutine(rObj, item?.days ?? (rawList.length === 1 ? days : null), week);
+      return { routine: rObj, days: itemDays };
+    })
+    .filter(Boolean);
+
+  if (normalizedItems.length === 0) {
+    return { ok: false, skipped: true, reason: 'Nenhuma ficha informada' };
+  }
+
   const tenantName = resolvedTenant?.name || 'Sua Academia';
   const trainerName = trainerUser?.name || '';
+  const studentKey = student?.id || cleanPhone;
+  const contentHash = buildPrescriptionContentHash({ studentKey, items: normalizedItems });
+  const appUrl = resolveStudentAppUrl(tenantId);
 
-  const message = formatPrescribedRoutineWhatsAppMessage({
+  const caption = formatPrescribedRoutinesWhatsAppCaption({
     studentName: student.name || 'Aluno',
-    routine,
-    days,
+    routines: normalizedItems,
+    week,
+    tenantId,
     tenantName,
-    trainerName
+    trainerName,
+    appUrl
   });
 
-  return dispatchWhatsAppWithRetry({
+  const pdf = buildPrescriptionPlanPdfBytes({
+    student,
+    routines: normalizedItems,
+    week: week || {},
+    tenant: resolvedTenant || { name: tenantName },
+    branding: resolvedTenant?.branding || {},
+    trainerName,
+    appUrl
+  });
+
+  if (!pdf?.base64 || !caption) {
+    return { ok: false, skipped: true, reason: 'Falha ao gerar PDF da ficha' };
+  }
+
+  const now = Date.now();
+  const windowBucket = Math.floor(now / Math.max(60000, Number(cooldownMs) || 600000));
+  const baseDedupKey = `prescription:${tenantId}:${studentKey}:${contentHash}:${windowBucket}`;
+
+  if (isPersistentDir(dataDir)) {
+    const inst = getSqliteInstance(dataDir);
+    backfillRelationalTables(inst);
+    const dedupCheck = runInTransaction(inst, () => {
+      const cutoff = now - (Number(cooldownMs) || 600000);
+      const recentRows = inst.db.prepare(
+        "SELECT * FROM whatsapp_outbox WHERE tenant_id = ? AND kind = 'prescription_notice' AND created_at >= ?"
+      ).all(String(tenantId || 'default'), cutoff);
+
+      let duplicateFound = false;
+      let cancelledPending = 0;
+      for (const row of recentRows) {
+        let d = {};
+        try { d = JSON.parse(row.data); } catch { continue; }
+        const sameStudent = d.studentId ? d.studentId === studentKey : d.phone === cleanPhone;
+        if (!sameStudent) continue;
+
+        if (row.status !== 'cancelled' && row.status !== 'failed' && d.contentHash === contentHash) {
+          duplicateFound = true;
+          break;
+        }
+        if (row.status === 'pending' && d.contentHash !== contentHash) {
+          const cancelledData = compactSentPayload({ ...d, lastError: 'Substituído por prescrição mais recente' });
+          inst.stmts.upsertOutboxRow.run(
+            row.id, row.tenant_id, row.kind, 'cancelled', row.dedup_key,
+            row.attempts, 0, null, row.created_at, now, JSON.stringify(cancelledData)
+          );
+          cancelledPending++;
+        }
+      }
+      if (cancelledPending > 0) syncOutboxKvMirrorInTx(inst);
+      return { duplicateFound };
+    });
+
+    if (dedupCheck.duplicateFound) {
+      return {
+        ok: true,
+        skipped: true,
+        deduplicated: true,
+        queued: false,
+        contentHash,
+        partCount: 1,
+        pdfFileName: pdf.filename,
+        pdfSize: pdf.bytes.length,
+        caption,
+        messages: [caption]
+      };
+    }
+  } else {
+    const memKey = `${dataDir}:${tenantId}:${studentKey}`;
+    const prevMem = recentPrescriptionMemoryDedup.get(memKey);
+    if (prevMem && prevMem.hash === contentHash && now - prevMem.at < (Number(cooldownMs) || 600000)) {
+      return {
+        ok: true,
+        skipped: true,
+        deduplicated: true,
+        queued: false,
+        contentHash,
+        partCount: 1,
+        pdfFileName: pdf.filename,
+        pdfSize: pdf.bytes.length,
+        caption,
+        messages: [caption]
+      };
+    }
+    recentPrescriptionMemoryDedup.set(memKey, { hash: contentHash, at: now });
+  }
+
+  const res = await dispatchWhatsAppWithRetry({
     dataDir,
     tenantId,
     kind: 'prescription_notice',
     recipientName: student.name || 'Aluno',
-    phone: student.phone,
-    message,
-    tenantSettings: settings
+    phone: cleanPhone,
+    message: caption,
+    document: {
+      fileName: pdf.filename,
+      mediaBase64: pdf.base64,
+      mimetype: 'application/pdf'
+    },
+    tenantSettings: settings,
+    dedupKey: baseDedupKey,
+    meta: { studentId: studentKey, contentHash, part: 1, partCount: 1, pdfFileName: pdf.filename }
   });
+
+  return {
+    ok: Boolean(res.ok),
+    queued: Boolean(res.queued),
+    deduplicated: Boolean(res.deduplicated),
+    partCount: 1,
+    contentHash,
+    pdfFileName: pdf.filename,
+    pdfSize: pdf.bytes.length,
+    caption,
+    messages: [caption],
+    ...(res.error ? { error: res.error } : {})
+  };
+}
+
+const DEFAULT_GENERIC_WELCOME = 'Bem-vindo ao nosso app oficial de treinos! Confira sua ficha do dia.';
+
+/**
+ * Constrói a URL dinâmica de ativação/cadastro do aluno já preenchida com tenant e código de convite.
+ */
+export function buildStudentInviteSignupUrl({ appUrl = '', tenantId = '', inviteCode = '' } = {}) {
+  const base = String(appUrl || process.env.PUBLIC_APP_URL || process.env.ORIGIN || 'https://app.treinerit.com.br')
+    .trim()
+    .replace(/\/+$/, '');
+  const code = String(inviteCode || '').trim().toUpperCase();
+  const cleanTenant = String(tenantId || '').trim();
+  const params = new URLSearchParams();
+  if (cleanTenant && cleanTenant !== 'default') {
+    params.set('tenant', cleanTenant);
+  }
+  if (code) {
+    params.set('convite', code);
+  }
+  const qs = params.toString();
+  return qs ? `${base}/cadastro?${qs}` : `${base}/cadastro`;
+}
+
+/**
+ * Formata a mensagem de saudação e boas-vindas com link direto e código de convite isolado no WhatsApp.
+ */
+export function formatStudentWelcomeWhatsAppMessage({
+  studentName = 'Aluno(a)',
+  tenantName = '',
+  trainerName = '',
+  inviteCode = '',
+  signupUrl = '',
+  customWelcome = ''
+} = {}) {
+  const cleanFirst = String(studentName || '').trim().split(/\s+/)[0] || 'Aluno(a)';
+  const gym = String(tenantName || trainerName || 'Rit').trim() || 'Rit';
+  const code = String(inviteCode || '').trim().toUpperCase();
+  const url = String(signupUrl || buildStudentInviteSignupUrl({ tenantId: '', inviteCode: code })).trim();
+  const cleanCustom = String(customWelcome || '').trim();
+  const hasCustom = Boolean(cleanCustom) && cleanCustom !== DEFAULT_GENERIC_WELCOME;
+
+  const lines = [
+    `👋 Olá, *${cleanFirst}*! Seja muito bem-vindo(a) à *${gym}*! 🏋️‍♂️`,
+    ...(hasCustom ? [``, cleanCustom] : []),
+    ``,
+    `Seu cadastro já foi criado pelo seu professor e seu acesso ao nosso app de treinos está liberado.`,
+    ``,
+    `🚀 *Como ativar sua conta em 1 minuto:*`,
+    `1️⃣ Toque no link de cadastro abaixo`,
+    `2️⃣ Confira seu nome e crie sua senha de acesso`,
+    `3️⃣ Pronto! Seus treinos aparecerão na tela inicial`,
+    ``,
+    `🔗 *Link direto de ativação:*`,
+    url,
+    ``,
+    `🎟️ *Código de convite:*`,
+    `*${code}*`,
+    `_(Use este código caso prefira abrir o app e digitar manualmente)_`,
+    ``,
+    `Bons treinos! 💪`
+  ];
+  return lines.join('\n');
+}
+
+/**
+ * Envia de forma isolada e resiliente a saudação com código de convite no WhatsApp do aluno recém-cadastrado.
+ */
+export async function notifyStudentWelcomeInvite({
+  dataDir,
+  tenantId = 'default',
+  student,
+  inviteCode = '',
+  signupUrl = '',
+  trainerUser = null,
+  tenant = null,
+  appUrl = '',
+  force = false
+}) {
+  const code = String(inviteCode || '').trim().toUpperCase();
+  const cleanPhone = cleanWhatsAppPhone(student?.phone);
+  const resolvedTenant = tenant || (tenantId && tenantId !== 'default' ? getTenant(dataDir, tenantId) : null);
+  const url = String(signupUrl || buildStudentInviteSignupUrl({
+    appUrl,
+    tenantId: resolvedTenant?.id || tenantId,
+    inviteCode: code
+  })).trim();
+
+  if (!cleanPhone) {
+    return {
+      ok: false,
+      skipped: true,
+      queued: false,
+      reason: 'Telefone do aluno inválido ou ausente',
+      status: 'skipped',
+      inviteCode: code,
+      signupUrl: url,
+      text: ''
+    };
+  }
+
+  const settings = mergeTenantEvolutionSettings(dataDir, tenantId, resolvedTenant?.settings || {});
+  const text = formatStudentWelcomeWhatsAppMessage({
+    studentName: student?.name || 'Aluno(a)',
+    tenantName: resolvedTenant?.name || '',
+    trainerName: trainerUser?.name || '',
+    inviteCode: code,
+    signupUrl: url,
+    customWelcome: resolvedTenant?.settings?.welcomeMessage || ''
+  });
+
+  const studentKey = student?.id || cleanPhone;
+  const dedupKey = force ? '' : `welcome_invite:${tenantId || 'default'}:${studentKey}:${code}`;
+
+  try {
+    const res = await dispatchWhatsAppWithRetry({
+      dataDir,
+      tenantId: tenantId || 'default',
+      kind: 'welcome_invite',
+      recipientName: student?.name || 'Aluno',
+      phone: cleanPhone,
+      message: text,
+      tenantSettings: settings,
+      dedupKey: dedupKey || null,
+      meta: {
+        studentId: student?.id || null,
+        studentName: student?.name || null,
+        inviteCode: code,
+        signupUrl: url
+      }
+    });
+    const status = res.ok && !res.skipped
+      ? 'sent'
+      : res.queued
+        ? 'queued'
+        : res.skipped
+          ? 'sent'
+          : 'failed';
+    return {
+      ...res,
+      status,
+      inviteCode: code,
+      signupUrl: url,
+      text
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      queued: false,
+      error: err?.message || 'Falha ao enviar saudação no WhatsApp',
+      status: 'failed',
+      inviteCode: code,
+      signupUrl: url,
+      text
+    };
+  }
 }
 
 /**
@@ -1393,4 +2049,124 @@ export async function notifyWorkoutCompletedIfAny({ dataDir, user, curState, new
   }
 
   return { notified: sentCount, queued: queuedCount, targetPhone, targetName };
+}
+
+/**
+ * Formata resumo semanal de evolução do aluno (check-in de sexta/domingo ou sob demanda).
+ */
+export function formatWeeklyCheckinWhatsAppMessage({
+  studentName = 'Aluno',
+  workoutsCount = 0,
+  plannedDays = 0,
+  totalVolKg = 0,
+  prsCount = 0,
+  tenantName = 'Sua Academia',
+  trainerName = ''
+}) {
+  const firstName = String(studentName || 'Aluno').trim().split(' ')[0];
+  const sender = trainerName ? `Prof. *${trainerName}* (${tenantName})` : `equipe da *${tenantName}*`;
+  const freqLine = plannedDays > 0
+    ? `*${workoutsCount} de ${plannedDays}* treinos planejados concluídos na semana`
+    : `*${workoutsCount}* treino(s) concluído(s) na semana`;
+  const lines = [
+    `📊 *Resumo da Semana - ${firstName}*`,
+    `Aqui é ${sender}! Confira seus números dos últimos 7 dias:`,
+    ``,
+    `- Frequência: ${freqLine}`,
+    `- Tonelagem levantada: *${Math.round(Number(totalVolKg) || 0).toLocaleString('pt-BR')} kg*`
+  ];
+  if (prsCount > 0) {
+    lines.push(`- Novos recordes pessoais (PRs): *${prsCount}* 🏆`);
+  }
+  lines.push(``);
+  lines.push(
+    workoutsCount >= Math.max(1, plannedDays)
+      ? `Meta semanal batida! Excelente consistência, continue firme na próxima semana! 💪`
+      : `Cada sessão conta na construção de resultado. Bora manter o ritmo nesta semana! 🚀`
+  );
+  return lines.join('\n');
+}
+
+/**
+ * Formata alerta de vencimento próximo de ficha enviado ao professor/equipe.
+ */
+export function formatRoutineExpiryTrainerMessage({
+  trainerName = 'Professor',
+  studentName = 'Aluno',
+  routineName = 'Ficha atual',
+  daysAge = 25,
+  cycleDays = 30,
+  tenantName = 'Academia'
+}) {
+  const firstTrainer = String(trainerName || 'Professor').trim().split(' ')[0];
+  const remaining = Math.max(0, Number(cycleDays || 30) - Number(daysAge || 0));
+  return [
+    `🔔 *Alerta de Renovação de Ficha - ${tenantName}*`,
+    `Olá, ${firstTrainer}! A ficha *"${routineName}"* de *${studentName}* completou *${daysAge} dias* de uso (${remaining > 0 ? `vence em ${remaining} dia(s)` : 'ciclo concluído'}).`,
+    ``,
+    `Acesse o Portal Rit para arquivar o ciclo atual, revisar progressão de cargas e prescrever o próximo bloco.`
+  ].join('\n');
+}
+
+/**
+ * Formata resumo comparativo de avaliação física (Antes vs. Atual) para envio ao aluno.
+ */
+export function formatAssessmentSummaryWhatsAppMessage({
+  studentName = 'Aluno',
+  dateStr = '',
+  weightKg = null,
+  bodyFat = null,
+  weightDelta = null,
+  bfDelta = null,
+  trainerName = '',
+  tenantName = 'Academia'
+}) {
+  const firstName = String(studentName || 'Aluno').trim().split(' ')[0];
+  const sender = trainerName ? `Prof. *${trainerName}* (${tenantName})` : `equipe da *${tenantName}*`;
+  const lines = [
+    `📏 *Avaliação Física Atualizada - ${firstName}*`,
+    `Registrada por ${sender}${dateStr ? ` em ${dateStr}` : ''}:`,
+    ``
+  ];
+  if (weightKg !== null && weightKg !== undefined) {
+    const dTxt = weightDelta && Number(weightDelta.diff) !== 0
+      ? ` (${Number(weightDelta.diff) > 0 ? '+' : ''}${weightDelta.diff} kg vs. início)`
+      : '';
+    lines.push(`- Peso corporal: *${weightKg} kg*${dTxt}`);
+  }
+  if (bodyFat !== null && bodyFat !== undefined) {
+    const bfTxt = bfDelta && Number(bfDelta.diff) !== 0
+      ? ` (${Number(bfDelta.diff) > 0 ? '+' : ''}${bfDelta.diff}% vs. início)`
+      : '';
+    lines.push(`- Gordura corporal: *${bodyFat}%*${bfTxt}`);
+  }
+  lines.push(``);
+  lines.push(`Abra o aplicativo *Rit* na aba Medidas para acompanhar seu gráfico completo!`);
+  return lines.join('\n');
+}
+
+/**
+ * Formata retorno de revisão biomecânica de vídeo de execução.
+ */
+export function formatVideoReviewWhatsAppMessage({
+  studentName = 'Aluno',
+  exerciseName = 'Exercício',
+  status = 'reviewed',
+  comment = '',
+  trainerName = '',
+  tenantName = 'Academia'
+}) {
+  const firstName = String(studentName || 'Aluno').trim().split(' ')[0];
+  const sender = trainerName ? `Prof. *${trainerName}*` : `sua equipe (${tenantName})`;
+  const title = status === 'adjust_needed'
+    ? `🎯 *Ajuste Técnico no Exercício - ${exerciseName}*`
+    : `✅ *Execução Aprovada - ${exerciseName}*`;
+  return [
+    title,
+    `Olá, ${firstName}! ${sender} analisou seu vídeo de execução:`,
+    ``,
+    `"${String(comment || '').trim()}"`,
+    ``,
+    `Qualquer dúvida técnica, responda por aqui ou consulte no app Rit!`
+  ].join('\n');
 }

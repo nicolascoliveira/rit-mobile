@@ -1,6 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
+import { useUI } from '../store/useUI.js'
+import { pushSupported, enablePush } from '../lib/push.js'
 import { effectiveRoutines, effectiveRoutineIds, nextTrainingDay, lastBW, setsDoneActive } from '../lib/history.js'
 import { streakInfo } from '../lib/streak.js'
 import { StreakFlame, StreakMeta, StreakParty } from '../components/Streak.jsx'
@@ -42,6 +44,93 @@ export default function Home() {
   // The banner switched off and the sync stuck: a dot on the gear (Settings → Show connection status).
   const trouble = useConnectionTrouble()
   const [weekOffset, setWeekOffset] = useState(0)
+  const toast = useUI(s => s.toast)
+  const [pushDismissed, setPushDismissed] = useState(() => {
+    try { return localStorage.getItem('rit_push_prompt_dismissed') === '1' } catch { return false }
+  })
+  const [pushBusy, setPushBusy] = useState(false)
+  const [pushGranted, setPushGranted] = useState(() =>
+    typeof Notification !== 'undefined' ? Notification.permission === 'granted' : false
+  )
+  const canAskPush = Boolean(
+    user &&
+    !pushDismissed &&
+    !pushGranted &&
+    pushSupported() &&
+    typeof Notification !== 'undefined' &&
+    Notification.permission === 'default'
+  )
+  const handleActivatePush = async () => {
+    if (pushBusy) return
+    setPushBusy(true)
+    try {
+      await enablePush()
+      setPushGranted(true)
+      try { localStorage.setItem('rit_push_prompt_dismissed', '1') } catch { /* ignore */ }
+      toast('Notificações ativadas neste celular!')
+    } catch (e) {
+      toast(e?.message || 'Não foi possível ativar as notificações')
+      if (typeof Notification !== 'undefined' && Notification.permission !== 'default') {
+        setPushDismissed(true)
+      }
+    } finally {
+      setPushBusy(false)
+    }
+  }
+  const dismissPushPrompt = () => {
+    setPushDismissed(true)
+    try { localStorage.setItem('rit_push_prompt_dismissed', '1') } catch { /* ignore */ }
+  }
+  const [seenNoticeId, setSeenNoticeId] = useState(() => {
+    try { return localStorage.getItem('rit_seen_prescription_id') || '' } catch { return '' }
+  })
+  const pNotice = S?.prescriptionNotice
+  const showPrescriptionNotice = Boolean(pNotice?.id && pNotice.id !== seenNoticeId)
+  const dismissPrescriptionNotice = () => {
+    if (!pNotice?.id) return
+    setSeenNoticeId(pNotice.id)
+    try { localStorage.setItem('rit_seen_prescription_id', pNotice.id) } catch { /* ignore */ }
+  }
+  const [seenReviewAt, setSeenReviewAt] = useState(() => {
+    try { return Number(localStorage.getItem('rit_seen_video_review_at') || 0) } catch { return 0 }
+  })
+  const latestVideoReview = (() => {
+    const map = S?.videoReviews
+    if (!map || typeof map !== 'object') return null
+    const list = Object.values(map).filter(r => r && r.comment && Number(r.at) > 0)
+    if (!list.length) return null
+    list.sort((a, b) => Number(b.at) - Number(a.at))
+    return list[0]
+  })()
+  const showVideoReviewNotice = Boolean(latestVideoReview?.at && Number(latestVideoReview.at) > seenReviewAt)
+  const dismissVideoReviewNotice = () => {
+    if (!latestVideoReview?.at) return
+    const ts = Number(latestVideoReview.at)
+    setSeenReviewAt(ts)
+    try { localStorage.setItem('rit_seen_video_review_at', String(ts)) } catch { /* ignore */ }
+  }
+  useEffect(() => {
+    if (!pNotice?.id || typeof Notification === 'undefined' || Notification.permission !== 'granted') return
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return
+    let alreadyNotified = ''
+    try { alreadyNotified = localStorage.getItem('rit_notified_prescription_id') || '' } catch { /* ignore */ }
+    if (alreadyNotified === pNotice.id || seenNoticeId === pNotice.id) return
+    try { localStorage.setItem('rit_notified_prescription_id', pNotice.id) } catch { /* ignore */ }
+    const names = Array.isArray(pNotice.routineNames) ? pNotice.routineNames.join(', ') : ''
+    const sender = pNotice.trainerName ? `Prof. ${pNotice.trainerName}` : 'Sua academia'
+    navigator.serviceWorker.ready.then(reg => reg.showNotification(
+      (pNotice.routineNames?.length || 0) > 1
+        ? `📋 ${pNotice.routineNames.length} novas fichas liberadas no Rit!`
+        : '📋 Nova ficha liberada no Rit!',
+      {
+        body: names ? `${sender} atualizou seu plano: ${names}. Toque para conferir!` : `${sender} atualizou seu plano de treino.`,
+        icon: 'icon-512.png',
+        badge: 'icon-180.png',
+        tag: 'prescription-update',
+        renotify: true
+      }
+    )).catch(() => { })
+  }, [pNotice?.id, seenNoticeId])
 
   const today = new Date()
   // A weekday can hold several routines. `todayRoutines` is the whole day; `routine` is the
@@ -172,7 +261,7 @@ export default function Home() {
                 <span style={{ fontWeight: 700, fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {branding.gymName}
                 </span>
-                <span style={{ fontSize: 10, background: 'var(--surface-3)', color: 'var(--acc)', padding: '1px 5px', borderRadius: 4, fontWeight: 700 }}>
+                <span style={{ fontSize: 10, background: 'var(--surface-3)', color: 'var(--acc-ink)', padding: '1px 5px', borderRadius: 4, fontWeight: 700 }}>
                   Rit
                 </span>
               </div>
@@ -229,6 +318,148 @@ export default function Home() {
       <button className="iconbtn" data-tour="settings-gear" onClick={() => nav('/settings')} aria-label={trouble ? t('Settings') + ', ' + t('Connection problem') : t('Settings')}><Icon name="gear" />{trouble && <span className="tab-dot" aria-hidden="true" />}</button>
     </div>
 
+    {showPrescriptionNotice && (
+      <div
+        className="card"
+        role="status"
+        aria-live="polite"
+        style={{
+          border: '1px solid color-mix(in srgb, var(--acc) 45%, var(--sep))',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 10
+        }}
+      >
+        <div className="row" style={{ gap: 10, alignItems: 'flex-start' }}>
+          <span className="lrow-i" style={{ background: 'var(--acc)', color: 'var(--on-acc)', flexShrink: 0 }}>
+            <Icon name="clipboard" />
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 15 }}>
+              {(pNotice?.routineNames?.length || 0) > 1 ? 'Novas fichas de treino liberadas!' : 'Nova ficha de treino liberada!'}
+            </div>
+            <div className="muted" style={{ fontSize: 14, marginTop: 2, lineHeight: 1.4 }}>
+              {pNotice?.trainerName ? `Prof. ${pNotice.trainerName} atualizou seu plano` : 'Sua academia atualizou seu plano'}
+              {Array.isArray(pNotice?.routineNames) && pNotice.routineNames.length > 0
+                ? `: ${pNotice.routineNames.join(', ')}`
+                : ''}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="iconbtn"
+            style={{ width: 32, height: 32, flexShrink: 0 }}
+            onClick={dismissPrescriptionNotice}
+            aria-label="Dispensar aviso"
+          >
+            <Icon name="xmark" />
+          </button>
+        </div>
+        <div className="row" style={{ gap: 8 }}>
+          <Button
+            size="sm"
+            variant="primary"
+            icon="dumbbell"
+            onClick={() => {
+              dismissPrescriptionNotice()
+              nav('/plan')
+            }}
+          >
+            Ver minhas fichas
+          </Button>
+          <Button size="sm" variant="ghost" onClick={dismissPrescriptionNotice}>
+            Entendi
+          </Button>
+        </div>
+      </div>
+    )}
+
+    {showVideoReviewNotice && (
+      <div
+        className="card"
+        role="status"
+        aria-live="polite"
+        style={{
+          border: '1px solid color-mix(in srgb, var(--acc) 45%, var(--sep))',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 10
+        }}
+      >
+        <div className="row" style={{ gap: 10, alignItems: 'flex-start' }}>
+          <span className="lrow-i" style={{ background: 'var(--acc)', color: 'var(--on-acc)', flexShrink: 0 }}>
+            <Icon name="check" />
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 15 }}>
+              {latestVideoReview.status === 'adjust_needed'
+                ? 'Ajuste técnico enviado pelo professor'
+                : 'Execução de vídeo avaliada pelo professor'}
+            </div>
+            <div className="muted" style={{ fontSize: 14, marginTop: 3, lineHeight: 1.45 }}>
+              {latestVideoReview.trainerName ? `Prof. ${latestVideoReview.trainerName}: ` : ''}
+              "{latestVideoReview.comment}"
+            </div>
+          </div>
+          <button
+            type="button"
+            className="iconbtn"
+            style={{ width: 32, height: 32, flexShrink: 0 }}
+            onClick={dismissVideoReviewNotice}
+            aria-label="Dispensar parecer técnico"
+          >
+            <Icon name="xmark" />
+          </button>
+        </div>
+        <div className="row" style={{ gap: 8 }}>
+          <Button size="sm" variant="primary" icon="check" onClick={dismissVideoReviewNotice}>
+            Entendi
+          </Button>
+        </div>
+      </div>
+    )}
+
+    {canAskPush && (
+      <div
+        className="card"
+        style={{
+          border: '1px solid var(--sep)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 10
+        }}
+      >
+        <div className="row" style={{ gap: 10, alignItems: 'flex-start' }}>
+          <span className="lrow-i" style={{ background: 'var(--acc)', color: 'var(--on-acc)', flexShrink: 0 }}>
+            <Icon name="bell" />
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 15 }}>Receber avisos de novos treinos?</div>
+            <div className="muted" style={{ fontSize: 14, marginTop: 2, lineHeight: 1.4 }}>
+              Ative as notificações para receber um alerta no celular sempre que seu professor liberar fichas novas.
+            </div>
+          </div>
+          <button
+            type="button"
+            className="iconbtn"
+            style={{ width: 32, height: 32, flexShrink: 0 }}
+            onClick={dismissPushPrompt}
+            aria-label="Fechar aviso"
+          >
+            <Icon name="xmark" />
+          </button>
+        </div>
+        <div className="row" style={{ gap: 8 }}>
+          <Button size="sm" variant="primary" icon="bell" disabled={pushBusy} onClick={handleActivatePush}>
+            {pushBusy ? 'Ativando...' : 'Ativar notificações'}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={dismissPushPrompt}>
+            Agora não
+          </Button>
+        </div>
+      </div>
+    )}
+
     <div className="card">
       {/* A running programme (lib/programmes.js) wrote this week's plan: where it stands, one tap from its screen. */}
       {progChip && <button type="button" className="chip ichip prog-chip" onClick={() => nav('/plan/programmes')}><Icon name="calendar" /><span>{progChip}</span></button>}
@@ -268,9 +499,9 @@ export default function Home() {
             <div className="ttl">{S.active ? (editingSaved ? S.active.name : t('{0} (in progress)', S.active.name))
               : doneToday ? (doneToday.name ? t('{0} (done)', doneToday.name) : t('Workout done'))
               : routine ? todayName : t('Rest day')}{todayOvr && routine && !doneToday ? ' · ' + t('rescheduled') : ''}</div>
-            {routine?.prescribedBy?.name && !S.active && !doneToday && (
-              <div className="ss muted" style={{ fontSize: '11px', marginTop: 1, color: 'var(--acc)' }}>
-                Prescrito pelo Prof. {routine.prescribedBy.name}
+            {(routine?.prescribedBy?.name || routine?.prescribedBy?.trainerName) && !S.active && !doneToday && (
+              <div className="ss muted" style={{ fontSize: '11px', marginTop: 1, color: 'var(--acc-ink)' }}>
+                Prescrito pelo Prof. {routine.prescribedBy.name || routine.prescribedBy.trainerName}
               </div>
             )}
             {next && !doneToday && <div className="ss">{t('Next session: {0}, {1}', t(DAYN[next.weekday]), next.routine.name)}</div>}

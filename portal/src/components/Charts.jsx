@@ -16,7 +16,7 @@ export function LineChart({
   const [activeIdx, setActiveIdx] = useState(null);
 
   if (!data.length) {
-    return <div className="muted small" style={{ padding: '24px 0', textAlign: 'center' }}>Sem dados no período</div>;
+    return <div className="muted" style={{ padding: '24px 0', textAlign: 'center', fontSize: 14 }}>Sem dados no período</div>;
   }
 
   const values = data.map(d => Number(d[valueKey] || 0));
@@ -27,7 +27,7 @@ export function LineChart({
   const padL = 16;
   const padR = 16;
   const padT = 22;
-  const padB = 28;
+  const padB = 30;
   const plotW = W - padL - padR;
   const plotH = H - padT - padB;
 
@@ -47,9 +47,9 @@ export function LineChart({
   return (
     <div className="b2b-chart-wrap" onMouseLeave={() => setActiveIdx(null)}>
       {activePt && (
-        <div className="b2b-chart-Readout">
-          <span className="muted small">{String(activePt.raw[labelKey] || '')}</span>
-          <b className="num" style={{ color: 'var(--label)', fontSize: 13.5 }}>{formatValue(activePt.val)}</b>
+        <div className="b2b-chart-Readout" aria-live="polite">
+          <span className="muted">{String(activePt.raw[labelKey] || '')}</span>
+          <b className="num" style={{ color: 'var(--label)', fontSize: 14 }}>{formatValue(activePt.val)}</b>
         </div>
       )}
       <svg viewBox={`0 0 ${W} ${H}`} className="b2b-linechart" preserveAspectRatio="xMidYMid meet">
@@ -83,12 +83,29 @@ export function LineChart({
 
         {pts.map((p, idx) => {
           const isSelected = activeIdx === idx;
+          const pointLabel = `${String(p.raw[labelKey] || '')}: ${formatValue(p.val)}`;
           return (
             <g
               key={idx}
-              style={{ cursor: 'pointer' }}
+              role="button"
+              tabIndex={0}
+              aria-label={pointLabel}
+              style={{ cursor: 'pointer', outline: 'none' }}
               onMouseEnter={() => setActiveIdx(idx)}
+              onFocus={() => setActiveIdx(idx)}
               onClick={() => setActiveIdx(idx)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setActiveIdx(idx);
+                } else if (e.key === 'ArrowRight' && idx < pts.length - 1) {
+                  e.preventDefault();
+                  setActiveIdx(idx + 1);
+                } else if (e.key === 'ArrowLeft' && idx > 0) {
+                  e.preventDefault();
+                  setActiveIdx(idx - 1);
+                }
+              }}
             >
               <circle cx={p.x} cy={p.y} r="12" fill="transparent" />
               <circle
@@ -99,7 +116,7 @@ export function LineChart({
                 stroke={color}
                 strokeWidth="2.2"
               >
-                <title>{`${p.raw[labelKey]}: ${formatValue(p.val)}`}</title>
+                <title>{pointLabel}</title>
               </circle>
               {(idx % labelStep === 0 || idx === pts.length - 1) && (
                 <text
@@ -108,7 +125,7 @@ export function LineChart({
                   textAnchor={idx === 0 ? 'start' : idx === pts.length - 1 ? 'end' : 'middle'}
                   fill={isSelected ? 'var(--label)' : 'var(--label-2)'}
                   fontWeight={isSelected ? '700' : '500'}
-                  fontSize="11"
+                  fontSize="12"
                 >
                   {String(p.raw[labelKey] || '').slice(-5)}
                 </text>

@@ -34,6 +34,7 @@ import { installViewportGuard } from './lib/viewport-guard.js'
 import { installChipDrag } from './lib/hchips.js'
 import { syncPushSubscription } from './lib/push.js'
 import { MOBILE, nativePlatform } from './lib/mobile.js'
+import { shouldAutoOpenPortal } from './lib/rit-native.js'
 import { isOn } from './lib/modules.js'
 import { useTour, tourState, openTour, readTour, shouldOffer, resumeAt } from './lib/tour.js'
 import { exitWorkoutEdit, startFlow, beginWorkout, bwSheet } from './sheets.jsx'
@@ -450,7 +451,13 @@ function Page({ loc, render, under = false, scrollY = 0, motion = 'fade' }) {
 
 export default function App() {
   const boot = useStore(s => s.boot)
-  useEffect(() => { boot() }, [boot])
+  useEffect(() => {
+    if (MOBILE && shouldAutoOpenPortal()) {
+      window.location.assign('./portal/index.html#/painel')
+      return
+    }
+    boot()
+  }, [boot])
   useEffect(() => { prefetchViews() }, [])
   // Android system back — sheet, then page, then press-again-to-exit (see lib/back.js)
   useEffect(() => {

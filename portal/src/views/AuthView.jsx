@@ -2,6 +2,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Icon from '../components/Icon.jsx';
 import { Button, SelectField, TextField, StatusPill } from '../components/ui.jsx';
 import { portalApi, toast, getStudentAppUrl } from '../lib/api.js';
+import { isNativePortalApp, openStudentNativeApp } from '../lib/native.js';
+import {
+  InstallPortalPwaButton,
+  IosInstallHintCard,
+  OfflineStatusBanner
+} from '../components/InstallPortalPwa.jsx';
 
 export default function AuthView({
   bootstrap,
@@ -18,7 +24,6 @@ export default function AuthView({
   const [password, setPassword] = useState('');
   const [adminName, setAdminName] = useState('Administrador Geral');
   const [setupToken, setSetupToken] = useState('');
-  const [loginRole, setLoginRole] = useState('b2b');
   const [loading, setLoading] = useState(false);
   const [seeding, setSeeding] = useState(false);
 
@@ -45,7 +50,6 @@ export default function AuthView({
 
   useEffect(() => {
     setB2bMode(initialMode === 'signup' ? 'signup' : 'login');
-    if (initialMode === 'signup') setLoginRole('b2b');
   }, [initialMode]);
 
   useEffect(() => {
@@ -67,9 +71,15 @@ export default function AuthView({
     setB2bMode(nextMode);
     if (typeof window !== 'undefined') {
       const targetPath = nextMode === 'signup' ? '/cadastro' : '/login';
-      if (window.location.pathname !== targetPath) {
-        window.history.replaceState(null, '', targetPath);
+      if (isNativePortalApp()) {
+        const nextHash = `#${targetPath}`;
+        if (window.location.hash !== nextHash) {
+          window.history.pushState(null, '', `${window.location.pathname}${window.location.search}${nextHash}`);
+        }
+      } else if (window.location.pathname !== targetPath) {
+        window.history.pushState(null, '', targetPath);
       }
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
 
@@ -178,7 +188,11 @@ export default function AuthView({
       if (err?.data?.code === 'student-account') {
         toast('Conta de aluno identificada! Redirecionando para o App de Treino...');
         setTimeout(() => {
-          window.location.href = getStudentAppUrl(err.data?.tenantId || '');
+          if (isNativePortalApp()) {
+            openStudentNativeApp(err.data?.tenantId || '');
+          } else {
+            window.location.href = getStudentAppUrl(err.data?.tenantId || '');
+          }
         }, 500);
         return;
       }
@@ -222,7 +236,8 @@ export default function AuthView({
   const demoAllowed = Boolean(bootstrap?.demoAllowed);
 
   return (
-    <div className="b2b-auth-screen">
+    <div className="b2b-auth-screen" style={{ flexDirection: 'column', gap: 16 }}>
+      <OfflineStatusBanner />
       <div className={'b2b-auth-wrap' + (demoAllowed ? '' : ' single')}>
         {/* Coluna 1: Login Oficial por Credenciais */}
         <div className="card" style={{ margin: 0, padding: 28, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
@@ -245,7 +260,7 @@ export default function AuthView({
                     cursor: 'pointer'
                   }}
                 >
-                  ← Voltar para a página inicial
+                  {isNativePortalApp() ? '← Voltar para o App do Aluno' : '← Voltar para a página inicial'}
                 </button>
               </div>
             )}
@@ -264,15 +279,20 @@ export default function AuthView({
                 </div>
               </div>
 
-              <button
-                type="button"
-                className="b2b-icon-btn"
-                onClick={onToggleTheme}
-                title={theme === 'dark' ? 'Mudar para tema claro' : 'Mudar para tema escuro'}
-              >
-                <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={17} />
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <InstallPortalPwaButton variant="tinted" label="Instalar" />
+                <button
+                  type="button"
+                  className="b2b-icon-btn"
+                  onClick={onToggleTheme}
+                  title={theme === 'dark' ? 'Mudar para tema claro' : 'Mudar para tema escuro'}
+                >
+                  <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={17} />
+                </button>
+              </div>
             </div>
+
+            <IosInstallHintCard />
 
             {isInitialSetup ? (
               <>
@@ -356,178 +376,14 @@ export default function AuthView({
                   </form>
                 )}
               </>
-            ) : (
+            ) : b2bMode === 'signup' ? (
               <>
-                <div
-                  role="tablist"
-                  aria-label="Tipo de acesso"
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-                    gap: 6,
-                    padding: 4,
-                    borderRadius: 12,
-                    background: 'var(--bg-el)',
-                    border: 'var(--hair) solid var(--sep)',
-                    marginBottom: 20
-                  }}
-                >
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={loginRole === 'b2b'}
-                    onClick={() => setLoginRole('b2b')}
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 7,
-                      padding: '9px 10px',
-                      borderRadius: 9,
-                      border: 'none',
-                      cursor: 'pointer',
-                      fontSize: 13,
-                      fontWeight: 700,
-                      background: loginRole === 'b2b' ? 'var(--acc)' : 'transparent',
-                      color: loginRole === 'b2b' ? 'var(--on-acc)' : 'var(--label-2)',
-                      transition: 'all 0.18s ease'
-                    }}
-                  >
-                    <Icon name="dumbbell" size={15} />
-                    <span>Academia & Personal</span>
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={loginRole === 'student'}
-                    onClick={() => setLoginRole('student')}
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 7,
-                      padding: '9px 10px',
-                      borderRadius: 9,
-                      border: 'none',
-                      cursor: 'pointer',
-                      fontSize: 13,
-                      fontWeight: 700,
-                      background: loginRole === 'student' ? 'var(--acc)' : 'transparent',
-                      color: loginRole === 'student' ? 'var(--on-acc)' : 'var(--label-2)',
-                      transition: 'all 0.18s ease'
-                    }}
-                  >
-                    <Icon name="phoneScreen" size={15} />
-                    <span>Sou Aluno</span>
-                  </button>
-                </div>
-
-                {loginRole === 'student' ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                    <div>
-                      <h1 style={{ margin: '0 0 6px', fontSize: 23, letterSpacing: '-0.02em' }}>Acessar Meu Treino</h1>
-                      <p className="muted small" style={{ margin: 0, lineHeight: 1.5 }}>
-                        O acesso às suas fichas (Treino A, B, C), animações de execução e histórico de cargas é feito direto no <b>Aplicativo do Aluno</b>.
-                      </p>
-                    </div>
-
-                    <div
-                      style={{
-                        padding: '14px 16px',
-                        borderRadius: 'var(--r)',
-                        background: 'var(--bg-el)',
-                        border: 'var(--hair) solid var(--sep)',
-                        fontSize: 13,
-                        lineHeight: 1.5,
-                        color: 'var(--label-2)'
-                      }}
-                    >
-                      Use o <b>nome ou e-mail</b> e a <b>senha</b> enviados pela sua academia ou pelo seu personal trainer.
-                    </div>
-
-                    <a
-                      href={getStudentAppUrl(gyms[0]?.id || '')}
-                      className="btn primary block"
-                      style={{
-                        textDecoration: 'none',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 8,
-                        padding: '12px 18px',
-                        fontWeight: 700
-                      }}
-                    >
-                      <Icon name="phoneScreen" size={17} />
-                      <span>Abrir Aplicativo do Aluno</span>
-                      <Icon name="externalLink" size={14} />
-                    </a>
-                  </div>
-                ) : (
-                  <>
-                    <div
-                      role="tablist"
-                      aria-label="Ação da conta"
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: '1fr 1fr',
-                        gap: 6,
-                        padding: 4,
-                        borderRadius: 10,
-                        background: 'var(--b2b-input-bg)',
-                        border: '1px solid var(--b2b-input-border)',
-                        marginBottom: 18
-                      }}
-                    >
-                      <button
-                        type="button"
-                        role="tab"
-                        aria-selected={b2bMode === 'login'}
-                        onClick={() => switchB2bMode('login')}
-                        style={{
-                          padding: '8px 10px',
-                          borderRadius: 7,
-                          border: 'none',
-                          cursor: 'pointer',
-                          fontSize: 14,
-                          fontWeight: 700,
-                          background: b2bMode === 'login' ? 'var(--surface-raised)' : 'transparent',
-                          color: b2bMode === 'login' ? 'var(--label)' : 'var(--label-2)',
-                          boxShadow: b2bMode === 'login' ? '0 1px 4px rgba(0,0,0,0.18)' : 'none',
-                          transition: 'all 0.16s ease'
-                        }}
-                      >
-                        Já tenho conta
-                      </button>
-                      <button
-                        type="button"
-                        role="tab"
-                        aria-selected={b2bMode === 'signup'}
-                        onClick={() => switchB2bMode('signup')}
-                        style={{
-                          padding: '8px 10px',
-                          borderRadius: 7,
-                          border: 'none',
-                          cursor: 'pointer',
-                          fontSize: 14,
-                          fontWeight: 700,
-                          background: b2bMode === 'signup' ? 'var(--acc)' : 'transparent',
-                          color: b2bMode === 'signup' ? 'var(--on-acc)' : 'var(--label-2)',
-                          transition: 'all 0.16s ease'
-                        }}
-                      >
-                        Criar Conta Grátis
-                      </button>
-                    </div>
-
-                    {b2bMode === 'signup' ? (
-                      <>
-                        <h1 style={{ margin: '0 0 6px', fontSize: 24, letterSpacing: '-0.02em' }}>
-                          Teste grátis por 14 dias
-                        </h1>
-                        <p className="muted" style={{ margin: '0 0 18px', fontSize: 14, lineHeight: 1.45 }}>
-                          Configure o painel da sua {signupType === 'personal' ? 'consultoria' : 'academia'} agora mesmo — sem cartão de crédito.
-                        </p>
+                <h1 style={{ margin: '0 0 6px', fontSize: 24, letterSpacing: '-0.02em' }}>
+                  Criar Conta Grátis (14 dias)
+                </h1>
+                <p className="muted" style={{ margin: '0 0 18px', fontSize: 14, lineHeight: 1.45 }}>
+                  Configure o painel da sua {signupType === 'personal' ? 'consultoria' : 'academia'} agora mesmo — sem cartão de crédito.
+                </p>
 
                         <form onSubmit={handleSignup} style={{ display: 'flex', flexDirection: 'column', gap: 13 }}>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -662,7 +518,7 @@ export default function AuthView({
                               fontSize: 14
                             }}
                           >
-                            Entrar no Painel →
+                            Fazer login →
                           </button>
                         </div>
                       </>
@@ -734,22 +590,28 @@ export default function AuthView({
                         </div>
                       </>
                     )}
-                  </>
-                )}
-              </>
-            )}
           </div>
 
-          <div className="muted small" style={{ marginTop: 24, paddingTop: 14, borderTop: 'var(--hair) solid var(--sep)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <div className="muted" style={{ marginTop: 24, paddingTop: 14, borderTop: 'var(--hair) solid var(--sep)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 14 }}>
             <span>Rit · Desenvolvido por <b style={{ color: 'var(--label)' }}>Nicolas Oliveira</b></span>
-            <a
-              href={getStudentAppUrl(gyms[0]?.id || '')}
-              target="_blank"
-              rel="noreferrer"
-              style={{ color: 'var(--acc-ink)', textDecoration: 'none', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}
-            >
-              App do Aluno <Icon name="externalLink" size={13} />
-            </a>
+            {isNativePortalApp() ? (
+              <button
+                type="button"
+                onClick={() => openStudentNativeApp(gyms[0]?.id || '')}
+                style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--acc-ink)', fontWeight: 700, fontSize: 14, display: 'inline-flex', alignItems: 'center', gap: 5 }}
+              >
+                Sou aluno <Icon name="chevronRight" size={14} />
+              </button>
+            ) : (
+              <a
+                href={getStudentAppUrl(gyms[0]?.id || '')}
+                target="_blank"
+                rel="noreferrer"
+                style={{ color: 'var(--acc-ink)', textDecoration: 'none', fontWeight: 700, fontSize: 14, display: 'inline-flex', alignItems: 'center', gap: 5 }}
+              >
+                Sou aluno <Icon name="externalLink" size={14} />
+              </a>
+            )}
           </div>
         </div>
 
@@ -821,16 +683,28 @@ export default function AuthView({
                       </div>
 
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, marginLeft: 'auto' }}>
-                        <a
-                          href={getStudentAppUrl(g.id)}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="b2b-icon-btn"
-                          style={{ borderRadius: 9, width: 34, height: 34 }}
-                          title="Abrir App Mobile do Aluno desta academia"
-                        >
-                          <Icon name="phoneScreen" size={16} />
-                        </a>
+                        {isNativePortalApp() ? (
+                          <button
+                            type="button"
+                            onClick={() => openStudentNativeApp(g.id)}
+                            className="b2b-icon-btn"
+                            style={{ borderRadius: 9, width: 34, height: 34 }}
+                            title="Abrir App Mobile do Aluno desta academia"
+                          >
+                            <Icon name="phoneScreen" size={16} />
+                          </button>
+                        ) : (
+                          <a
+                            href={getStudentAppUrl(g.id)}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="b2b-icon-btn"
+                            style={{ borderRadius: 9, width: 34, height: 34 }}
+                            title="Abrir App Mobile do Aluno desta academia"
+                          >
+                            <Icon name="phoneScreen" size={16} />
+                          </a>
+                        )}
                         <Button
                           variant="tinted"
                           size="sm"

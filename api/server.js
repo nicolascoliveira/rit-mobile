@@ -42,6 +42,7 @@ import { ipv6Groups, guardedLookup, pushEndpointError, MAX_PUSH_ENDPOINT } from 
 import { createIntegrations } from './integrations/index.js';
 import { integrationRoutes } from './integrations/routes.js';
 import { createSaasRoutes, ensureSaasDemoSeed, getCatalogueIndex } from './saas-routes.js';
+import { runAllTenantsEngagementTick } from './engagement.js';
 import { recoverWebhookQueueOnBoot } from './webhook-worker.js';
 import { runSecurityMigrations } from './migrate-security.js';
 import { resolveTenantId, resolveEffectiveTenantId, getTenant, listTenants, isTenantSuspended, getTenantAccessState, sanitizeTenantId } from './tenants.js';
@@ -107,22 +108,36 @@ function claimFirstAdmin(req, user) {
 function resolveSignupContext(req, rawCode) {
   const reqTenant = resolveTenantId(req);
   const code = text(rawCode).trim().toUpperCase();
+  const codeProvided = Boolean(code);
   const findValidInvite = () => {
     if (!code) return null;
+    const nowMs = Date.now();
     const inv = db.invites.find(i => i.code === code && !i.usedBy && !i.revoked);
     if (!inv) return null;
-    if (inv.tenantId && reqTenant !== 'default' && inv.tenantId !== reqTenant) return null;
+    if (inv.expiresAt) {
+      const expMs = Date.parse(inv.expiresAt);
+      if (Number.isFinite(expMs) && expMs <= nowMs) return null;
+    }
+    const invTenant = inv.tenantId && inv.tenantId !== 'default' ? inv.tenantId : 'default';
+    if (reqTenant !== 'default' && invTenant !== reqTenant) return null;
     return inv;
   };
   const inv = findValidInvite();
-  const signupTenant = inv?.tenantId || reqTenant;
+  const invTenant = inv?.tenantId && inv.tenantId !== 'default' ? inv.tenantId : null;
+  const signupTenant = invTenant || reqTenant;
   const tenant = signupTenant !== 'default' ? getTenant(DATA, signupTenant) : null;
   const inviteRequired = INVITE_ONLY || Boolean(tenant?.settings?.inviteOnly);
-  return { reqTenant, code, findValidInvite, inv, signupTenant, tenant, inviteRequired };
+  const preEnrolled = inv?.studentId
+    ? (db.users.find(u => u.id === inv.studentId && (u.tenantId || 'default') === signupTenant && !u.disabled) || null)
+    : null;
+  return { reqTenant, code, codeProvided, findValidInvite, inv, signupTenant, tenant, inviteRequired, preEnrolled };
 }
 
-function signupTenantBlockedReason(signupTenant, tenant) {
+function signupTenantBlockedReason(signupTenant, tenant, { allowExistingStudent = false } = {}) {
   if (!signupTenant || signupTenant === 'default') return null;
+  if (!tenant) {
+    return { status: 404, error: 'Academia ou unidade não encontrada.', code: 'tenant-not-found' };
+  }
   const access = getTenantAccessState(DATA, signupTenant);
   if (access.blocked) {
     return {
@@ -135,7 +150,7 @@ function signupTenantBlockedReason(signupTenant, tenant) {
     };
   }
   const maxStudents = tenant?.limits?.maxStudents;
-  if (maxStudents) {
+  if (maxStudents && !allowExistingStudent) {
     const activeStudents = db.users.filter(
       u => u.tenantId === signupTenant &&
         !u.admin &&
@@ -520,6 +535,7 @@ setInterval(() => {
   const wrappedYear = wrappedPushYear(new Date(Date.now()));
   for (const user of db.users) {
     if (user.disabled) continue;            // locked out everywhere, reminders included
+    if (user.tenantId && user.saasRole !== 'superadmin' && getTenantAccessState(DATA, user.tenantId).blocked) continue;
     if (!db.subs.some(s => s.userId === user.id)) continue;
     // One user's state file is one user's problem: a shape this tick cannot read is logged and
     // skipped, not allowed to take the process — and everyone else's reminders — down with it.
@@ -1075,6 +1091,8 @@ function audit(req, ev, f = {}) {
     if (f.name) rec.name = String(f.name).slice(0, 40);
   }
   if (f.target) { rec.tgt = f.target.id; rec.tname = String(f.target.name || '').slice(0, 40); }
+  const tid = f.tenantId || f.user?.tenantId || f.target?.tenantId || '';
+  if (tid && tid !== 'default') rec.tid = String(tid).slice(0, 64);
   if (f.msg) rec.msg = String(f.msg).slice(0, 120);
   // What a failed proof of ownership was guarding (proveOwner): 'email', 'passkey-add', …
   if (f.act) rec.act = String(f.act).slice(0, 40);
@@ -1553,13 +1571,15 @@ const passwordRoutes = {
     const name = text(body.name).trim().slice(0, 40);
     if (!name) return json(res, 400, { error: 'name required', code: 'missing' });
     const earlyCtx = resolveSignupContext(req, body.code);
-    if (earlyCtx.inviteRequired && addressPaused(req, res, 'signup')) return;
-    if (earlyCtx.inviteRequired && !earlyCtx.inv) {
+    if ((earlyCtx.inviteRequired || earlyCtx.codeProvided) && addressPaused(req, res, 'signup')) return;
+    if ((earlyCtx.inviteRequired || earlyCtx.codeProvided) && !earlyCtx.inv) {
       audit(req, 'auth.register.denied', { ok: false, name, msg: 'invite-rejected' });
       strikeAddress(req, 'signup');
       return json(res, 403, { error: 'a valid invite code is required', code: 'invite' });
     }
-    const earlyBlocked = signupTenantBlockedReason(earlyCtx.signupTenant, earlyCtx.tenant);
+    const earlyBlocked = signupTenantBlockedReason(earlyCtx.signupTenant, earlyCtx.tenant, {
+      allowExistingStudent: Boolean(earlyCtx.preEnrolled)
+    });
     if (earlyBlocked) {
       return json(res, earlyBlocked.status, { error: earlyBlocked.error, ...(earlyBlocked.code ? { code: earlyBlocked.code } : {}) });
     }
@@ -1569,7 +1589,7 @@ const passwordRoutes = {
     const nameIsAddress = name.includes('@');
     const earlyTenant = earlyCtx.signupTenant;
     if (nameIsAddress && addressPaused(req, res, 'email')) return;
-    if (!nameIsAddress && nameTaken(name, undefined, earlyTenant)) return taken();
+    if (!nameIsAddress && nameTaken(name, earlyCtx.preEnrolled?.id, earlyTenant)) return taken();
     const hasEmail = typeof body.email === 'string' && body.email.trim() !== '';
     const email = hasEmail ? normalizeEmail(body.email) : null;
     if (hasEmail && !email) return json(res, 400, EMAIL_ERRORS.invalid);
@@ -1588,19 +1608,61 @@ const passwordRoutes = {
       outcome = runInTransaction(getSqliteInstance(DATA), () => {
         const ctxAfter = resolveSignupContext(req, body.code);
         const inv = ctxAfter.inv;
-        if (ctxAfter.inviteRequired && !inv) {
+        if ((ctxAfter.inviteRequired || ctxAfter.codeProvided) && !inv) {
           return { kind: 'invite-invalid' };
         }
         const signupTenant = ctxAfter.signupTenant;
-        const blockedAfter = signupTenantBlockedReason(signupTenant, ctxAfter.tenant);
+        const preEnrolled = ctxAfter.preEnrolled;
+        const blockedAfter = signupTenantBlockedReason(signupTenant, ctxAfter.tenant, {
+          allowExistingStudent: Boolean(preEnrolled)
+        });
         if (blockedAfter) {
           return { kind: 'blocked', blockedAfter };
         }
-        if (nameTaken(name, undefined, signupTenant)) {
+        if (nameTaken(name, preEnrolled?.id, signupTenant)) {
           return { kind: 'name-taken' };
         }
-        if (email && emailTaken(email)) {
+        if (email && emailTaken(email, preEnrolled?.id)) {
           return { kind: 'email-taken' };
+        }
+
+        if (preEnrolled) {
+          const consumed = consumeInviteSqlite(DATA, inv.code, preEnrolled.id, created);
+          if (!consumed.ok) {
+            return { kind: 'invite-invalid' };
+          }
+          const prevName = preEnrolled.name;
+          const prevPw = preEnrolled.pw;
+          const prevEmail = preEnrolled.email;
+          const prevSv = preEnrolled.sv;
+          const prevInvitedBy = preEnrolled.invitedBy;
+          const prevOnboardedAt = preEnrolled.onboardedAt;
+
+          preEnrolled.name = name;
+          setPassword(preEnrolled, h);
+          if (email) preEnrolled.email = email;
+          preEnrolled.invitedBy = inv.code;
+          preEnrolled.onboardedAt = created;
+
+          try {
+            upsertUserSqlite(DATA, preEnrolled, null);
+          } catch (err) {
+            preEnrolled.name = prevName;
+            if (prevPw !== undefined) preEnrolled.pw = prevPw; else delete preEnrolled.pw;
+            if (prevEmail !== undefined) preEnrolled.email = prevEmail; else delete preEnrolled.email;
+            if (prevSv !== undefined) preEnrolled.sv = prevSv; else delete preEnrolled.sv;
+            if (prevInvitedBy !== undefined) preEnrolled.invitedBy = prevInvitedBy; else delete preEnrolled.invitedBy;
+            if (prevOnboardedAt !== undefined) preEnrolled.onboardedAt = prevOnboardedAt; else delete preEnrolled.onboardedAt;
+            if (isSqliteUniqueConstraintError(err)) {
+              throw Object.assign(new Error('conflict'), { conflictKind: email ? 'email-taken' : 'name-taken' });
+            }
+            throw err;
+          }
+
+          inv.usedBy = preEnrolled.id;
+          inv.usedAt = created;
+          saveDb();
+          return { kind: 'ok', user: preEnrolled, inv };
         }
 
         const user = {
@@ -1848,14 +1910,20 @@ const passwordRoutes = {
       // Single use dentro de BEGIN IMMEDIATE: uma segunda requisição paralela encontra o código já consumido.
       if (find() !== user) return 'invalid';
       if (nameTaken(user.name, user.id, userTenantOf(user))) return 'taken';
+      const prevPw = user.pw;
+      const prevPwReset = user.pwReset;
+      const prevSv = user.sv;
       setPassword(user, h);
-      ACCOUNT_FAILS.clear(acctKey(user));
       try {
         upsertUserSqlite(DATA, user, null);
       } catch (err) {
+        if (prevPw !== undefined) user.pw = prevPw; else delete user.pw;
+        if (prevPwReset !== undefined) user.pwReset = prevPwReset; else delete user.pwReset;
+        if (prevSv !== undefined) user.sv = prevSv; else delete user.sv;
         if (isSqliteUniqueConstraintError(err)) return 'taken';
         throw err;
       }
+      ACCOUNT_FAILS.clear(acctKey(user));
       saveDb();
       return 'ok';
     });
@@ -2418,21 +2486,25 @@ const routes = {
     const name = text(body.name).trim().slice(0, 40);
     if (!name) return json(res, 400, { error: 'name required' });
     const ctx = resolveSignupContext(req, body.code);
-    if (ctx.inviteRequired && !ctx.inv) {
+    if ((ctx.inviteRequired || ctx.codeProvided) && !ctx.inv) {
       audit(req, 'auth.register.denied', { ok: false, name, msg: 'invite-rejected' });
       return json(res, 403, { error: 'a valid invite code is required', code: 'invite' });
     }
-    const blocked = signupTenantBlockedReason(ctx.signupTenant, ctx.tenant);
+    const blocked = signupTenantBlockedReason(ctx.signupTenant, ctx.tenant, {
+      allowExistingStudent: Boolean(ctx.preEnrolled)
+    });
     if (blocked) {
       return json(res, blocked.status, { error: blocked.error, ...(blocked.code ? { code: blocked.code } : {}) });
     }
-    const uid = crypto.randomBytes(12).toString('base64url');
+    const uid = ctx.preEnrolled ? ctx.preEnrolled.id : crypto.randomBytes(12).toString('base64url');
     const options = await generateRegistrationOptions({
       rpName: RP_NAME, rpID: RP_ID,
       userID: Buffer.from(uid), userName: name, userDisplayName: name,
       attestationType: 'none',
       authenticatorSelection: { residentKey: 'required', userVerification: 'preferred' },
-      excludeCredentials: []
+      excludeCredentials: ctx.preEnrolled
+        ? db.creds.filter(x => x.userId === uid).map(x => ({ id: x.id, transports: x.transports || [] }))
+        : []
     });
     const cid = putChallenge({ kind: 'register', challenge: options.challenge, name, uid, code: ctx.code, tenantId: ctx.signupTenant });
     json(res, 200, { cid, options });
@@ -2475,19 +2547,63 @@ const routes = {
         const signupTenant = invite?.tenantId || (c.tenantId && c.tenantId !== 'default' ? c.tenantId : ctx.reqTenant);
         const tenant = signupTenant !== 'default' ? getTenant(DATA, signupTenant) : null;
         const inviteRequired = INVITE_ONLY || Boolean(tenant?.settings?.inviteOnly);
-        if (inviteRequired && !invite) {
+        if ((inviteRequired || ctx.codeProvided) && !invite) {
           return { kind: 'invite-invalid' };
         }
-        const blocked = signupTenantBlockedReason(signupTenant, tenant);
+        const preEnrolled = ctx.preEnrolled;
+        const blocked = signupTenantBlockedReason(signupTenant, tenant, {
+          allowExistingStudent: Boolean(preEnrolled)
+        });
         if (blocked) {
           return { kind: 'blocked', blocked };
         }
+
+        const nowIso = new Date().toISOString();
+        if (preEnrolled) {
+          const consumed = consumeInviteSqlite(DATA, invite.code, preEnrolled.id, nowIso);
+          if (!consumed.ok) {
+            return { kind: 'invite-invalid' };
+          }
+          const prevName = preEnrolled.name;
+          const prevInvitedBy = preEnrolled.invitedBy;
+          const prevOnboardedAt = preEnrolled.onboardedAt;
+
+          preEnrolled.name = c.name;
+          preEnrolled.invitedBy = invite.code;
+          preEnrolled.onboardedAt = nowIso;
+
+          const credRow = {
+            id: credential.id, userId: preEnrolled.id,
+            publicKey: Buffer.from(credential.publicKey).toString('base64url'),
+            counter: credential.counter || 0,
+            transports: transportsOf(body.credential?.response?.transports),
+            created: nowIso, lastUsed: nowIso
+          };
+          try {
+            upsertUserSqlite(DATA, preEnrolled, null);
+            upsertCredSqlite(DATA, credRow, null);
+          } catch (sqliteErr) {
+            preEnrolled.name = prevName;
+            if (prevInvitedBy !== undefined) preEnrolled.invitedBy = prevInvitedBy; else delete preEnrolled.invitedBy;
+            if (prevOnboardedAt !== undefined) preEnrolled.onboardedAt = prevOnboardedAt; else delete preEnrolled.onboardedAt;
+            if (isSqliteUniqueConstraintError(sqliteErr)) {
+              throw Object.assign(new Error('credential-exists'), { conflictKind: 'credential-exists' });
+            }
+            throw sqliteErr;
+          }
+          invite.usedBy = preEnrolled.id;
+          invite.usedAt = nowIso;
+          db.creds.push(credRow);
+          saveDb();
+          return { kind: 'ok', user: preEnrolled, invite };
+        }
+
         const user = {
-          id: c.uid, name: c.name, created: new Date().toISOString(),
+          id: c.uid, name: c.name, created: nowIso,
           ...(signupTenant !== 'default' ? { tenantId: signupTenant, saasRole: 'student', role: 'student' } : {})
         };
         if (invite) {
-          const consumed = consumeInviteSqlite(DATA, invite.code, user.id, user.created);
+          const consumed = consumeInviteSqlite(DATA, invite.code, user.id, nowIso);
           if (!consumed.ok) {
             return { kind: 'invite-invalid' };
           }
@@ -3333,9 +3449,23 @@ const routes = {
     sessionCookie,
     livePresence,
     removeAccount,
+    sendPush,
+    onUserDisabled: u => {
+      if (!u?.id) return;
+      presence.delete(u.id);
+      for (const [k, v] of pairings) if (v.uid === u.id) pairings.delete(k);
+      dropDeviceLinks(db, u.id);
+      dropWatchLinks(db, u.id);
+    },
     passwordAttempt,
     acctKey,
-    auditReader: limit => auditKeep(auditLines()).reverse().slice(0, limit),
+    auditReader: (limit = 100, tenantId = null) => {
+      const rows = auditKeep(auditLines()).reverse();
+      const cleanTid = tenantId ? String(tenantId) : null;
+      const filtered = cleanTid ? rows.filter(r => r && r.tid === cleanTid) : rows;
+      return filtered.slice(0, Math.max(1, Math.min(500, Number(limit) || 100)));
+    },
+    sendPushFn: sendPush,
     mediaStore: MEDIA_ON ? MEDIA : null,
     mediaConfigObj: MEDIA_ON ? { ...mediaConfig(MEDIA_LIMITS), quotaMB: TENANT_MEDIA_QUOTA_MB } : null,
     mediaBurst: MEDIA_BURST,
@@ -3399,18 +3529,35 @@ coachJobs.setProposalHook((uid, pending) => {
   });
 });
 integrations.start();
-startCadence({ users: () => db.users.filter(u => !u.disabled), userNow, skip: uid => !stateSummary(uid)?.consent });
+if (process.env.NODE_ENV !== 'test') {
+  setInterval(() => {
+    runAllTenantsEngagementTick({
+      dataDir: DATA,
+      db,
+      sendPushFn: sendPush
+    }).catch(() => {});
+  }, 15 * 60000).unref();
+}
+startCadence({
+  users: () => db.users.filter(u => !u.disabled && (!u.tenantId || u.saasRole === 'superadmin' || !getTenantAccessState(DATA, u.tenantId).blocked)),
+  userNow,
+  skip: uid => !stateSummary(uid)?.consent
+});
 startWarmup();
 if (process.env.SAAS_AUTO_SEED === '1') {
-  ensureSaasDemoSeed({
-    dataDir: DATA,
-    db,
-    saveDb,
-    stateOps: {
-      readState,
-      evictCache: uid => { stateCache.delete(uid); stateSummaries.delete(uid); }
-    }
-  }).catch(e => console.error('saas seed:', e.message));
+  try {
+    await ensureSaasDemoSeed({
+      dataDir: DATA,
+      db,
+      saveDb,
+      stateOps: {
+        readState,
+        evictCache: uid => { stateCache.delete(uid); stateSummaries.delete(uid); }
+      }
+    });
+  } catch (e) {
+    console.error('saas seed:', e.message);
+  }
 }
 
 // node's requestTimeout is one number for every route, and it is half an hour (below) for the

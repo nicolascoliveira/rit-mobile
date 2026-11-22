@@ -36,6 +36,8 @@ buildNpmPackage rec {
     # resolved relative to $out/lib/opengym-mcp/src, so they must sit at $out/lib/frontend/src/lib.
     mkdir -p $out/lib/frontend/src
     cp -r $frontendSrc/src/lib $out/lib/frontend/src/lib
+    mkdir -p $out/lib/api
+    cp ${./../../api/weigh-ins.js} $out/lib/api/weigh-ins.js
 
     mkdir -p $out/bin
     makeWrapper ${nodejs_22}/bin/node $out/bin/opengym-mcp \

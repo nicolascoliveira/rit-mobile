@@ -110,9 +110,19 @@ const POLICY_TRIGGERS = [
     sql: `CREATE TRIGGER IF NOT EXISTS trg_saas_invoices_protect_paid_status_upd
       BEFORE UPDATE ON saas_invoices
       FOR EACH ROW
-      WHEN OLD.status = 'paid' AND NEW.status != 'paid'
+      WHEN OLD.status = 'paid' AND NEW.status NOT IN ('paid', 'refunded', 'charged_back')
       BEGIN
         SELECT RAISE(ABORT, 'policy: cannot downgrade a paid invoice');
+      END;`
+  },
+  {
+    name: 'trg_saas_invoices_protect_refunded_status_upd',
+    sql: `CREATE TRIGGER IF NOT EXISTS trg_saas_invoices_protect_refunded_status_upd
+      BEFORE UPDATE ON saas_invoices
+      FOR EACH ROW
+      WHEN OLD.status IN ('refunded', 'charged_back') AND NEW.status != OLD.status
+      BEGIN
+        SELECT RAISE(ABORT, 'policy: cannot reopen a refunded or charged_back invoice');
       END;`
   },
   {
@@ -311,6 +321,7 @@ function normalizeTenantScopeInTx(inst) {
 
 function installPolicyTriggersInTx(db) {
   db.exec('DROP TRIGGER IF EXISTS trg_api_idempotency_immutable_tenant_upd;');
+  db.exec('DROP TRIGGER IF EXISTS trg_saas_invoices_protect_paid_status_upd;');
   for (const trg of POLICY_TRIGGERS) {
     db.exec(trg.sql);
   }

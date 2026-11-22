@@ -1,4 +1,5 @@
 import { getStoredToken, getTenantOverride, portalApi } from './api.js';
+import { isNativePortalApp, resolvePortalApiUrl } from './native.js';
 
 const MB = 1024 * 1024;
 const IMAGE_MAX_EDGE = 1600;
@@ -371,7 +372,35 @@ export function fetchGymMediaUrl(hash) {
     if (token) headers.Authorization = `Bearer ${token}`;
     if (tenantOverride) headers['X-Tenant-Id'] = tenantOverride;
 
-    const res = await fetch(`/api/gym/media/${hash}`, { headers, credentials: 'omit' });
+    const res = await fetch(resolvePortalApiUrl(`/api/gym/media/${hash}`), { headers, credentials: 'omit' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+  })().catch(() => {
+    mediaUrlCache.delete(cacheKey);
+    return '';
+  });
+
+  mediaUrlCache.set(cacheKey, p);
+  return p;
+}
+
+export function fetchStudentVideoUrl(studentId, hash) {
+  if (!studentId || !hash || !/^[0-9a-f]{64}$/.test(hash)) return Promise.resolve('');
+  const tenantKey = getTenantOverride() || 'self';
+  const cacheKey = `sv:${tenantKey}:${studentId}:${hash}`;
+  const existing = mediaUrlCache.get(cacheKey);
+  if (existing) return existing;
+
+  const p = (async () => {
+    const token = getStoredToken();
+    const tenantOverride = getTenantOverride();
+    const headers = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    if (tenantOverride) headers['X-Tenant-Id'] = tenantOverride;
+
+    const url = resolvePortalApiUrl(`/api/gym/student/video?studentId=${encodeURIComponent(studentId)}&hash=${encodeURIComponent(hash)}`);
+    const res = await fetch(url, { headers, credentials: isNativePortalApp() ? 'omit' : 'same-origin' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const blob = await res.blob();
     return URL.createObjectURL(blob);

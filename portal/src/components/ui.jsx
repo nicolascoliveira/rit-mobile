@@ -1,15 +1,32 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Icon from './Icon.jsx';
 import { subscribeToast } from '../lib/api.js';
 
-export function Button({ variant = 'primary', size, block = false, icon, trailingIcon, children, className = '', type = 'button', ...rest }) {
+export function Button({
+  variant = 'primary',
+  size,
+  block = false,
+  loading = false,
+  disabled = false,
+  icon,
+  trailingIcon,
+  children,
+  className = '',
+  type = 'button',
+  ...rest
+}) {
+  const isDisabled = Boolean(disabled || loading);
   return (
     <button
       type={type}
-      className={`btn ${variant}${size ? ' ' + size : ''}${block ? ' btn-block' : ''} ${className}`.trim()}
+      disabled={isDisabled}
+      aria-busy={loading || undefined}
+      className={`btn ${variant}${size ? ' ' + size : ''}${block ? ' btn-block' : ''}${loading ? ' is-loading' : ''} ${className}`.trim()}
       {...rest}
     >
-      {icon && <Icon name={icon} />}
+      {loading && <span className="b2b-btn-spinner" aria-hidden="true" />}
+      {!loading && icon && <Icon name={icon} />}
       {children != null && <span>{children}</span>}
       {trailingIcon && <Icon name={trailingIcon} />}
     </button>
@@ -109,17 +126,20 @@ export function SearchField({ value, onChange, placeholder = 'Buscar...', classN
   );
 }
 
-export function TextField({ label, hint, value, onChange, placeholder, type = 'text', required, disabled, className = '', ...rest }) {
+export function TextField({ label, hint, value, onChange, placeholder, type = 'text', required, disabled, className = '', id, ...rest }) {
+  const autoId = useId();
+  const fieldId = id || autoId;
   const [showPw, setShowPw] = useState(false);
   const isPw = type === 'password';
   const effectiveType = isPw ? (showPw ? 'text' : 'password') : type;
 
   return (
-    <label className={'b2b-field ' + className}>
+    <label className={'b2b-field ' + className} htmlFor={fieldId}>
       {label && <span className="b2b-field-lbl">{label}{required && <span className="b2b-req"> *</span>}</span>}
       {isPw ? (
         <div className="b2b-pw-wrap">
           <input
+            id={fieldId}
             type={effectiveType}
             className="field"
             value={value ?? ''}
@@ -136,15 +156,16 @@ export function TextField({ label, hint, value, onChange, placeholder, type = 't
               e.preventDefault();
               setShowPw(v => !v);
             }}
-            tabIndex={-1}
             title={showPw ? 'Ocultar senha' : 'Mostrar senha'}
             aria-label={showPw ? 'Ocultar senha' : 'Mostrar senha'}
+            aria-pressed={showPw}
           >
             <Icon name={showPw ? 'eyeSlash' : 'eye'} size={16} />
           </button>
         </div>
       ) : (
         <input
+          id={fieldId}
           type={type}
           className="field"
           value={value ?? ''}
@@ -247,14 +268,16 @@ export function ChipBar({ items, value, onChange, className = '' }) {
 export function StatusPill({ tone = 'muted', icon, children, className = '' }) {
   const cls = tone === 'ok' || tone === 'active'
     ? 'adm-pill ok'
-    : tone === 'warn' || tone === 'trial' || tone === 'warning'
-      ? 'adm-pill warn'
-      : tone === 'bad' || tone === 'danger' || tone === 'suspended' || tone === 'past_due' || tone === 'critical'
-        ? 'adm-pill bad'
-        : 'adm-pill';
+    : tone === 'accent' || tone === 'acc'
+      ? 'adm-pill acc'
+      : tone === 'warn' || tone === 'trial' || tone === 'warning'
+        ? 'adm-pill warn'
+        : tone === 'bad' || tone === 'danger' || tone === 'suspended' || tone === 'past_due' || tone === 'critical'
+          ? 'adm-pill bad'
+          : 'adm-pill';
   return (
     <span className={(cls + ' ' + className).trim()}>
-      {icon && <Icon name={icon} size={13} />}
+      {icon && <Icon name={icon} size={14} />}
       {children}
     </span>
   );
@@ -318,9 +341,14 @@ export function EmptyState({ icon = 'clipboard', title, message, action }) {
 }
 
 const activeModalStack = [];
+const MODAL_FOCUSABLE_SELECTOR = 'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
 
 export function Modal({ open, onClose, title, subtitle, size = 'md', zIndex, children, footer }) {
   const [depth, setDepth] = useState(0);
+  const titleId = useId();
+  const modalRef = useRef(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!open) return;
@@ -328,60 +356,127 @@ export function Modal({ open, onClose, title, subtitle, size = 'md', zIndex, chi
     activeModalStack.push(modalId);
     setDepth(Math.max(0, activeModalStack.length - 1));
 
+    const prevFocus = typeof document !== 'undefined' ? document.activeElement : null;
+
     // Bloqueia scroll do fundo enquanto houver ao menos 1 modal aberto
     if (activeModalStack.length === 1 && typeof document !== 'undefined') {
       document.body.style.overflow = 'hidden';
     }
 
+    const rafId = requestAnimationFrame(() => {
+      const box = modalRef.current;
+      if (!box || box.contains(document.activeElement)) return;
+      const first = box.querySelector(MODAL_FOCUSABLE_SELECTOR);
+      if (first && typeof first.focus === 'function') first.focus();
+      else box.focus();
+    });
+
     const onKey = e => {
+      if (activeModalStack[activeModalStack.length - 1] !== modalId) return;
       if (e.key === 'Escape') {
-        // Apenas o modal mais ao topo da pilha responde ao Escape
-        if (activeModalStack[activeModalStack.length - 1] === modalId) {
-          e.stopPropagation();
-          onClose?.();
+        e.stopPropagation();
+        onCloseRef.current?.();
+      } else if (e.key === 'Tab') {
+        const box = modalRef.current;
+        if (!box) return;
+        const focusables = Array.from(box.querySelectorAll(MODAL_FOCUSABLE_SELECTOR))
+          .filter(el => el.offsetParent !== null || el === document.activeElement);
+        if (focusables.length === 0) {
+          e.preventDefault();
+          box.focus();
+          return;
+        }
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        if (e.shiftKey) {
+          if (document.activeElement === first || !box.contains(document.activeElement) || document.activeElement === box) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else if (document.activeElement === last || !box.contains(document.activeElement)) {
+          e.preventDefault();
+          first.focus();
         }
       }
     };
     window.addEventListener('keydown', onKey);
 
     return () => {
+      cancelAnimationFrame(rafId);
       window.removeEventListener('keydown', onKey);
       const idx = activeModalStack.indexOf(modalId);
       if (idx !== -1) activeModalStack.splice(idx, 1);
       if (activeModalStack.length === 0 && typeof document !== 'undefined') {
         document.body.style.overflow = '';
       }
+      if (prevFocus && typeof prevFocus.focus === 'function' && document.contains(prevFocus)) {
+        prevFocus.focus();
+      }
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 
   const computedZ = zIndex !== undefined ? zIndex : 500 + depth * 60;
 
-  return (
+  const modalNode = (
     <div
       className="b2b-modal-backdrop"
       data-depth={depth}
       style={{ zIndex: computedZ }}
-      onClick={onClose}
+      onClick={() => onCloseRef.current?.()}
     >
       <div
+        ref={modalRef}
         className={`b2b-modal b2b-modal-${size}`}
         role="dialog"
         aria-modal="true"
+        aria-labelledby={title ? titleId : undefined}
+        tabIndex={-1}
         onClick={e => e.stopPropagation()}
       >
         <div className="b2b-modal-head">
           <div>
-            <h3>{title}</h3>
+            <h3 id={titleId}>{title}</h3>
             {subtitle && <p className="muted small" style={{ margin: '2px 0 0' }}>{subtitle}</p>}
           </div>
-          <button type="button" className="b2b-icon-btn" onClick={onClose} aria-label="Fechar">
+          <button type="button" className="b2b-icon-btn" onClick={() => onCloseRef.current?.()} aria-label="Fechar">
             <Icon name="xmark" size={18} />
           </button>
         </div>
         <div className="b2b-modal-body">{children}</div>
         {footer && <div className="b2b-modal-foot">{footer}</div>}
+      </div>
+    </div>
+  );
+
+  if (typeof document !== 'undefined' && document.body) {
+    return createPortal(modalNode, document.body);
+  }
+  return modalNode;
+}
+
+export function LoadingState({ label = 'Carregando...', cards = 4 }) {
+  return (
+    <div className="b2b-loading-state" role="status" aria-live="polite">
+      {cards > 0 && (
+        <div className="b2b-kpi-grid" aria-hidden="true">
+          {Array.from({ length: cards }).map((_, i) => (
+            <div key={i} className="b2b-skeleton-card">
+              <div className="b2b-skeleton b2b-skeleton-line sm" />
+              <div className="b2b-skeleton b2b-skeleton-line lg" />
+              <div className="b2b-skeleton b2b-skeleton-line md" />
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="card b2b-skeleton-panel">
+        <div className="b2b-loading-label">
+          <span className="b2b-btn-spinner" aria-hidden="true" />
+          <span>{label}</span>
+        </div>
+        <div className="b2b-skeleton b2b-skeleton-line full" aria-hidden="true" />
+        <div className="b2b-skeleton b2b-skeleton-line md" aria-hidden="true" />
       </div>
     </div>
   );

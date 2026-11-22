@@ -11,6 +11,7 @@ import { Button } from '../components/ui.jsx'
 import { askAddDeviceData } from '../sheets.jsx'
 import { normalizeServerUrl } from '../lib/remote.js'
 import { loadCfAccess, saveCfAccess } from '../lib/cf-access.js'
+import { openPortalNativeApp, rememberStudentNativeMode, RIT_STUDENT_SERVER } from '../lib/rit-native.js'
 import { useSheetKeyboard } from '../lib/use-sheet-keyboard.js'
 
 // A plain http:// server works (#428), but whatever the app sends, the pairing code and then its
@@ -141,17 +142,24 @@ export function ConnectSheet({ close, initialUrl = '', again = false }) {
 export default function MobileOnboarding() {
   const { chooseLocalMode } = useStore()
   const head = <>
-    <div style={{ fontSize: 54, display: 'flex', justifyContent: 'center', color: 'var(--acc-ink)' }}><Icon name="dumbbell" /></div>
-    <h1 className="t-large" style={{ fontWeight: 700, margin: '10px 0 4px' }}>openGym</h1>
+    <div style={{ display: 'flex', justifyContent: 'center' }}>
+      <img src="./rit-mark.png" alt="Rit" style={{ width: 64, height: 64, objectFit: 'contain' }} />
+    </div>
+    <h1 className="t-large" style={{ fontWeight: 700, margin: '10px 0 4px' }}>Rit</h1>
   </>
   const wrap = { display: 'flex', flexDirection: 'column', justifyContent: 'center', minHeight: '78vh', textAlign: 'center' }
   return (
     <div className="narrow" style={wrap}>
       {head}
       <div className="muted" style={{ marginBottom: 34 }}>{t('How do you want to use openGym?')}</div>
-      <Button variant="primary" icon="lock" onClick={() => chooseLocalMode()}>{t('Use on this device')}</Button>
+      <Button variant="primary" icon="lock" onClick={() => { rememberStudentNativeMode(); chooseLocalMode() }}>{t('Use on this device')}</Button>
       <div style={{ height: 10 }} />
-      <Button icon="cloud" onClick={() => useUI.getState().openSheet(close => <ConnectSheet close={close} />)}>{t('Connect to my server')}</Button>
+      <Button icon="cloud" onClick={() => {
+        rememberStudentNativeMode()
+        useUI.getState().openSheet(close => <ConnectSheet close={close} initialUrl={RIT_STUDENT_SERVER} />)
+      }}>{t('Connect to my server')}</Button>
+      <div style={{ height: 10 }} />
+      <Button icon="crown" onClick={() => openPortalNativeApp('/login')}>Rit Painel (Personal / Academia)</Button>
       <div className="dim small" style={{ marginTop: 26, lineHeight: 1.5 }}>
         {t('Local keeps everything on this phone. Connecting syncs to your own openGym server instead. You can switch later in Settings.')}
       </div>

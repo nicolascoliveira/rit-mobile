@@ -510,6 +510,8 @@ export async function buildStudentDossierPdfBytes({
   const workouts = Array.isArray(state.workouts) ? state.workouts : [];
   const bwList = Array.isArray(state.bw) ? state.bw : [];
   const records = Array.isArray(state.records) ? state.records : [];
+  const bodyComparison = state.bodyComparison || null;
+  const assessments = Array.isArray(state.assessments) ? state.assessments : [];
   const week = state.week || {};
 
   const gymName = branding.gymName || tenant.name || 'Rit Performance';
@@ -691,6 +693,85 @@ export async function buildStudentDossierPdfBytes({
       doc.cursorY += 38;
     }
     doc.cursorY += 6;
+  }
+
+  // --- COMPARATIVO ANTROPOMÉTRICO (ANTES VS. ATUAL) ---
+  const compMetricDefs = [
+    { key: 'weightKg', label: 'Peso Corporal', unit: 'kg' },
+    { key: 'bodyFat', label: '% Gordura Corporal', unit: '%' },
+    { key: 'leanMassKg', label: 'Massa Magra Estimada', unit: 'kg' },
+    { key: 'fatMassKg', label: 'Massa Gorda Estimada', unit: 'kg' },
+    { key: 'chest', label: 'Peitoral / Tórax', unit: 'cm' },
+    { key: 'waist', label: 'Cintura', unit: 'cm' },
+    { key: 'abdomen', label: 'Abdômen', unit: 'cm' },
+    { key: 'hips', label: 'Quadril', unit: 'cm' },
+    { key: 'upperArmRight', label: 'Braço Direito', unit: 'cm' },
+    { key: 'upperArmLeft', label: 'Braço Esquerdo', unit: 'cm' },
+    { key: 'thighRight', label: 'Coxa Direita', unit: 'cm' },
+    { key: 'thighLeft', label: 'Coxa Esquerda', unit: 'cm' },
+    { key: 'calfRight', label: 'Panturrilha Direita', unit: 'cm' }
+  ];
+  const compRows = bodyComparison
+    ? compMetricDefs
+        .filter(def => bodyComparison.before?.[def.key] != null || bodyComparison.current?.[def.key] != null)
+        .map(def => {
+          const bVal = bodyComparison.before?.[def.key];
+          const cVal = bodyComparison.current?.[def.key];
+          const dObj = bodyComparison.deltas?.[def.key];
+          const diffStr = dObj
+            ? `${Number(dObj.diff) > 0 ? '+' : ''}${dObj.diff} ${def.unit}`
+            : '—';
+          return {
+            label: def.label,
+            beforeStr: bVal != null ? `${bVal} ${def.unit}` : '—',
+            currentStr: cVal != null ? `${cVal} ${def.unit}` : '—',
+            diffStr
+          };
+        })
+    : [];
+  const latestAssess = assessments.length > 0 ? assessments[assessments.length - 1] : null;
+
+  if (compRows.length > 0 || latestAssess?.clinicalNotes) {
+    doc.ensureSpace(70);
+    const rangeTag = bodyComparison?.before?.d && bodyComparison?.current?.d && bodyComparison.before.d !== bodyComparison.current.d
+      ? ` (${fmtDateBR(bodyComparison.before.d)} -> ${fmtDateBR(bodyComparison.current.d)})`
+      : '';
+    drawSectionTitle(`Avaliação Física & Comparativo Antes vs. Atual${rangeTag}`);
+
+    if (compRows.length > 0) {
+      const drawCompHeader = () => {
+        const hy = doc.cursorY;
+        doc.rect(MARGIN_X, hy, CONTENT_W, 20, { fill: cardBg, stroke: borderCol });
+        doc.text('MEDIDA / INDICADOR', MARGIN_X + 8, hy + 6, { size: 7.5, bold: true, color: mutedText });
+        doc.text('INICIAL', MARGIN_X + 305, hy + 6, { size: 7.5, bold: true, color: mutedText, align: 'right' });
+        doc.text('ATUAL', MARGIN_X + 410, hy + 6, { size: 7.5, bold: true, color: mutedText, align: 'right' });
+        doc.text('EVOLUÇÃO', MARGIN_X + CONTENT_W - 8, hy + 6, { size: 7.5, bold: true, color: mutedText, align: 'right' });
+        doc.cursorY += 20;
+      };
+      drawCompHeader();
+      compRows.forEach((row, idx) => {
+        doc.ensureSpace(20, drawCompHeader);
+        const ry = doc.cursorY;
+        if (idx % 2 === 1) doc.rect(MARGIN_X, ry, CONTENT_W, 20, { fill: [0.99, 0.992, 0.995] });
+        doc.line(MARGIN_X, ry + 20, MARGIN_X + CONTENT_W, ry + 20, [0.94, 0.95, 0.96], 0.5);
+        doc.text(row.label, MARGIN_X + 8, ry + 5.5, { size: 8.8, bold: true, color: darkText });
+        doc.text(row.beforeStr, MARGIN_X + 305, ry + 5.5, { size: 8.8, color: mutedText, align: 'right' });
+        doc.text(row.currentStr, MARGIN_X + 410, ry + 5.5, { size: 8.8, bold: true, color: darkText, align: 'right' });
+        doc.text(row.diffStr, MARGIN_X + CONTENT_W - 8, ry + 5.5, { size: 8.8, bold: true, color: accentInkRgb, align: 'right' });
+        doc.cursorY += 20;
+      });
+      doc.cursorY += 10;
+    }
+
+    if (latestAssess?.clinicalNotes) {
+      const noteLines = wrapText(`Parecer técnico (${fmtDateBR(latestAssess.d)}): ${latestAssess.clinicalNotes}`, CONTENT_W - 18, 8.6);
+      const boxH = Math.max(28, noteLines.length * 12 + 12);
+      doc.ensureSpace(boxH + 8);
+      const ny = doc.cursorY;
+      doc.rect(MARGIN_X, ny, CONTENT_W, boxH, { fill: softTint, stroke: borderCol, radius: 5 });
+      doc.textLines(noteLines, MARGIN_X + 9, ny + 8, 12, { size: 8.6, color: subText });
+      doc.cursorY += boxH + 10;
+    }
   }
 
   // --- RECORDES PESSOAIS (PRs) ---

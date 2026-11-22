@@ -196,7 +196,13 @@ test('formatPrescribedRoutineWhatsAppMessage and notifyRoutinePrescribed notify 
     assert.equal(res.ok, true);
     assert.ok(sentPayload);
     assert.equal(sentPayload.number, '5511977776666');
-    assert.ok(sentPayload.text.includes('Treino Hipertrofia'));
+    assert.equal(sentPayload.mediatype, 'document');
+    assert.equal(sentPayload.mimetype, 'application/pdf');
+    assert.ok(sentPayload.fileName.endsWith('.pdf'));
+    assert.ok(sentPayload.caption.includes('Treino Hipertrofia'));
+    const pdfAscii = Buffer.from(sentPayload.media, 'base64').toString('latin1');
+    assert.ok(pdfAscii.startsWith('%PDF-1.4'));
+    assert.ok(pdfAscii.includes('Puxada Alta Aberta'));
   } finally {
     globalThis.fetch = originalFetch;
     fs.rmSync(tmpDir, { recursive: true, force: true });

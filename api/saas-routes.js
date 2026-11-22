@@ -29,6 +29,8 @@ import {
   saveSaasStore,
   isTenantSuspended,
   getTenantAccessState,
+  isPersonalPlan,
+  DomainError,
   DEFAULT_BRANDING
 } from './tenants.js';
 import {
@@ -70,9 +72,29 @@ import {
   readStudentState,
   saveStudentState,
   prescribeRoutineToStudent,
+  prescribeRoutinesBatchToStudent,
   removeStudentRoutine,
-  updateStudentWeekSchedule
+  updateStudentWeekSchedule,
+  normalizeBodyweightSeries,
+  computeBodyComparison,
+  recordStudentAssessment,
+  archiveStudentRoutines,
+  buildExerciseLoadHistory,
+  collectStudentFormVideos,
+  saveStudentVideoReview,
+  isMediaHashInStudentState
 } from './trainer.js';
+import {
+  prescriptionPush,
+  assessmentPush,
+  videoReviewPush,
+  weeklySummaryPush
+} from './push-messages.js';
+import {
+  computeStudentWeeklyStats,
+  evaluateTenantEngagement
+} from './engagement.js';
+import { MAX_STUDENT_IMPORT_ROWS, parseStudentImportRows } from './student-import.js';
 import {
   hashPassword,
   verifyPassword,
@@ -94,10 +116,17 @@ import {
   disconnectEvolutionInstance,
   fetchEvolutionInstances,
   dispatchWhatsAppWithRetry,
+  enqueueWhatsAppBatch,
   flushWhatsAppOutbox,
   getTenantWhatsAppOutbox,
   notifyRoutinePrescribed,
-  formatChurnRecoveryWhatsAppMessage
+  buildStudentInviteSignupUrl,
+  formatStudentWelcomeWhatsAppMessage,
+  notifyStudentWelcomeInvite,
+  formatChurnRecoveryWhatsAppMessage,
+  formatWeeklyCheckinWhatsAppMessage,
+  formatAssessmentSummaryWhatsAppMessage,
+  formatVideoReviewWhatsAppMessage
 } from './whatsapp.js';
 import {
   createPixPayment,
@@ -524,7 +553,10 @@ export function createSaasRoutes({
   stateOps = null,
   livePresence = null,
   removeAccount = null,
+  sendPush = null,
+  onUserDisabled = null,
   auditReader = null,
+  sendPushFn = null,
   passwordAttempt = null,
   acctKey = u => 'acct:' + u.id,
   mediaStore = null,
@@ -533,6 +565,24 @@ export function createSaasRoutes({
   mediaThrottleFn = null,
   sendMediaFileFn = null
 }) {
+  const recentPrescriptionPushByStudent = new Map();
+  const replyDomainError = (targetRes, err, fallbackStatus = 400, replyFn = json) => {
+    if (err instanceof DomainError || err?.name === 'DomainError') {
+      return replyFn(targetRes, err.httpStatus || fallbackStatus, {
+        error: err.message,
+        ...(err.code ? { code: err.code } : {})
+      });
+    }
+    if (isSqliteUniqueConstraintError(err)) {
+      return replyFn(targetRes, 409, { error: 'Registro duplicado no sistema.', code: 'conflict' });
+    }
+    const rawMsg = String(err?.message || '');
+    if (err?.code === 'ERR_SQLITE_ERROR' || /SQLITE_|policy:|no such table|syntax error|constraint failed/i.test(rawMsg)) {
+      console.error('[saas-route-error]', rawMsg);
+      return replyFn(targetRes, 500, { error: 'Erro interno ao processar operação.' });
+    }
+    return replyFn(targetRes, fallbackStatus, { error: rawMsg || 'Erro ao processar requisição.' });
+  };
   const B2B_PASSWORD_ERRORS = {
     'too-short': `A senha deve ter no mínimo ${MIN_LENGTH} caracteres.`,
     'too-long': `A senha deve ter no máximo ${MAX_LENGTH} caracteres.`,
@@ -774,6 +824,77 @@ export function createSaasRoutes({
     });
   };
 
+  const resolvePublicAppUrl = () => String(
+    process.env.PUBLIC_APP_URL || process.env.ORIGIN || 'https://app.treinerit.com.br'
+  ).trim().replace(/\/+$/, '');
+
+  const toStudentDto = u => ({
+    id: u.id,
+    name: u.name,
+    email: u.email || '',
+    phone: u.phone || '',
+    goal: u.goal || '',
+    tenantId: u.tenantId,
+    inviteCode: u.inviteCode || null,
+    welcomeWhatsapp: u.welcomeWhatsapp || null,
+    onboardedAt: u.onboardedAt || null
+  });
+
+  const issueStudentInvite = ({
+    tenantId,
+    student,
+    createdBy = null,
+    reusePending = false
+  }) => {
+    db.invites = db.invites || [];
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+    const pendingForStudent = db.invites.filter(
+      i => i && i.tenantId === tenantId && i.studentId === student.id && !i.usedBy && !i.revoked
+    );
+
+    if (reusePending) {
+      const reusable = pendingForStudent.find(i => !i.expiresAt || Date.parse(i.expiresAt) > nowMs);
+      if (reusable) {
+        for (const extra of pendingForStudent) {
+          if (extra.code !== reusable.code) {
+            extra.revoked = true;
+            extra.revokedAt = nowIso;
+            if (hasSqliteDir) upsertInviteSqlite(dataDir, extra, null);
+          }
+        }
+        student.inviteCode = reusable.code;
+        return reusable;
+      }
+    }
+
+    for (const oldInv of pendingForStudent) {
+      oldInv.revoked = true;
+      oldInv.revokedAt = nowIso;
+      if (hasSqliteDir) upsertInviteSqlite(dataDir, oldInv, null);
+    }
+
+    let gen;
+    do {
+      gen = crypto.randomBytes(4).toString('hex').toUpperCase();
+    } while (db.invites.some(i => i.code === gen));
+
+    const created = {
+      code: gen,
+      note: `Matrícula: ${String(student.name || '').slice(0, 45)}`,
+      tenantId,
+      studentId: student.id,
+      studentName: student.name,
+      createdBy,
+      created: nowIso,
+      expiresAt: new Date(nowMs + 30 * 86400000).toISOString()
+    };
+    if (hasSqliteDir) upsertInviteSqlite(dataDir, created, null);
+    db.invites.push(created);
+    student.inviteCode = gen;
+    return created;
+  };
+
   const isSuperAdmin = u => {
     if (!u) return false;
     if (u.saasRole === 'superadmin') return true;
@@ -827,6 +948,18 @@ export function createSaasRoutes({
     return { ok: true, assignedTrainerId: staff.id };
   };
 
+  const isTrainerPortfolioRestricted = ctx => Boolean(
+    ctx?.tenant?.settings?.restrictTrainerToAssigned
+    && !ctx?.superUser
+    && !isGymManagerOrOwner(ctx?.user)
+  );
+
+  const filterStudentsByPortfolio = (ctx, list) => (
+    isTrainerPortfolioRestricted(ctx)
+      ? list.filter(s => s.assignedTrainerId === ctx.user?.id)
+      : list
+  );
+
   const requireTenantStudent = (req, res, ctx, studentId, auditTag = 'student-target') => {
     const target = db.users.find(
       u => u.id === studentId && (ctx.superUser && ctx.tenantId === 'default' ? true : u.tenantId === ctx.tenantId)
@@ -838,6 +971,11 @@ export function createSaasRoutes({
     if (!isStudentAccount(target)) {
       audit(req, 'gym.denied', { ok: false, user: ctx.user, target, msg: `${auditTag}-on-non-student` });
       json(res, 403, { error: 'Operação permitida apenas para contas de aluno.', code: 'non-student-target' });
+      return null;
+    }
+    if (isTrainerPortfolioRestricted(ctx) && target.assignedTrainerId !== ctx.user?.id) {
+      audit(req, 'gym.denied', { ok: false, user: ctx.user, target, msg: `${auditTag}:trainer-scope-restricted` });
+      json(res, 403, { error: 'Acesso restrito aos alunos da sua carteira neste modo de equipe.', code: 'trainer-scope-restricted' });
       return null;
     }
     return target;
@@ -919,6 +1057,21 @@ export function createSaasRoutes({
       stateStorageDir
     };
   };
+
+  async function sendStudentWhatsApp(ctx, student, { phone, kind, dedupKey, message }) {
+    const evolution = resolveTenantEvolutionSettings(dataDir, ctx.tenantId);
+    const result = await dispatchWhatsAppWithRetry({
+      dataDir,
+      tenantId: ctx.tenantId,
+      tenantSettings: { ...(ctx.tenant?.settings || {}), ...evolution },
+      recipientName: student.name,
+      phone,
+      kind,
+      dedupKey,
+      message
+    });
+    return { ...result, sent: Boolean(result.ok && !result.skipped) };
+  }
 
   return {
     /* =====================================================================
@@ -1085,6 +1238,15 @@ export function createSaasRoutes({
         const plan = plans.find(p => p.id === targetPlanId);
         if (!plan) {
           return replyJson(res, 400, { error: 'Plano selecionado inválido.', code: 'invalid-plan' });
+        }
+        if (rawAccountType && requestedPlanRaw) {
+          const planAccountType = isPersonalPlan(plan) ? 'personal' : 'gym';
+          if (planAccountType !== accountType) {
+            return replyJson(res, 422, {
+              error: 'O plano selecionado não é compatível com o tipo de conta escolhido.',
+              code: 'plan-account-type-mismatch'
+            });
+          }
         }
 
         const gymName = String(body?.gymName || body?.name || body?.businessName || '').trim();
@@ -1855,7 +2017,7 @@ export function createSaasRoutes({
           if (e?.httpStatus === 409 || isSqliteUniqueConstraintError(e)) {
             return replyJson(res, 409, { error: 'Já existe um usuário com este e-mail ou nome de acesso no sistema' });
           }
-          replyJson(res, 400, { error: e.message });
+          replyDomainError(res, e, 400, replyJson);
         }
       }
     ),
@@ -1871,7 +2033,7 @@ export function createSaasRoutes({
         audit(req, 'saas.tenant.update', { user: admin, msg: id });
         json(res, 200, { ok: true, tenant: updated });
       } catch (e) {
-        json(res, 400, { error: e.message });
+        replyDomainError(res, e, 400, json);
       }
     },
 
@@ -1888,7 +2050,7 @@ export function createSaasRoutes({
         audit(req, 'saas.tenant.status', { user: admin, msg: `${id} -> ${status}` });
         json(res, 200, { ok: true, tenant: updated });
       } catch (e) {
-        json(res, 400, { error: e.message });
+        replyDomainError(res, e, 400, json);
       }
     },
 
@@ -1962,7 +2124,7 @@ export function createSaasRoutes({
           audit(req, 'saas.tenant.invoice', { user: admin, msg: `${tenantId} R$${invoice.amount}` });
           replyJson(res, 200, { ok: true, invoice, tenant: getTenant(dataDir, tenantId) });
         } catch (e) {
-          replyJson(res, 400, { error: e.message });
+          replyDomainError(res, e, 400, replyJson);
         }
       }
     ),
@@ -1987,7 +2149,7 @@ export function createSaasRoutes({
         audit(req, 'saas.tenant.delete', { user: admin, msg: id });
         json(res, 200, { ok: true });
       } catch (e) {
-        json(res, 400, { error: e.message });
+        replyDomainError(res, e, 400, json);
       }
     },
 
@@ -2006,7 +2168,7 @@ export function createSaasRoutes({
         audit(req, 'saas.plan.update', { user: admin, msg: plan.id });
         json(res, 200, { ok: true, plan, plans: listSaasPlans(dataDir) });
       } catch (e) {
-        json(res, 400, { error: e.message });
+        replyDomainError(res, e, 400, json);
       }
     },
 
@@ -2251,6 +2413,29 @@ export function createSaasRoutes({
             }
             const planId = requestedPlanId || String(tenant.planId || 'starter').trim();
             const plan = plans.find(p => p.id === planId) || plans.find(p => p.id === 'starter') || plans[0];
+
+            const activeStudents = db.users.filter(
+              u => u.tenantId === tenant.id && isStudentAccount(u) && !u.disabled
+            ).length;
+            const activeTrainers = db.users.filter(
+              u => u.tenantId === tenant.id && !isSuperAdmin(u) && (u.saasRole === 'trainer' || u.saasRole === 'gym_manager' || u.saasRole === 'gym_owner' || u.role === 'trainer') && !u.disabled
+            ).length;
+            const effectiveMaxStudents = plan.id === tenant.planId && tenant.limits?.maxStudents
+              ? Number(tenant.limits.maxStudents)
+              : Number(plan.maxStudents || 0);
+            const effectiveMaxTrainers = plan.id === tenant.planId && tenant.limits?.maxTrainers
+              ? Number(tenant.limits.maxTrainers)
+              : Number(plan.maxTrainers || 0);
+            if ((effectiveMaxStudents > 0 && activeStudents > effectiveMaxStudents) || (effectiveMaxTrainers > 0 && activeTrainers > effectiveMaxTrainers)) {
+              return replyJson(res, 422, {
+                error: `Seu plano selecionado (${plan.name}) comporta até ${effectiveMaxStudents} alunos ativos e ${effectiveMaxTrainers} profissionais, mas você possui ${activeStudents} alunos e ${activeTrainers} profissionais ativos.`,
+                code: 'plan-capacity-exceeded',
+                activeStudents,
+                activeTrainers,
+                maxStudents: effectiveMaxStudents,
+                maxTrainers: effectiveMaxTrainers
+              });
+            }
 
             const cycle = body?.cycle === 'annual' ? 'annual' : 'monthly';
             const monthlyRate = Number(cycle === 'annual' ? (plan.priceAnnualMonthly || plan.priceMonthly) : plan.priceMonthly);
@@ -2666,30 +2851,28 @@ export function createSaasRoutes({
       if (!ctx) return;
 
       const churnThreshold = ctx.tenant?.settings?.churnDaysThreshold || 5;
+      const sp = new URL(req.url || '', 'http://x').searchParams;
+      const qCycle = Number(sp.get('routineCycleDays'));
+      const routineCycleDays = Number.isFinite(qCycle) && qCycle >= 7 && qCycle <= 365
+        ? Math.round(qCycle)
+        : Number(ctx.tenant?.settings?.routineCycleDays || 30);
       const nowMs = Date.now();
       const todayIso = new Date(nowMs).toISOString().slice(0, 10);
       const sevenDaysAgo = new Date(nowMs - 7 * 86400000).toISOString().slice(0, 10);
       const thirtyDaysAgo = new Date(nowMs - 30 * 86400000).toISOString().slice(0, 10);
 
-      const students = listStudents(db, ctx.stateStorageDir, {
+      const allTenantStudents = listStudents(db, ctx.stateStorageDir, {
         tenantId: ctx.tenantId,
         includeDisabled: true,
         churnDaysThreshold: churnThreshold,
+        routineCycleDays,
+        includeWorkoutDates: true,
         stateOps,
         livePresence,
         nowMs
       });
+      const rawStudents = filterStudentsByPortfolio(ctx, allTenantStudents);
 
-      const activeStudents = students.filter(s => !s.disabled);
-      const active7d = activeStudents.filter(s => s.workoutsLast7d > 0);
-      const withoutRoutine = activeStudents.filter(s => s.routineCount === 0);
-      const liveNow = activeStudents.filter(s => s.trainingNow).map(s => ({
-        id: s.id,
-        name: s.name,
-        ...s.trainingNow
-      }));
-
-      // Coleta todos os treinos realizados na unidade para estatísticas de frequência
       const dailyCounts = new Map();
       for (let i = 13; i >= 0; i--) {
         const dIso = new Date(nowMs - i * 86400000).toISOString().slice(0, 10);
@@ -2700,39 +2883,94 @@ export function createSaasRoutes({
       let workoutsWeek = 0;
       let workoutsMonth = 0;
 
-      for (const s of activeStudents) {
-        const st = readStudentState(ctx.stateStorageDir, s.id, stateOps);
-        const ws = Array.isArray(st?.workouts) ? st.workouts : [];
-        for (const w of ws) {
-          if (!w?.d) continue;
-          if (w.d === todayIso) workoutsToday++;
-          if (w.d >= sevenDaysAgo) workoutsWeek++;
-          if (w.d >= thirtyDaysAgo) {
+      for (const s of rawStudents) {
+        if (s.disabled) continue;
+        for (const wDate of (s._workoutDates || [])) {
+          if (!wDate) continue;
+          if (wDate === todayIso) workoutsToday++;
+          if (wDate >= sevenDaysAgo) workoutsWeek++;
+          if (wDate >= thirtyDaysAgo) {
             workoutsMonth++;
-            const wd = new Date(w.d + 'T12:00:00Z').getUTCDay();
+            const wd = new Date(wDate + 'T12:00:00Z').getUTCDay();
             if (wd >= 0 && wd <= 6) weekdayCounts[wd]++;
           }
-          if (dailyCounts.has(w.d)) {
-            dailyCounts.set(w.d, dailyCounts.get(w.d) + 1);
+          if (dailyCounts.has(wDate)) {
+            dailyCounts.set(wDate, dailyCounts.get(wDate) + 1);
           }
         }
       }
+
+      const students = rawStudents.map(({ _workoutDates, ...rest }) => rest);
+      const activeStudents = students.filter(s => !s.disabled);
+      const active7d = activeStudents.filter(s => s.workoutsLast7d > 0);
+      const withoutRoutine = activeStudents.filter(s => s.routineStatus === 'missing');
+      const expiringRoutines = activeStudents
+        .filter(s => s.routineStatus === 'expired' || s.routineStatus === 'expiring_soon')
+        .sort((a, b) => (a.daysUntilRoutineExpiry ?? 999) - (b.daysUntilRoutineExpiry ?? 999));
+      const pendingOnboarding = activeStudents.filter(s => s.onboardingPending);
+      const liveNow = activeStudents.filter(s => s.trainingNow).map(s => ({
+        id: s.id,
+        name: s.name,
+        assignedTrainerId: s.assignedTrainerId || null,
+        ...s.trainingNow
+      }));
 
       const churnAlerts = activeStudents
         .filter(s => s.churnStatus === 'critical' || s.churnStatus === 'warning')
         .sort((a, b) => (b.daysInactive ?? 999) - (a.daysInactive ?? 999));
 
-      const team = db.users
-        .filter(u => u.tenantId === ctx.tenantId && (u.saasRole === 'gym_owner' || u.saasRole === 'gym_manager' || u.saasRole === 'trainer' || u.role === 'trainer'))
-        .map(u => ({
-          id: u.id,
-          name: u.name,
-          email: u.email || '',
-          saasRole: u.saasRole || 'trainer',
-          disabled: Boolean(u.disabled)
-        }));
+      const inactiveStudents = activeStudents
+        .filter(s => (s.daysInactive !== null && s.daysInactive > 7) || s.churnStatus === 'critical' || s.churnStatus === 'warning')
+        .sort((a, b) => (b.daysInactive ?? 999) - (a.daysInactive ?? 999));
+
+      const consistentStudents = activeStudents
+        .filter(s => s.weeklyGoalHit || s.workoutsLast7d >= 3)
+        .sort((a, b) => b.workoutsLast7d - a.workoutsLast7d);
+
+      const recentFeedbacks = [];
+      for (const s of activeStudents) {
+        for (const fb of (s.recentFeedbacks || [])) {
+          recentFeedbacks.push({
+            studentId: s.id,
+            studentName: s.name,
+            studentPhone: s.phone || '',
+            assignedTrainerId: s.assignedTrainerId || null,
+            ...fb
+          });
+        }
+      }
+      recentFeedbacks.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+
+      const plannedWeeklySessions = activeStudents.reduce((acc, s) => acc + Number(s.plannedWeeklyDays || 0), 0);
+      const weeklyCompletionPct = plannedWeeklySessions > 0
+        ? Math.min(100, Math.round((workoutsWeek / plannedWeeklySessions) * 100))
+        : 0;
+      const routinesUpToDateCount = activeStudents.filter(s => s.routineStatus === 'up_to_date').length;
+      const routinesPendingCount = activeStudents.length - routinesUpToDateCount;
+
+      const staff = db.users.filter(
+        u => u.tenantId === ctx.tenantId && (u.saasRole === 'gym_owner' || u.saasRole === 'gym_manager' || u.saasRole === 'trainer' || u.role === 'trainer')
+      );
+      const team = staff.map(u => ({
+        id: u.id,
+        name: u.name,
+        email: u.email || '',
+        phone: u.phone || '',
+        cref: u.cref || '',
+        specialty: u.specialty || '',
+        saasRole: u.saasRole || 'trainer',
+        disabled: Boolean(u.disabled),
+        created: u.created || null,
+        assignedStudents: students.filter(st => st.assignedTrainerId === u.id).length
+      }));
 
       const templates = loadTemplates(ctx.tenantDir, { seedIfMissing: true });
+      const invites = (db.invites || [])
+        .filter(i => i.tenantId === ctx.tenantId)
+        .map(i => ({
+          ...i,
+          usedByName: i.usedBy ? (db.users.find(u => u.id === i.usedBy)?.name || null) : null
+        }));
 
       const rawTenant = ctx.tenant || {
         id: ctx.tenantId,
@@ -2740,28 +2978,75 @@ export function createSaasRoutes({
         status: 'active',
         planName: 'Academia Completa',
         branding: loadTenantBranding(ctx.tenantDir),
-        settings: { churnDaysThreshold: churnThreshold, inviteOnly: false, allowGuest: false },
+        settings: { churnDaysThreshold: churnThreshold, routineCycleDays, inviteOnly: false, allowGuest: false },
         limits: { maxStudents: 100000, maxTrainers: 100000 }
       };
       const overviewTenant = sanitizeTenantForRole(rawTenant, ctx.superUser || isGymManagerOrOwner(ctx.user));
 
+      const pendingVideoStudents = activeStudents
+        .filter(s => (Number(s.pendingVideoReviewsCount) || 0) > 0)
+        .map(s => ({
+          id: s.id,
+          name: s.name,
+          assignedTrainerId: s.assignedTrainerId || null,
+          pendingVideoReviewsCount: Number(s.pendingVideoReviewsCount) || 0,
+          lastWorkoutDate: s.lastWorkoutDate || null
+        }));
+      const pendingVideoReviewsCount = pendingVideoStudents.reduce((acc, s) => acc + s.pendingVideoReviewsCount, 0);
+
       json(res, 200, {
         ok: true,
         tenant: overviewTenant,
+        restrictedToPortfolio: isTrainerPortfolioRestricted(ctx),
         kpis: {
           totalStudents: activeStudents.length,
           disabledStudents: students.length - activeStudents.length,
           activeStudents7d: active7d.length,
           atRiskCount: churnAlerts.length,
           withoutRoutineCount: withoutRoutine.length,
+          expiringRoutineCount: expiringRoutines.length,
+          onboardingPendingCount: pendingOnboarding.length,
+          pendingVideoReviewsCount,
           liveNowCount: liveNow.length,
           workoutsToday,
           workoutsWeek,
           workoutsMonth,
           trainerCount: team.length,
           templateCount: templates.length,
-          churnDaysThreshold: churnThreshold
+          churnDaysThreshold: churnThreshold,
+          routineCycleDays
         },
+        copilot: {
+          priorityQueue: {
+            withoutRoutine: withoutRoutine.slice(0, 30),
+            expiringRoutines: expiringRoutines.slice(0, 30),
+            pendingOnboarding: pendingOnboarding.slice(0, 30),
+            pendingVideoReviews: pendingVideoStudents.slice(0, 30)
+          },
+          retentionRadar: {
+            inactiveStudents: inactiveStudents.slice(0, 30),
+            consistentStudents: consistentStudents.slice(0, 20)
+          },
+          recentFeedbacks: recentFeedbacks.slice(0, 15),
+          pedagogicalKpis: {
+            activeStudentsCount: activeStudents.length,
+            trainedLast7dCount: active7d.length,
+            liveNowCount: liveNow.length,
+            plannedWeeklySessions,
+            completedWeeklySessions: workoutsWeek,
+            weeklyCompletionPct,
+            routinesUpToDateCount,
+            routinesPendingCount,
+            withoutRoutineCount: withoutRoutine.length,
+            expiringRoutineCount: expiringRoutines.length,
+            onboardingPendingCount: pendingOnboarding.length
+          }
+        },
+        students,
+        templates,
+        team,
+        maxTrainers: overviewTenant?.limits?.maxTrainers || 10,
+        invites,
         liveNow,
         churnAlerts: churnAlerts.slice(0, 30),
         dailyWorkouts: [...dailyCounts.entries()].map(([date, count]) => ({ date, count })),
@@ -2780,14 +3065,25 @@ export function createSaasRoutes({
     'GET /api/gym/students': async (req, res) => {
       const ctx = requireGymContext(req, res);
       if (!ctx) return;
-      const students = listStudents(db, ctx.stateStorageDir, {
+      const sp = new URL(req.url || '', 'http://x').searchParams;
+      const qCycle = Number(sp.get('routineCycleDays'));
+      const routineCycleDays = Number.isFinite(qCycle) && qCycle >= 7 && qCycle <= 365
+        ? Math.round(qCycle)
+        : Number(ctx.tenant?.settings?.routineCycleDays || 30);
+      const rawList = listStudents(db, ctx.stateStorageDir, {
         tenantId: ctx.tenantId,
         includeDisabled: true,
         churnDaysThreshold: ctx.tenant?.settings?.churnDaysThreshold || 5,
+        routineCycleDays,
         stateOps,
         livePresence
       });
-      json(res, 200, { ok: true, students });
+      const students = filterStudentsByPortfolio(ctx, rawList);
+      json(res, 200, {
+        ok: true,
+        students,
+        restrictedToPortfolio: isTrainerPortfolioRestricted(ctx)
+      });
     },
 
     'GET /api/gym/student': async (req, res) => {
@@ -2852,6 +3148,13 @@ export function createSaasRoutes({
         .sort((a, b) => b.weight - a.weight)
         .slice(0, 20);
 
+      const unifiedBw = normalizeBodyweightSeries(state);
+      const bodyComparison = computeBodyComparison(state);
+      const exerciseSeries = buildExerciseLoadHistory(state, id => byId.get(id)?.name || null).exercises;
+      const formVideos = collectStudentFormVideos(state, id => byId.get(id)?.name || null, 40);
+      const routineArchive = (Array.isArray(state.routineArchive) ? state.routineArchive : []).slice(-30).reverse();
+      const weeklyStats = computeStudentWeeklyStats(state);
+
       json(res, 200, {
         ok: true,
         student: {
@@ -2864,147 +3167,347 @@ export function createSaasRoutes({
           assignedTrainerId: target.assignedTrainerId || null,
           disabled: Boolean(target.disabled),
           created: target.created || null,
-          hasPassword: Boolean(target.pw?.h)
+          hasPassword: Boolean(target.pw?.h),
+          inviteCode: target.inviteCode || null,
+          welcomeWhatsapp: target.welcomeWhatsapp || null,
+          onboardedAt: target.onboardedAt || null
         },
         state: {
           routines: enrichedRoutines,
           week: state.week || {},
           workouts: enrichedWorkouts,
-          bw: (state.bw || []).slice(-20),
+          bw: unifiedBw.slice(-60),
           records,
-          measurements: Array.isArray(state.measurements) ? state.measurements.slice(-15) : []
+          measurements: Array.isArray(state.measurements) ? state.measurements.slice(-30) : [],
+          assessments: Array.isArray(state.assessments) ? state.assessments.slice(-30) : [],
+          bodyComparison,
+          routineArchive,
+          exerciseSeries,
+          formVideos,
+          weeklyStats
         }
       });
     },
 
-    'POST /api/gym/students': async (req, res) => {
+    'POST /api/gym/students': (req, res) => withIdempotency(
+      req,
+      res,
+      {
+        routeKey: 'POST /api/gym/students',
+        authFn: (rq, rs) => {
+          const c = requireGymContext(rq, rs);
+          if (!c) return null;
+          return { ...c, id: c.user?.id || c.tenantId || 'staff' };
+        }
+      },
+      async ({ actor: ctx, body, replyJson }) => {
+        const name = String(body?.name || '').trim().slice(0, 60);
+        if (!name) return replyJson(res, 400, { error: 'O nome do aluno é obrigatório' });
+
+        const email = body?.email ? normalizeEmail(body.email) : null;
+        if (body?.email && !email) return replyJson(res, 400, { error: 'E-mail do aluno inválido' });
+
+        const suppliedStuPw = body?.password !== undefined && String(body.password).trim() !== ''
+          ? String(body.password)
+          : null;
+        if (suppliedStuPw !== null) {
+          const pwErr = b2bPasswordError(suppliedStuPw, name);
+          if (pwErr) return replyJson(res, 400, pwErr);
+        }
+        const rawPassword = suppliedStuPw || generateTempPassword();
+
+        // Pre-check rápido antes de gastar CPU com hash
+        const maxStudents = ctx.tenant?.limits?.maxStudents || 99999;
+        if (email && db.users.some(u => u.email === email)) {
+          return replyJson(res, 409, { error: 'Já existe um usuário cadastrado com este e-mail' });
+        }
+        const rawAssigned = body?.assignedTrainerId;
+        let resolvedAssignedTrainerId = isActiveTenantStaff(ctx.user, ctx.tenantId) ? ctx.user.id : null;
+        if (isTrainerPortfolioRestricted(ctx)) {
+          resolvedAssignedTrainerId = ctx.user.id;
+        } else if (rawAssigned !== undefined && rawAssigned !== null && !(typeof rawAssigned === 'string' && rawAssigned.trim() === '')) {
+          const trainerCheck = validateAssignedTrainer(rawAssigned, ctx.tenantId);
+          if (!trainerCheck.ok) {
+            if (trainerCheck.crossTenant) {
+              audit(req, 'gym.denied', { ok: false, user: ctx.user, target: trainerCheck.staff, msg: 'cross-tenant-assigned-trainer' });
+            }
+            return replyJson(res, 400, { error: trainerCheck.error, code: trainerCheck.code });
+          }
+          resolvedAssignedTrainerId = trainerCheck.assignedTrainerId;
+        }
+        const foldedName = nameKey(name);
+
+        const h = await hashPassword(rawPassword);
+        const nowIso = new Date().toISOString();
+        const phoneRaw = String(body?.phone || '').trim().slice(0, 30);
+        const student = {
+          id: 'u_st_' + crypto.randomBytes(8).toString('base64url'),
+          name,
+          ...(email ? { email } : {}),
+          phone: phoneRaw,
+          goal: String(body?.goal || '').trim().slice(0, 80),
+          notes: String(body?.notes || '').trim().slice(0, 300),
+          assignedTrainerId: resolvedAssignedTrainerId,
+          tenantId: ctx.tenantId,
+          saasRole: 'student',
+          role: 'student',
+          created: nowIso,
+          pw: { h, set: nowIso }
+        };
+
+        const publicAppUrl = resolvePublicAppUrl();
+        let createdInvite;
+        let signupUrl;
+
+        try {
+          const mut = runDbMutation(() => {
+            const freshTenant = getTenant(dataDir, ctx.tenantId) || ctx.tenant;
+            const limit = freshTenant?.limits?.maxStudents || maxStudents;
+            const activeCount = db.users.filter(
+              u => u.tenantId === ctx.tenantId && isStudentAccount(u) && !u.disabled
+            ).length;
+            if (activeCount >= limit) {
+              const err = new Error(`Limite do plano atingido (${limit} alunos ativos). Faça upgrade do plano da academia.`);
+              err.httpStatus = 403;
+              err.code = 'plan-limit';
+              throw err;
+            }
+            if (resolvedAssignedTrainerId) {
+              const freshTrainerCheck = validateAssignedTrainer(resolvedAssignedTrainerId, ctx.tenantId, db.users);
+              if (!freshTrainerCheck.ok) {
+                const err = new Error(freshTrainerCheck.error);
+                err.httpStatus = 400;
+                err.code = freshTrainerCheck.code;
+                throw err;
+              }
+            }
+            if (email && db.users.some(u => u.email === email)) {
+              const err = new Error('Já existe um usuário cadastrado com este e-mail');
+              err.httpStatus = 409;
+              throw err;
+            }
+            if (!email && db.users.some(u => (u.tenantId || 'default') === ctx.tenantId && u.pw?.h && nameKey(u.name) === foldedName)) {
+              const err = new Error('Já existe um aluno homônimo nesta unidade. Informe o e-mail de login (ou sobrenome) para evitar conflito de acesso.');
+              err.httpStatus = 409;
+              throw err;
+            }
+            const inv = issueStudentInvite({
+              tenantId: ctx.tenantId,
+              student,
+              createdBy: ctx.user.id,
+              reusePending: true
+            });
+            const url = buildStudentInviteSignupUrl({
+              appUrl: publicAppUrl,
+              tenantId: ctx.tenantId,
+              inviteCode: inv.code
+            });
+            const cleanPh = cleanWhatsAppPhone(student.phone);
+            student.welcomeWhatsapp = {
+              status: !cleanPh || body?.sendWelcome === false ? 'skipped' : 'pending',
+              sent: false,
+              queued: false,
+              outboxId: null,
+              error: !cleanPh && student.phone ? 'Telefone inválido para WhatsApp' : null,
+              inviteCode: inv.code,
+              signupUrl: url,
+              updatedAt: nowIso
+            };
+            if (hasSqliteDir) upsertUserSqlite(dataDir, student, null);
+            db.users.push(student);
+            saveDb();
+            return { inv, url };
+          });
+          createdInvite = mut.inv;
+          signupUrl = mut.url;
+        } catch (err) {
+          if (err?.httpStatus) return replyJson(res, err.httpStatus, { error: err.message, ...(err.code ? { code: err.code } : {}) });
+          if (isSqliteUniqueConstraintError(err)) {
+            return replyJson(res, 409, {
+              error: email
+                ? 'Já existe um usuário cadastrado com este e-mail ou nome de acesso'
+                : 'Já existe um aluno homônimo nesta unidade. Informe o e-mail de login (ou sobrenome) para evitar conflito de acesso.'
+            });
+          }
+          throw err;
+        }
+
+        // Se foi selecionado um modelo de ficha inicial na matrícula, já prescreve automaticamente!
+        if (body?.initialTemplateId) {
+          const templates = loadTemplates(ctx.tenantDir, { seedIfMissing: true });
+          const tpl = templates.find(t => t.id === body.initialTemplateId);
+          if (tpl) {
+            prescribeRoutineToStudent(ctx.stateStorageDir, student.id, {
+              routine: tpl,
+              days: Array.isArray(tpl.suggestedDays) && tpl.suggestedDays.length ? tpl.suggestedDays : [1, 3, 5],
+              trainerUser: ctx.user
+            }, stateOps);
+          }
+        }
+
+        // Disparo isolado da saudação com link de cadastro e código de convite no WhatsApp
+        // Nunca faz rollback da matrícula em caso de queda ou indisponibilidade da Evolution API.
+        const cleanStuPhone = cleanWhatsAppPhone(student.phone);
+        if (cleanStuPhone && body?.sendWelcome !== false) {
+          try {
+            const waPromise = notifyStudentWelcomeInvite({
+              dataDir,
+              tenantId: ctx.tenantId,
+              student,
+              inviteCode: createdInvite.code,
+              signupUrl,
+              trainerUser: ctx.user,
+              tenant: ctx.tenant,
+              appUrl: publicAppUrl
+            });
+            if (body?.awaitWelcome === false) {
+              waPromise
+                .then(waRes => {
+                  try {
+                    runDbMutation(() => {
+                      student.welcomeWhatsapp = {
+                        status: waRes?.status || 'failed',
+                        sent: Boolean(waRes?.ok && !waRes?.skipped),
+                        queued: Boolean(waRes?.queued),
+                        outboxId: waRes?.id || null,
+                        error: waRes?.error || waRes?.reason || null,
+                        inviteCode: createdInvite.code,
+                        signupUrl,
+                        updatedAt: new Date().toISOString()
+                      };
+                      if (hasSqliteDir) upsertUserSqlite(dataDir, student, null);
+                      saveDb();
+                    });
+                  } catch { /* ignore */ }
+                })
+                .catch(() => { });
+            } else {
+              const waRes = await waPromise;
+              runDbMutation(() => {
+                student.welcomeWhatsapp = {
+                  status: waRes?.status || 'failed',
+                  sent: Boolean(waRes?.ok && !waRes?.skipped),
+                  queued: Boolean(waRes?.queued),
+                  outboxId: waRes?.id || null,
+                  error: waRes?.error || waRes?.reason || null,
+                  inviteCode: createdInvite.code,
+                  signupUrl,
+                  updatedAt: new Date().toISOString()
+                };
+                if (hasSqliteDir) upsertUserSqlite(dataDir, student, null);
+                saveDb();
+              });
+            }
+          } catch (waErr) {
+            try {
+              runDbMutation(() => {
+                student.welcomeWhatsapp = {
+                  status: 'failed',
+                  sent: false,
+                  queued: false,
+                  outboxId: null,
+                  error: waErr?.message || 'Falha ao enviar mensagem de boas-vindas',
+                  inviteCode: createdInvite.code,
+                  signupUrl,
+                  updatedAt: new Date().toISOString()
+                };
+                if (hasSqliteDir) upsertUserSqlite(dataDir, student, null);
+                saveDb();
+              });
+            } catch { /* ignore */ }
+          }
+        }
+
+        audit(req, 'gym.student.create', { user: ctx.user, target: student, msg: ctx.tenantId });
+        replyJson(res, 201, {
+          ok: true,
+          student: toStudentDto(student),
+          initialPassword: rawPassword,
+          invite: {
+            code: createdInvite.code,
+            url: signupUrl,
+            expiresAt: createdInvite.expiresAt
+          },
+          whatsapp: student.welcomeWhatsapp
+        });
+      }
+    ),
+
+    'POST /api/gym/students/welcome-resend': async (req, res) => {
       const ctx = requireGymContext(req, res);
       if (!ctx) return;
       const body = await readBody(req);
-      const name = String(body?.name || '').trim().slice(0, 60);
-      if (!name) return json(res, 400, { error: 'O nome do aluno é obrigatório' });
+      const studentId = String(body?.studentId || '').trim();
+      if (!studentId) return json(res, 400, { error: 'studentId é obrigatório' });
 
-      const email = body?.email ? normalizeEmail(body.email) : null;
-      if (body?.email && !email) return json(res, 400, { error: 'E-mail do aluno inválido' });
+      const target = requireTenantStudent(req, res, ctx, studentId, 'student-welcome-resend');
+      if (!target) return;
 
-      const suppliedStuPw = body?.password !== undefined && String(body.password).trim() !== ''
-        ? String(body.password)
-        : null;
-      if (suppliedStuPw !== null) {
-        const pwErr = b2bPasswordError(suppliedStuPw, name);
-        if (pwErr) return json(res, 400, pwErr);
+      const cleanStuPhone = cleanWhatsAppPhone(target.phone);
+      if (!cleanStuPhone) {
+        return json(res, 400, { error: 'Aluno sem número de WhatsApp válido cadastrado' });
       }
-      const rawPassword = suppliedStuPw || generateTempPassword();
 
-      // Pre-check rápido antes de gastar CPU com hash
-      const maxStudents = ctx.tenant?.limits?.maxStudents || 99999;
-      if (email && db.users.some(u => u.email === email)) {
-        return json(res, 409, { error: 'Já existe um usuário cadastrado com este e-mail' });
-      }
-      const rawAssigned = body?.assignedTrainerId;
-      let resolvedAssignedTrainerId = isActiveTenantStaff(ctx.user, ctx.tenantId) ? ctx.user.id : null;
-      if (rawAssigned !== undefined && rawAssigned !== null && !(typeof rawAssigned === 'string' && rawAssigned.trim() === '')) {
-        const trainerCheck = validateAssignedTrainer(rawAssigned, ctx.tenantId);
-        if (!trainerCheck.ok) {
-          if (trainerCheck.crossTenant) {
-            audit(req, 'gym.denied', { ok: false, user: ctx.user, target: trainerCheck.staff, msg: 'cross-tenant-assigned-trainer' });
-          }
-          return json(res, 400, { error: trainerCheck.error, code: trainerCheck.code });
-        }
-        resolvedAssignedTrainerId = trainerCheck.assignedTrainerId;
-      }
-      const foldedName = nameKey(name);
+      const publicAppUrl = resolvePublicAppUrl();
+      const { inv, url } = runDbMutation(() => {
+        const nextInv = issueStudentInvite({
+          tenantId: ctx.tenantId,
+          student: target,
+          createdBy: ctx.user.id,
+          reusePending: !body?.regenerateInvite
+        });
+        const builtUrl = buildStudentInviteSignupUrl({
+          appUrl: publicAppUrl,
+          tenantId: ctx.tenantId,
+          inviteCode: nextInv.code
+        });
+        if (hasSqliteDir) upsertUserSqlite(dataDir, target, null);
+        saveDb();
+        return { inv: nextInv, url: builtUrl };
+      });
 
-      const h = await hashPassword(rawPassword);
-      const nowIso = new Date().toISOString();
-      const student = {
-        id: 'u_st_' + crypto.randomBytes(8).toString('base64url'),
-        name,
-        ...(email ? { email } : {}),
-        phone: String(body?.phone || '').trim().slice(0, 30),
-        goal: String(body?.goal || '').trim().slice(0, 80),
-        notes: String(body?.notes || '').trim().slice(0, 300),
-        assignedTrainerId: resolvedAssignedTrainerId,
-        tenantId: ctx.tenantId,
-        saasRole: 'student',
-        role: 'student',
-        created: nowIso,
-        pw: { h, set: nowIso }
-      };
-
+      let waRes;
       try {
-        runDbMutation(() => {
-          const freshTenant = getTenant(dataDir, ctx.tenantId) || ctx.tenant;
-          const limit = freshTenant?.limits?.maxStudents || maxStudents;
-          const activeCount = db.users.filter(
-            u => u.tenantId === ctx.tenantId && isStudentAccount(u) && !u.disabled
-          ).length;
-          if (activeCount >= limit) {
-            const err = new Error(`Limite do plano atingido (${limit} alunos ativos). Faça upgrade do plano da academia.`);
-            err.httpStatus = 403;
-            err.code = 'plan-limit';
-            throw err;
-          }
-          if (resolvedAssignedTrainerId) {
-            const freshTrainerCheck = validateAssignedTrainer(resolvedAssignedTrainerId, ctx.tenantId, db.users);
-            if (!freshTrainerCheck.ok) {
-              const err = new Error(freshTrainerCheck.error);
-              err.httpStatus = 400;
-              err.code = freshTrainerCheck.code;
-              throw err;
-            }
-          }
-          if (email && db.users.some(u => u.email === email)) {
-            const err = new Error('Já existe um usuário cadastrado com este e-mail');
-            err.httpStatus = 409;
-            throw err;
-          }
-          if (!email && db.users.some(u => (u.tenantId || 'default') === ctx.tenantId && u.pw?.h && nameKey(u.name) === foldedName)) {
-            const err = new Error('Já existe um aluno homônimo nesta unidade. Informe o e-mail de login (ou sobrenome) para evitar conflito de acesso.');
-            err.httpStatus = 409;
-            throw err;
-          }
-          if (hasSqliteDir) upsertUserSqlite(dataDir, student, null);
-          db.users.push(student);
-          saveDb();
+        waRes = await notifyStudentWelcomeInvite({
+          dataDir,
+          tenantId: ctx.tenantId,
+          student: target,
+          inviteCode: inv.code,
+          signupUrl: url,
+          trainerUser: ctx.user,
+          tenant: ctx.tenant,
+          appUrl: publicAppUrl,
+          force: true
         });
       } catch (err) {
-        if (err?.httpStatus) return json(res, err.httpStatus, { error: err.message, ...(err.code ? { code: err.code } : {}) });
-        if (isSqliteUniqueConstraintError(err)) {
-          return json(res, 409, {
-            error: email
-              ? 'Já existe um usuário cadastrado com este e-mail ou nome de acesso'
-              : 'Já existe um aluno homônimo nesta unidade. Informe o e-mail de login (ou sobrenome) para evitar conflito de acesso.'
-          });
-        }
-        throw err;
+        waRes = {
+          ok: false,
+          queued: false,
+          status: 'failed',
+          error: err?.message || 'Falha no reenvio pelo WhatsApp'
+        };
       }
 
-      // Se foi selecionado um modelo de ficha inicial na matrícula, já prescreve automaticamente!
-      if (body?.initialTemplateId) {
-        const templates = loadTemplates(ctx.tenantDir, { seedIfMissing: true });
-        const tpl = templates.find(t => t.id === body.initialTemplateId);
-        if (tpl) {
-          prescribeRoutineToStudent(ctx.stateStorageDir, student.id, {
-            routine: tpl,
-            days: Array.isArray(tpl.suggestedDays) && tpl.suggestedDays.length ? tpl.suggestedDays : [1, 3, 5],
-            trainerUser: ctx.user
-          }, stateOps);
-        }
-      }
+      runDbMutation(() => {
+        target.welcomeWhatsapp = {
+          status: waRes?.status || 'failed',
+          sent: Boolean(waRes?.ok && !waRes?.skipped),
+          queued: Boolean(waRes?.queued),
+          outboxId: waRes?.id || null,
+          error: waRes?.error || waRes?.reason || null,
+          inviteCode: inv.code,
+          signupUrl: url,
+          updatedAt: new Date().toISOString()
+        };
+        if (hasSqliteDir) upsertUserSqlite(dataDir, target, null);
+        saveDb();
+      });
 
-      audit(req, 'gym.student.create', { user: ctx.user, target: student, msg: ctx.tenantId });
-      json(res, 201, {
+      audit(req, 'gym.student.welcome_resend', { user: ctx.user, target, msg: inv.code });
+      json(res, 200, {
         ok: true,
-        student: {
-          id: student.id,
-          name: student.name,
-          email: student.email || '',
-          phone: student.phone,
-          goal: student.goal,
-          tenantId: student.tenantId
-        },
-        initialPassword: rawPassword
+        invite: { code: inv.code, url, expiresAt: inv.expiresAt },
+        whatsapp: target.welcomeWhatsapp
       });
     },
 
@@ -3027,6 +3530,16 @@ export function createSaasRoutes({
               error: 'Contas de professores ou gestores devem ser gerenciadas pela aba Equipe.'
             };
           }
+          if (isTrainerPortfolioRestricted(ctx) && found.assignedTrainerId !== ctx.user?.id) {
+            return {
+              errorStatus: 403,
+              denied: true,
+              found,
+              denyMsg: 'student-update:trainer-scope-restricted',
+              code: 'trainer-scope-restricted',
+              error: 'Acesso restrito aos alunos da sua carteira neste modo de equipe.'
+            };
+          }
           if (body.email !== undefined && body.email) {
             const norm = normalizeEmail(body.email);
             if (!norm) return { errorStatus: 400, error: 'E-mail inválido' };
@@ -3036,7 +3549,7 @@ export function createSaasRoutes({
           }
 
           let nextAssignedTrainerId;
-          if (body.assignedTrainerId !== undefined) {
+          if (body.assignedTrainerId !== undefined && !isTrainerPortfolioRestricted(ctx)) {
             const trainerCheck = validateAssignedTrainer(body.assignedTrainerId, ctx.tenantId, db.users);
             if (!trainerCheck.ok) {
               return {
@@ -3073,14 +3586,29 @@ export function createSaasRoutes({
           if (body.phone !== undefined) found.phone = String(body.phone).trim().slice(0, 30);
           if (body.goal !== undefined) found.goal = String(body.goal).trim().slice(0, 80);
           if (body.notes !== undefined) found.notes = String(body.notes).trim().slice(0, 300);
-          if (body.assignedTrainerId !== undefined) found.assignedTrainerId = nextAssignedTrainerId;
+          if (body.assignedTrainerId !== undefined && nextAssignedTrainerId !== undefined) {
+            found.assignedTrainerId = nextAssignedTrainerId;
+          }
           if (body.email !== undefined) {
             if (!body.email) delete found.email;
             else found.email = normalizeEmail(body.email);
           }
           if (typeof body.disabled === 'boolean') {
-            found.disabled = body.disabled;
-            if (!body.disabled) delete found.disabled;
+            if (body.disabled) {
+              if (!found.disabled) found.sv = (Number(found.sv) || 0) + 1;
+              found.disabled = true;
+              delete found.pwReset;
+              const nowRevIso = new Date().toISOString();
+              for (const inv of (db.invites || [])) {
+                if (inv && inv.tenantId === ctx.tenantId && inv.studentId === found.id && !inv.usedBy && !inv.revoked) {
+                  inv.revoked = true;
+                  inv.revokedAt = nowRevIso;
+                  if (hasSqliteDir) upsertInviteSqlite(dataDir, inv, null);
+                }
+              }
+            } else {
+              delete found.disabled;
+            }
           }
 
           try {
@@ -3089,10 +3617,12 @@ export function createSaasRoutes({
             Object.assign(found, prev);
             if (!('email' in prev)) delete found.email;
             if (!('disabled' in prev)) delete found.disabled;
+            if (!('sv' in prev)) delete found.sv;
+            if (!('pwReset' in prev)) delete found.pwReset;
             throw sqliteErr;
           }
           saveDb();
-          return { found };
+          return { found, justDisabled: body.disabled === true };
         });
       } catch (err) {
         if (isSqliteUniqueConstraintError(err)) {
@@ -3109,6 +3639,9 @@ export function createSaasRoutes({
           error: target.error,
           ...(target.code ? { code: target.code } : {})
         });
+      }
+      if (target.justDisabled && onUserDisabled) {
+        try { onUserDisabled(target.found); } catch { /* ignore */ }
       }
 
       audit(req, 'gym.student.update', { user: ctx.user, target: target.found });
@@ -3350,8 +3883,13 @@ export function createSaasRoutes({
             target.saasRole = body.saasRole;
           }
           if (typeof body.disabled === 'boolean' && target.saasRole !== 'gym_owner') {
-            target.disabled = body.disabled;
-            if (!body.disabled) delete target.disabled;
+            if (body.disabled) {
+              if (!target.disabled) target.sv = (Number(target.sv) || 0) + 1;
+              target.disabled = true;
+              delete target.pwReset;
+            } else {
+              delete target.disabled;
+            }
           }
           if (hashedPw) {
             target.pw = { h: hashedPw, set: new Date().toISOString() };
@@ -3363,10 +3901,12 @@ export function createSaasRoutes({
           } catch (sqliteErr) {
             Object.assign(target, prev);
             if (!('disabled' in prev)) delete target.disabled;
+            if (!('sv' in prev)) delete target.sv;
+            if (!('pwReset' in prev)) delete target.pwReset;
             throw sqliteErr;
           }
           saveDb();
-          return { target };
+          return { target, justDisabled: body.disabled === true && target.saasRole !== 'gym_owner' };
         });
       } catch (err) {
         if (isSqliteUniqueConstraintError(err)) {
@@ -3383,6 +3923,9 @@ export function createSaasRoutes({
           error: outcome.error,
           ...(outcome.code ? { code: outcome.code } : {})
         });
+      }
+      if (outcome.justDisabled && onUserDisabled) {
+        try { onUserDisabled(outcome.target); } catch { /* ignore */ }
       }
 
       audit(req, 'gym.team.update', { user: ctx.user, target: outcome.target });
@@ -3419,43 +3962,141 @@ export function createSaasRoutes({
     },
 
     /* ---------- Prescrição de Treinos & Agenda Semanal ---------- */
-    'POST /api/gym/prescribe': async (req, res) => {
-      const ctx = requireGymContext(req, res);
-      if (!ctx) return;
-      const body = await readBody(req);
-      const { studentId, routine, day, days, replaceSchedule } = body || {};
+    'POST /api/gym/prescribe': (req, res) => withIdempotency(
+      req,
+      res,
+      {
+        routeKey: 'POST /api/gym/prescribe',
+        authFn: (rq, rs) => {
+          const c = requireGymContext(rq, rs);
+          if (!c) return null;
+          return { ...c, id: c.user?.id || c.tenantId || 'staff' };
+        }
+      },
+      async ({ actor: ctx, body, replyJson }) => {
+        const { studentId, routine, routines, day, days, replaceSchedule, archivePrevious, replaceAll } = body || {};
+        const hasBatch = Array.isArray(routines) && routines.length > 0;
 
-      if (!studentId || !routine || !routine.name || !Array.isArray(routine.ex)) {
-        return json(res, 400, { error: 'Informe o aluno, o nome da ficha e ao menos um exercício' });
+        if (!studentId || (!hasBatch && (!routine || !routine.name || !Array.isArray(routine.ex)))) {
+          return replyJson(res, 400, { error: 'Informe o aluno, o nome da ficha e ao menos um exercício' });
+        }
+
+        if (hasBatch) {
+          for (const item of routines) {
+            const rItem = item?.routine || item;
+            if (!rItem || !String(rItem.name || '').trim() || !Array.isArray(rItem.ex)) {
+              return replyJson(res, 400, { error: 'Todas as fichas do lote precisam ter nome e lista de exercícios válidos' });
+            }
+          }
+        }
+
+        const target = requireTenantStudent(req, res, ctx, studentId, 'prescribe');
+        if (!target) return;
+
+        let prescribedList = [];
+        let prescriptionNotice = null;
+        if (hasBatch) {
+          const batchRes = prescribeRoutinesBatchToStudent(ctx.stateStorageDir, studentId, {
+            routines,
+            archivePrevious: Boolean(archivePrevious),
+            replaceAll: Boolean(replaceAll),
+            trainerUser: ctx.user
+          }, stateOps);
+          prescribedList = batchRes.routines || [];
+          prescriptionNotice = batchRes.prescriptionNotice || null;
+        } else {
+          const single = prescribeRoutineToStudent(ctx.stateStorageDir, studentId, {
+            routine,
+            day,
+            days,
+            replaceSchedule: Boolean(replaceSchedule),
+            archivePrevious: Boolean(archivePrevious),
+            trainerUser: ctx.user
+          }, stateOps);
+          prescribedList = [single];
+          prescriptionNotice = readStudentState(ctx.stateStorageDir, studentId, stateOps)?.prescriptionNotice || null;
+        }
+
+        const lastPrescribed = prescribedList[prescribedList.length - 1] || null;
+        let waResult = { skipped: true };
+        let pushSent = false;
+
+        if (body?.notifyWhatsApp !== false && prescribedList.length > 0) {
+          const fullState = readStudentState(ctx.stateStorageDir, studentId, stateOps) || { routines: prescribedList, week: {} };
+          const allPrescribed = Array.isArray(fullState.routines)
+            ? fullState.routines.filter(r => r?.prescribedBy)
+            : [];
+          const routinesToNotify = allPrescribed.length > 0 ? allPrescribed : prescribedList;
+
+          const pushDigest = crypto
+            .createHash('sha256')
+            .update(JSON.stringify(routinesToNotify.map(r => ({
+              id: r.id,
+              name: r.name,
+              ex: (r.ex || []).map(e => [e.id, e.sets, e.reps, e.weight, e.restSec, e.note || '']),
+              days: Object.entries(fullState.week || {}).filter(([, ids]) => [].concat(ids || []).includes(r.id)).map(([d]) => d)
+            }))))
+            .digest('hex');
+
+          if (typeof sendPush === 'function') {
+            const pushKey = `${ctx.tenantId}:${studentId}`;
+            const nowPush = Date.now();
+            const prevPush = recentPrescriptionPushByStudent.get(pushKey);
+            const isRecentDupPush = prevPush && prevPush.hash === pushDigest && (nowPush - prevPush.at) < 10 * 60 * 1000;
+            if (!isRecentDupPush) {
+              if (recentPrescriptionPushByStudent.size > 5000) recentPrescriptionPushByStudent.clear();
+              recentPrescriptionPushByStudent.set(pushKey, { hash: pushDigest, at: nowPush });
+              const pushPayload = prescriptionPush(fullState.lang || 'pt-BR', {
+                trainerName: ctx.user?.name || '',
+                tenantName: ctx.tenant?.name || '',
+                routines: routinesToNotify
+              });
+              pushSent = true;
+              try {
+                Promise.resolve(sendPush(studentId, pushPayload)).catch(() => { });
+              } catch { /* ignore */ }
+            }
+          }
+
+          if (target?.phone) {
+            const waPromise = notifyRoutinePrescribed({
+              dataDir,
+              tenantId: ctx.tenantId,
+              student: target,
+              routines: routinesToNotify,
+              week: fullState.week || {},
+              trainerUser: ctx.user,
+              tenant: ctx.tenant
+            });
+            if (body?.awaitNotify) {
+              waResult = await waPromise.catch(err => ({ ok: false, error: err?.message }));
+            } else {
+              waPromise.catch(() => { });
+            }
+          }
+        }
+
+        const auditMsg = prescribedList.map(r => r.name).join(', ').slice(0, 120);
+        audit(req, 'gym.prescribe', { user: ctx.user, target, msg: auditMsg });
+        replyJson(res, 200, {
+          ok: true,
+          routine: lastPrescribed,
+          routines: prescribedList,
+          prescriptionNotice,
+          pushSent,
+          ...(body?.awaitNotify ? {
+            whatsapp: {
+              sent: Boolean(waResult?.ok && !waResult?.skipped),
+              queued: Boolean(waResult?.queued),
+              deduplicated: Boolean(waResult?.deduplicated),
+              partCount: waResult?.partCount || 0,
+              pdfFileName: waResult?.pdfFileName || null,
+              messages: waResult?.messages || []
+            }
+          } : {})
+        });
       }
-
-      const target = requireTenantStudent(req, res, ctx, studentId, 'prescribe');
-      if (!target) return;
-
-      const prescribed = prescribeRoutineToStudent(ctx.stateStorageDir, studentId, {
-        routine,
-        day,
-        days,
-        replaceSchedule: Boolean(replaceSchedule),
-        trainerUser: ctx.user
-      }, stateOps);
-
-      // Notifica o aluno via WhatsApp sobre a nova ficha prescrita (em background, sem bloquear)
-      if (target?.phone && body?.notifyWhatsApp !== false) {
-        notifyRoutinePrescribed({
-          dataDir,
-          tenantId: ctx.tenantId,
-          student: target,
-          routine: prescribed,
-          days: Array.isArray(days) ? days : (day !== undefined ? [day] : []),
-          trainerUser: ctx.user,
-          tenant: ctx.tenant
-        }).catch(() => { });
-      }
-
-      audit(req, 'gym.prescribe', { user: ctx.user, target, msg: prescribed.name });
-      json(res, 200, { ok: true, routine: prescribed });
-    },
+    ),
 
     'POST /api/gym/student/routine/delete': async (req, res) => {
       const ctx = requireGymContext(req, res);
@@ -3665,6 +4306,34 @@ export function createSaasRoutes({
       });
     },
 
+    'GET /api/invite/preview': async (req, res) => {
+      const sp = new URL(req.url || '', 'http://x').searchParams;
+      const code = String(sp.get('code') || '').trim().toUpperCase();
+      if (!code || code.length > 64) {
+        return json(res, 400, { ok: false, code: 'invite', error: 'Código de convite inválido.' });
+      }
+      const nowMs = Date.now();
+      const inv = (db.invites || []).find(
+        i => i && i.code === code && !i.usedBy && !i.revoked && (!i.expiresAt || Date.parse(i.expiresAt) > nowMs)
+      );
+      if (!inv) {
+        return json(res, 404, { ok: false, code: 'invite', error: 'Convite inválido, expirado ou já utilizado.' });
+      }
+      const invTenantId = inv.tenantId && inv.tenantId !== 'default' ? inv.tenantId : 'default';
+      const tenant = invTenantId !== 'default' ? getTenant(dataDir, invTenantId) : null;
+      const linkedStudent = inv.studentId
+        ? db.users.find(u => u.id === inv.studentId && (u.tenantId || 'default') === invTenantId && !u.disabled)
+        : null;
+      json(res, 200, {
+        ok: true,
+        code: inv.code,
+        tenantId: invTenantId,
+        tenantName: tenant?.name || null,
+        studentName: linkedStudent?.name || inv.studentName || null,
+        hasPreEnrolledStudent: Boolean(linkedStudent)
+      });
+    },
+
     'POST /api/gym/invites': async (req, res) => {
       const ctx = requireGymContext(req, res);
       if (!ctx) return;
@@ -3676,8 +4345,9 @@ export function createSaasRoutes({
           const activeStudents = db.users.filter(
             u => u.tenantId === ctx.tenantId && isStudentAccount(u) && !u.disabled
           ).length;
+          // Convites já vinculados a um aluno pré-cadastrado (i.studentId) não consomem vaga extra.
           const pendingInvites = (db.invites || []).filter(
-            i => i.tenantId === ctx.tenantId && !i.usedBy && !i.revoked
+            i => i.tenantId === ctx.tenantId && !i.usedBy && !i.revoked && !i.studentId
           ).length;
           if (activeStudents >= limit || activeStudents + pendingInvites >= limit) {
             return {
@@ -3846,12 +4516,12 @@ export function createSaasRoutes({
       const body = await readBody(req);
       const requestedIds = Array.isArray(body?.studentIds) ? new Set(body.studentIds) : null;
 
-      const allStudents = listStudents(db, ctx.stateStorageDir, {
+      const allStudents = filterStudentsByPortfolio(ctx, listStudents(db, ctx.stateStorageDir, {
         tenantId: ctx.tenantId,
         churnDaysThreshold: ctx.tenant?.settings?.churnDaysThreshold || 5,
         stateOps,
         livePresence
-      });
+      }));
 
       const targets = allStudents.filter(s => {
         if (s.disabled || !s.phone) return false;
@@ -3907,6 +4577,629 @@ export function createSaasRoutes({
             ? `Nenhuma nova mensagem enviada: ${skippedCount} aluno(s) já haviam recebido lembrete hoje.`
             : `Mensagens de recuperação enviadas para ${sentCount} aluno(s) no WhatsApp!`
       });
+    },
+
+    /* ---------- Fase 2.1: Avaliação Física & Antropometria ---------- */
+    'POST /api/gym/student/assessment': async (req, res) => {
+      const ctx = requireGymContext(req, res);
+      if (!ctx) return;
+      const body = await readBody(req).catch(() => ({}));
+      const studentId = String(body?.studentId || '').trim();
+      if (!studentId) return json(res, 400, { error: 'studentId é obrigatório' });
+
+      const target = requireTenantStudent(req, res, ctx, studentId, 'student-assessment');
+      if (!target) return;
+
+      let out;
+      try {
+        out = recordStudentAssessment(ctx.stateStorageDir, studentId, body, ctx.user, stateOps);
+      } catch (err) {
+        return json(res, err.status || 400, { error: err.message, ...(err.code ? { code: err.code } : {}) });
+      }
+
+      if (typeof sendPushFn === 'function') {
+        try {
+          await sendPushFn(studentId, assessmentPush('pt', {
+            trainerName: ctx.user?.name || '',
+            weightKg: out.assessment?.weightKg ?? null,
+            bodyFat: out.assessment?.bodyFat ?? null
+          }));
+        } catch { /* ignore push error */ }
+      }
+
+      let whatsapp = { skipped: true };
+      const cleanPhone = cleanWhatsAppPhone(target.phone);
+      const assessMsg = formatAssessmentSummaryWhatsAppMessage({
+        studentName: target.name,
+        dateStr: out.assessment?.d || '',
+        weightKg: out.assessment?.weightKg ?? null,
+        bodyFat: out.assessment?.bodyFat ?? null,
+        weightDelta: out.bodyComparison?.deltas?.weightKg || null,
+        bfDelta: out.bodyComparison?.deltas?.bodyFat || null,
+        trainerName: ctx.user?.name || '',
+        tenantName: ctx.tenant?.name || 'Sua Academia'
+      });
+      if (body?.notifyWhatsApp === true && cleanPhone) {
+        whatsapp = await sendStudentWhatsApp(ctx, target, {
+          kind: 'assessment_summary',
+          phone: cleanPhone,
+          dedupKey: `assessment:${ctx.tenantId}:${target.id}:${out.assessment?.d || Date.now()}`,
+          message: assessMsg
+        });
+      }
+
+      audit(req, 'gym.assessment.save', {
+        user: ctx.user,
+        target,
+        tenantId: ctx.tenantId,
+        msg: `${out.assessment?.d || ''} (${out.assessment?.weightKg || '-'}kg)`
+      });
+      json(res, 200, { ok: true, ...out, whatsapp, whatsappText: assessMsg });
+    },
+
+    /* ---------- Fase 2.3: Arquivamento de Ciclos & Periodização ---------- */
+    'POST /api/gym/student/archive-cycle': async (req, res) => {
+      const ctx = requireGymContext(req, res);
+      if (!ctx) return;
+      const body = await readBody(req).catch(() => ({}));
+      const studentId = String(body?.studentId || '').trim();
+      if (!studentId) return json(res, 400, { error: 'studentId é obrigatório' });
+
+      const target = requireTenantStudent(req, res, ctx, studentId, 'archive-cycle');
+      if (!target) return;
+
+      const { byId } = getCatalogueIndex();
+      const out = archiveStudentRoutines(ctx.stateStorageDir, studentId, {
+        routineIds: Array.isArray(body?.routineIds) ? body.routineIds : null,
+        removeCurrent: Boolean(body?.removeCurrent),
+        reason: String(body?.reason || 'cycle_completed'),
+        trainerUser: ctx.user,
+        resolveNameFn: id => byId.get(id)?.name || null
+      }, stateOps);
+
+      audit(req, 'gym.routine.archive', {
+        user: ctx.user,
+        target,
+        tenantId: ctx.tenantId,
+        msg: `${out.archived.length} ficha(s) arquivada(s)`
+      });
+      json(res, 200, { ok: true, archivedCount: out.archived.length, ...out });
+    },
+
+    /* ---------- Pilar B: Aplicar Modelo em Lote ---------- */
+    'POST /api/gym/templates/apply-batch': async (req, res) => {
+      const ctx = requireGymContext(req, res);
+      if (!ctx) return;
+      const body = await readBody(req).catch(() => ({}));
+      const templateId = String(body?.templateId || '').trim();
+      const studentIds = Array.isArray(body?.studentIds) ? Array.from(new Set(body.studentIds.map(String))) : [];
+      if (!templateId || !studentIds.length) {
+        return json(res, 400, { error: 'Informe templateId e ao menos um aluno.' });
+      }
+      if (studentIds.length > 200) {
+        return json(res, 400, { error: 'Selecione no máximo 200 alunos por lote.' });
+      }
+
+      const templates = loadTemplates(ctx.tenantDir);
+      const tpl = templates.find(t => t.id === templateId);
+      if (!tpl) return json(res, 404, { error: 'Modelo de treino não encontrado.' });
+
+      const days = Array.isArray(body?.days) ? body.days.map(Number).filter(d => Number.isInteger(d) && d >= 0 && d <= 6) : [];
+      const archivePrevious = Boolean(body?.archivePrevious);
+      const replaceSchedule = Boolean(body?.replaceSchedule);
+
+      const applied = [];
+      const failed = [];
+      for (const sid of studentIds) {
+        const stu = db.users.find(u => u.id === sid && u.tenantId === ctx.tenantId);
+        if (!stu || !isStudentAccount(stu)) {
+          failed.push({ studentId: sid, reason: 'Aluno não encontrado nesta unidade' });
+          continue;
+        }
+        if (isTrainerPortfolioRestricted(ctx) && stu.assignedTrainerId !== ctx.user?.id) {
+          failed.push({ studentId: sid, name: stu.name, reason: 'Fora da carteira do professor' });
+          continue;
+        }
+        const saved = prescribeRoutineToStudent(ctx.stateStorageDir, sid, {
+          routine: { name: tpl.name, emoji: tpl.emoji || 'figureStrength', ex: tpl.ex || [] },
+          days,
+          replaceSchedule,
+          archivePrevious,
+          trainerUser: ctx.user
+        }, stateOps);
+        applied.push({ studentId: sid, name: stu.name, routineId: saved?.id });
+        if (typeof sendPushFn === 'function') {
+          try {
+            await sendPushFn(sid, prescriptionPush('pt', {
+              trainerName: ctx.user?.name || '',
+              tenantName: ctx.tenant?.name || '',
+              routines: [tpl.name]
+            }));
+          } catch { /* ignore push error */ }
+        }
+      }
+
+      audit(req, 'gym.template.apply_batch', {
+        user: ctx.user,
+        tenantId: ctx.tenantId,
+        msg: `${tpl.name} -> ${applied.length} aluno(s)`
+      });
+      json(res, 200, { ok: true, templateName: tpl.name, appliedCount: applied.length, applied, failed });
+    },
+
+    /* ---------- Fase 2.2: Importação em Lote (CSV/Texto) + Fila Anti-Ban ---------- */
+    'POST /api/gym/students/import': async (req, res) => {
+      const ctx = requireGymContext(req, res);
+      if (!ctx) return;
+      const body = await readBody(req).catch(() => ({}));
+      const inputRows = Array.isArray(body?.rows) && body.rows.length
+        ? body.rows
+        : parseStudentImportRows(typeof body?.rawText === 'string' ? body.rawText : '');
+
+      if (!inputRows.length) {
+        return json(res, 400, { error: 'Nenhum aluno válido encontrado na lista ou CSV enviado.' });
+      }
+      if (inputRows.length > MAX_STUDENT_IMPORT_ROWS) {
+        return json(res, 400, { error: `Importe até ${MAX_STUDENT_IMPORT_ROWS} alunos por lote.` });
+      }
+
+      let resolvedAssignedTrainerId = isActiveTenantStaff(ctx.user, ctx.tenantId) ? ctx.user.id : null;
+      if (isTrainerPortfolioRestricted(ctx)) {
+        resolvedAssignedTrainerId = ctx.user.id;
+      } else if (body?.assignedTrainerId) {
+        const trainerCheck = validateAssignedTrainer(body.assignedTrainerId, ctx.tenantId);
+        if (!trainerCheck.ok) {
+          return json(res, 400, { error: trainerCheck.error, code: trainerCheck.code });
+        }
+        resolvedAssignedTrainerId = trainerCheck.assignedTrainerId;
+      }
+
+      let starterTemplate = null;
+      if (body?.initialTemplateId) {
+        const templates = loadTemplates(ctx.tenantDir);
+        starterTemplate = templates.find(t => t.id === String(body.initialTemplateId).trim()) || null;
+      }
+
+      const defaultTempHash = await hashPassword(generateTempPassword());
+      const nowIso = new Date().toISOString();
+      const publicAppUrl = resolvePublicAppUrl();
+      const sendWelcome = body?.sendWelcome !== false;
+
+      const created = [];
+      const skipped = [];
+      const waBatchItems = [];
+
+      runDbMutation(() => {
+        const freshTenant = getTenant(dataDir, ctx.tenantId) || ctx.tenant;
+        const limit = freshTenant?.limits?.maxStudents || 99999;
+        let activeCount = db.users.filter(
+          u => u.tenantId === ctx.tenantId && isStudentAccount(u) && !u.disabled
+        ).length;
+
+        const usedEmails = new Set(db.users.map(u => u.email).filter(Boolean));
+        const usedTenantNames = new Set(
+          db.users
+            .filter(u => (u.tenantId || 'default') === ctx.tenantId && u.pw?.h)
+            .map(u => nameKey(u.name))
+        );
+
+        for (let idx = 0; idx < inputRows.length; idx++) {
+          const raw = inputRows[idx] || {};
+          const name = String(raw.name || raw.nome || '').trim().slice(0, 60);
+          if (!name || name.length < 2) {
+            skipped.push({ row: idx + 1, name: name || '(vazio)', reason: 'Nome inválido ou ausente' });
+            continue;
+          }
+          if (activeCount >= limit) {
+            skipped.push({ row: idx + 1, name, reason: `Limite do plano atingido (${limit} alunos ativos)`, code: 'plan-limit' });
+            continue;
+          }
+
+          const emailRaw = String(raw.email || '').trim();
+          const email = emailRaw ? normalizeEmail(emailRaw) : null;
+          if (emailRaw && !email) {
+            skipped.push({ row: idx + 1, name, reason: 'E-mail inválido' });
+            continue;
+          }
+          if (email && usedEmails.has(email)) {
+            skipped.push({ row: idx + 1, name, reason: 'E-mail já cadastrado na plataforma' });
+            continue;
+          }
+          const folded = nameKey(name);
+          if (!email && usedTenantNames.has(folded)) {
+            skipped.push({ row: idx + 1, name, reason: 'Nome duplicado na unidade (informe e-mail para diferenciar)' });
+            continue;
+          }
+
+          const phoneRaw = String(raw.phone || raw.whatsapp || raw.telefone || '').trim().slice(0, 30);
+          const student = {
+            id: 'u_st_' + crypto.randomBytes(8).toString('base64url'),
+            name,
+            ...(email ? { email } : {}),
+            phone: phoneRaw,
+            goal: String(raw.goal || raw.objetivo || '').trim().slice(0, 80),
+            notes: String(raw.notes || raw.observacoes || '').trim().slice(0, 300),
+            assignedTrainerId: resolvedAssignedTrainerId,
+            tenantId: ctx.tenantId,
+            saasRole: 'student',
+            role: 'student',
+            created: nowIso,
+            pw: { h: defaultTempHash, set: nowIso }
+          };
+
+          const inv = issueStudentInvite({
+            tenantId: ctx.tenantId,
+            student,
+            createdBy: ctx.user.id,
+            reusePending: false
+          });
+          const signupUrl = buildStudentInviteSignupUrl({
+            appUrl: publicAppUrl,
+            tenantId: ctx.tenantId,
+            inviteCode: inv.code
+          });
+          const cleanPh = cleanWhatsAppPhone(phoneRaw);
+          student.welcomeWhatsapp = {
+            sent: false,
+            queued: Boolean(sendWelcome && cleanPh),
+            at: nowIso,
+            channel: cleanPh ? 'whatsapp_batch' : 'none'
+          };
+
+          db.users.push(student);
+          if (hasSqliteDir) upsertUserSqlite(dataDir, student, null);
+          if (email) usedEmails.add(email);
+          usedTenantNames.add(folded);
+          activeCount += 1;
+
+          created.push({
+            id: student.id,
+            name: student.name,
+            phone: student.phone,
+            email: student.email || '',
+            inviteCode: inv.code,
+            signupUrl
+          });
+
+          if (sendWelcome && cleanPh) {
+            waBatchItems.push({
+              phone: cleanPh,
+              userId: student.id,
+              targetName: student.name,
+              dedupKey: `welcome_import:${ctx.tenantId}:${student.id}`,
+              message: formatStudentWelcomeWhatsAppMessage({
+                studentName: student.name,
+                tenantName: ctx.tenant?.name || 'Sua Academia',
+                trainerName: ctx.user?.name || '',
+                inviteUrl: signupUrl,
+                welcomeCustom: ctx.tenant?.settings?.welcomeMessage
+              })
+            });
+          }
+        }
+
+        if (created.length > 0) saveDb();
+      });
+
+      if (starterTemplate && created.length > 0) {
+        for (const st of created) {
+          prescribeRoutineToStudent(ctx.stateStorageDir, st.id, {
+            routine: {
+              name: starterTemplate.name,
+              emoji: starterTemplate.emoji || 'figureStrength',
+              ex: starterTemplate.ex || []
+            },
+            days: [],
+            trainerUser: ctx.user,
+            recordNotice: false
+          }, stateOps);
+        }
+      }
+
+      let whatsappQueue = { ok: true, count: 0, skippedDuplicates: 0, estimatedDurationSec: 0 };
+      if (waBatchItems.length > 0) {
+        const evoSettings = resolveTenantEvolutionSettings(dataDir, ctx.tenantId);
+        whatsappQueue = enqueueWhatsAppBatch({
+          dataDir,
+          tenantId: ctx.tenantId,
+          kind: 'welcome_invite',
+          items: waBatchItems,
+          tenantSettings: { ...(ctx.tenant?.settings || {}), ...evoSettings },
+          baseDelayMs: 0,
+          minIntervalMs: 3500,
+          maxIntervalMs: 7000
+        });
+      }
+
+      audit(req, 'gym.students.import', {
+        user: ctx.user,
+        tenantId: ctx.tenantId,
+        msg: `${created.length} criados, ${skipped.length} ignorados, ${whatsappQueue.count || 0} WA na fila`
+      });
+
+      json(res, 200, {
+        ok: true,
+        createdCount: created.length,
+        skippedCount: skipped.length,
+        queuedWhatsappCount: whatsappQueue.count || 0,
+        estimatedDurationSec: whatsappQueue.estimatedDurationSec || 0,
+        created,
+        skipped
+      });
+    },
+
+    /* ---------- Fase 3.1: Copiloto IA de Prescrição para o Professor ---------- */
+    'POST /api/gym/coach/suggest': async (req, res) => {
+      const ctx = requireGymContext(req, res);
+      if (!ctx) return;
+      const body = await readBody(req).catch(() => ({}));
+      const studentId = String(body?.studentId || '').trim();
+
+      let targetStudent = null;
+      let studentState = null;
+      if (studentId) {
+        targetStudent = requireTenantStudent(req, res, ctx, studentId, 'coach-suggest');
+        if (!targetStudent) return;
+        studentState = readStudentState(ctx.stateStorageDir, studentId, stateOps);
+      }
+
+      const customPayload = hasSqliteDir ? getTenantExercisesPayload(dataDir, ctx.tenantId) : { customExercises: [] };
+      const { suggestTrainerWorkouts } = await import('./coach/b2b-prescribe.js');
+      const suggestion = await suggestTrainerWorkouts({
+        student: targetStudent,
+        studentState,
+        params: body || {},
+        tenantCustomExercises: Array.isArray(customPayload.customExercises) ? customPayload.customExercises : [],
+        catalogueIndex: getCatalogueIndex(),
+        mode: body?.mode === 'rules' ? 'rules' : 'auto'
+      });
+
+      audit(req, 'gym.coach.suggest', {
+        user: ctx.user,
+        target: targetStudent || undefined,
+        tenantId: ctx.tenantId,
+        msg: `${suggestion.engine} (${suggestion.workouts.length} treinos)`
+      });
+      json(res, 200, suggestion);
+    },
+
+    /* ---------- Fase 3.2: Vídeos de Execução (Streaming & Feedback Técnico) ---------- */
+    'GET /api/gym/student/video': async (req, res) => {
+      const ctx = requireGymContext(req, res);
+      if (!ctx) return;
+      if (!mediaStore || !sendMediaFileFn) {
+        return json(res, 404, { error: 'Uploads de mídia desabilitados neste servidor.' });
+      }
+      const sp = new URL(req.url || '', 'http://x').searchParams;
+      const studentId = String(sp.get('studentId') || '').trim();
+      const hash = String(sp.get('hash') || '').trim().toLowerCase();
+      if (!studentId || !/^[0-9a-f]{64}$/.test(hash)) {
+        return json(res, 400, { error: 'Parâmetros studentId e hash SHA-256 são obrigatórios.' });
+      }
+
+      const target = requireTenantStudent(req, res, ctx, studentId, 'student-video-read');
+      if (!target) return;
+
+      const state = readStudentState(ctx.stateStorageDir, studentId, stateOps);
+      if (!isMediaHashInStudentState(state, hash)) {
+        return json(res, 404, { error: 'Vídeo não encontrado ou restrito ao dispositivo do aluno.' });
+      }
+
+      const f = mediaStore.file(target.id, hash);
+      if (!f) {
+        return json(res, 404, { error: 'Arquivo de vídeo não sincronizado para o servidor.' });
+      }
+      await sendMediaFileFn(res, f, hash);
+    },
+
+    'POST /api/gym/student/video-review': async (req, res) => {
+      const ctx = requireGymContext(req, res);
+      if (!ctx) return;
+      const body = await readBody(req).catch(() => ({}));
+      const studentId = String(body?.studentId || '').trim();
+      if (!studentId) return json(res, 400, { error: 'studentId é obrigatório' });
+
+      const target = requireTenantStudent(req, res, ctx, studentId, 'student-video-review');
+      if (!target) return;
+
+      let out;
+      try {
+        out = saveStudentVideoReview(ctx.stateStorageDir, studentId, {
+          key: body?.key,
+          hash: body?.hash,
+          status: body?.status,
+          comment: body?.comment,
+          trainerUser: ctx.user
+        }, stateOps);
+      } catch (err) {
+        return json(res, err.status || 400, { error: err.message, ...(err.code ? { code: err.code } : {}) });
+      }
+
+      const matched = out.videos.find(v => v.hash === out.review.hash || v.key === out.review.key);
+      const exerciseName = String(body?.exerciseName || matched?.exerciseName || 'Exercício');
+
+      if (typeof sendPushFn === 'function') {
+        try {
+          await sendPushFn(studentId, videoReviewPush('pt', {
+            exerciseName,
+            trainerName: ctx.user?.name || '',
+            status: out.review.status
+          }));
+        } catch { /* ignore push error */ }
+      }
+
+      const whatsappText = formatVideoReviewWhatsAppMessage({
+        studentName: target.name,
+        exerciseName,
+        status: out.review.status,
+        comment: out.review.comment,
+        trainerName: ctx.user?.name || '',
+        tenantName: ctx.tenant?.name || 'Sua Academia'
+      });
+      let whatsapp = { skipped: true };
+      const cleanPhone = cleanWhatsAppPhone(target.phone);
+      if (body?.notifyWhatsApp === true && cleanPhone) {
+        whatsapp = await sendStudentWhatsApp(ctx, target, {
+          kind: 'video_review',
+          phone: cleanPhone,
+          dedupKey: `video_review:${ctx.tenantId}:${target.id}:${out.review.key}`,
+          message: whatsappText
+        });
+      }
+
+      audit(req, 'gym.video.review', {
+        user: ctx.user,
+        target,
+        tenantId: ctx.tenantId,
+        msg: `${exerciseName} (${out.review.status})`
+      });
+      json(res, 200, { ok: true, ...out, whatsapp, whatsappText });
+    },
+
+    /* ---------- Fase 3.3 & Pilar A: Check-in Semanal + Régua Autônoma ---------- */
+    'POST /api/gym/student/weekly-checkin': async (req, res) => {
+      const ctx = requireGymContext(req, res);
+      if (!ctx) return;
+      const body = await readBody(req).catch(() => ({}));
+      const studentId = String(body?.studentId || '').trim();
+      if (!studentId) return json(res, 400, { error: 'studentId é obrigatório' });
+
+      const target = requireTenantStudent(req, res, ctx, studentId, 'weekly-checkin');
+      if (!target) return;
+
+      const state = readStudentState(ctx.stateStorageDir, studentId, stateOps);
+      const stats = computeStudentWeeklyStats(state);
+      const whatsappText = formatWeeklyCheckinWhatsAppMessage({
+        studentName: target.name,
+        workoutsCount: stats.workoutsCount,
+        plannedDays: stats.plannedDays,
+        totalVolKg: stats.totalVolKg,
+        prsCount: stats.prsCount,
+        tenantName: ctx.tenant?.name || 'Sua Academia',
+        trainerName: ctx.user?.name || ''
+      });
+
+      if (typeof sendPushFn === 'function') {
+        try {
+          await sendPushFn(studentId, weeklySummaryPush('pt', stats));
+        } catch { /* ignore push */ }
+      }
+
+      let whatsapp = { skipped: true };
+      const cleanPhone = cleanWhatsAppPhone(target.phone);
+      if (body?.sendWhatsApp !== false && cleanPhone) {
+        whatsapp = await sendStudentWhatsApp(ctx, target, {
+          kind: 'weekly_checkin',
+          phone: cleanPhone,
+          dedupKey: `weekly_manual:${ctx.tenantId}:${target.id}:${stats.windowEnd}`,
+          message: whatsappText
+        });
+      }
+
+      audit(req, 'gym.weekly_checkin', { user: ctx.user, target, tenantId: ctx.tenantId, msg: `${stats.workoutsCount} treinos` });
+      json(res, 200, { ok: true, stats, whatsapp, whatsappText });
+    },
+
+    'POST /api/gym/engagement/run': async (req, res) => {
+      const ctx = requireGymContext(req, res, { managerOnly: true });
+      if (!ctx) return;
+      const body = await readBody(req).catch(() => ({}));
+      const tenant = getTenant(dataDir, ctx.tenantId) || ctx.tenant;
+      const summary = await evaluateTenantEngagement({
+        dataDir,
+        tenant,
+        db,
+        stateOps,
+        sendPushFn,
+        forceWeekly: Boolean(body?.forceWeekly),
+        dryRun: Boolean(body?.dryRun)
+      });
+      if (!body?.dryRun) {
+        audit(req, 'gym.engagement.run', {
+          user: ctx.user,
+          tenantId: ctx.tenantId,
+          msg: `weekly=${summary.weeklyQueued} expiry=${summary.expiryAlertsQueued} churn=${summary.churnNudgesQueued}`
+        });
+      }
+      json(res, 200, { ok: true, dryRun: Boolean(body?.dryRun), ...summary });
+    },
+
+    /* ---------- Fase 2.4: Trilha de Auditoria Escopada & Exportação LGPD ---------- */
+    'GET /api/gym/audit': async (req, res) => {
+      const ctx = requireGymContext(req, res, { managerOnly: true });
+      if (!ctx) return;
+      const sp = new URL(req.url || '', 'http://x').searchParams;
+      const limit = Math.max(1, Math.min(300, Number(sp.get('limit')) || 120));
+      const events = typeof auditReader === 'function' ? auditReader(limit, ctx.tenantId) : [];
+      json(res, 200, { ok: true, events });
+    },
+
+    'GET /api/gym/export': async (req, res) => {
+      const ctx = requireGymContext(req, res, { managerOnly: true });
+      if (!ctx) return;
+      const tenant = getTenant(dataDir, ctx.tenantId) || ctx.tenant;
+      const tenantTeam = db.users
+        .filter(u => u.tenantId === ctx.tenantId && !isStudentAccount(u) && !isSuperAdmin(u))
+        .map(u => ({
+          id: u.id,
+          name: u.name,
+          email: u.email || '',
+          phone: u.phone || '',
+          cref: u.cref || '',
+          specialty: u.specialty || '',
+          saasRole: u.saasRole || 'trainer',
+          disabled: Boolean(u.disabled),
+          created: u.created || null
+        }));
+      const tenantStudents = db.users
+        .filter(u => u.tenantId === ctx.tenantId && isStudentAccount(u))
+        .map(u => {
+          const stState = readStudentState(ctx.stateStorageDir, u.id, stateOps) || {};
+          const { _prior, _unstamped, ...cleanState } = stState;
+          return {
+            profile: {
+              id: u.id,
+              name: u.name,
+              email: u.email || '',
+              phone: u.phone || '',
+              goal: u.goal || '',
+              notes: u.notes || '',
+              assignedTrainerId: u.assignedTrainerId || null,
+              disabled: Boolean(u.disabled),
+              created: u.created || null,
+              onboardedAt: u.onboardedAt || null
+            },
+            state: cleanState
+          };
+        });
+      const templates = loadTemplates(ctx.tenantDir);
+      const exportPayload = {
+        ok: true,
+        exportedAt: new Date().toISOString(),
+        schemaVersion: 'rit-lgpd-export-v1',
+        tenant: sanitizeTenantForRole(tenant, true),
+        templates,
+        team: tenantTeam,
+        students: tenantStudents
+      };
+
+      audit(req, 'gym.export.lgpd', {
+        user: ctx.user,
+        tenantId: ctx.tenantId,
+        msg: `${tenantStudents.length} alunos exportados`
+      });
+
+      const sp = new URL(req.url || '', 'http://x').searchParams;
+      if (sp.get('download') === '1') {
+        const safeSlug = String(ctx.tenantId || 'academia').replace(/[^a-zA-Z0-9_-]/g, '');
+        res.writeHead(200, {
+          'content-type': 'application/json; charset=utf-8',
+          'content-disposition': `attachment; filename="rit-lgpd-${safeSlug}-${new Date().toISOString().slice(0, 10)}.json"`,
+          'cache-control': 'no-store'
+        });
+        return res.end(JSON.stringify(exportPayload, null, 2));
+      }
+      json(res, 200, exportPayload);
     },
 
     'GET /api/gym/whatsapp/outbox': async (req, res) => {

@@ -52,20 +52,20 @@ beforeEach(() => { mocks.webauthn = true; mocks.config = null; mocks.sheets.leng
 afterEach(() => { act(() => { mounted.splice(0).forEach(({ root, host }) => { root.unmount(); host.remove() }) }) })
 
 describe('Login with password sign-in', () => {
-  it('an instance without it looks exactly as before', () => {
+  it('an instance without it keeps the passkey-only flow', () => {
     const page = mount(<Login />)
     expect(buttons(page)).not.toContain('Sign in with password')
     expect(page.textContent).toContain('Passkeys use your fingerprint. No passwords to remember.')
     mocks.webauthn = false
     const noPasskeys = mount(<Login />)
-    expect(noPasskeys.textContent).toContain("This browser doesn't do passkeys, but you can still use openGym locally on this device.")
+    expect(noPasskeys.textContent).toContain("This browser doesn't do passkeys, but you can still use Rit locally on this device.")
     expect(buttons(noPasskeys)).not.toContain('Sign in with password')
   })
 
-  it('next to passkeys it is a second button, and the footer no longer says "no passwords"', () => {
+  it('shows password before passkey sign-in and updates the footer', () => {
     mocks.config = { password_login: true, allow_guest: true }
     const page = mount(<Login />)
-    expect(buttons(page).slice(0, 3)).toEqual(['Sign in with passkey', 'Sign in with password', 'Create new profile'])
+    expect(buttons(page).slice(0, 3)).toEqual(['Sign in with password', 'Sign in with passkey', 'Create new profile'])
     expect(page.textContent).toContain('Passkeys use your fingerprint. A password works too, where passkeys do not.')
     act(() => button(page, 'Sign in with password').click())
     const sheet = mount(mocks.sheets[0](() => {}))

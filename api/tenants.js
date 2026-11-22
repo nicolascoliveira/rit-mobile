@@ -15,6 +15,15 @@ import { sealTenantSecret, openTenantSecret } from './migrate-security.js';
 const SLUG_RE = /^[a-z0-9_-]{2,50}$/;
 const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+export class DomainError extends Error {
+  constructor(httpStatus, message, code = null) {
+    super(message);
+    this.name = 'DomainError';
+    this.httpStatus = Number(httpStatus) || 400;
+    if (code) this.code = code;
+  }
+}
+
 export const DEFAULT_BRANDING = {
   gymName: 'Rit',
   slogan: 'Seu treino, sua evolução',
@@ -31,9 +40,15 @@ export const DEFAULT_TENANT_SETTINGS = {
   inviteOnly: false,
   allowGuest: false,
   churnDaysThreshold: 5,
+  routineCycleDays: 30,
+  restrictTrainerToAssigned: false,
   welcomeMessage: 'Bem-vindo ao nosso app oficial de treinos! Confira sua ficha do dia.',
   notifyTrainerOnWorkout: true,
   notifyStudentOnPrescribe: true,
+  autoWeeklyCheckin: false,
+  autoRoutineExpiryAlert: false,
+  autoChurnNudge: false,
+  autoChurnDays: 7,
   evolutionUrl: '',
   evolutionInstance: '',
   hasEvolutionApiKey: false
@@ -388,6 +403,8 @@ function normalizeAndSealTenantSettings(baseDataDir, cleanId, incoming = {}, pre
     ? String(nextPatch.evolutionInstance ?? '').trim().replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 64)
     : String(prevSettings.evolutionInstance || '').trim();
   const churnRaw = Number(nextPatch.churnDaysThreshold ?? prevSettings.churnDaysThreshold ?? 5);
+  const cycleRaw = Number(nextPatch.routineCycleDays ?? prevSettings.routineCycleDays ?? 30);
+  const autoChurnRaw = Number(nextPatch.autoChurnDays ?? prevSettings.autoChurnDays ?? 7);
   const welcomeRaw = nextPatch.welcomeMessage !== undefined
     ? String(nextPatch.welcomeMessage ?? '')
     : String(prevSettings.welcomeMessage ?? DEFAULT_TENANT_SETTINGS.welcomeMessage);
@@ -396,9 +413,15 @@ function normalizeAndSealTenantSettings(baseDataDir, cleanId, incoming = {}, pre
     inviteOnly: Boolean(nextPatch.inviteOnly ?? prevSettings.inviteOnly ?? false),
     allowGuest: Boolean(nextPatch.allowGuest ?? prevSettings.allowGuest ?? false),
     churnDaysThreshold: Number.isFinite(churnRaw) ? Math.max(1, Math.min(90, churnRaw)) : 5,
+    routineCycleDays: Number.isFinite(cycleRaw) ? Math.max(7, Math.min(180, cycleRaw)) : 30,
+    restrictTrainerToAssigned: Boolean(nextPatch.restrictTrainerToAssigned ?? prevSettings.restrictTrainerToAssigned ?? false),
     welcomeMessage: welcomeRaw.slice(0, 300),
     notifyTrainerOnWorkout: Boolean(nextPatch.notifyTrainerOnWorkout ?? prevSettings.notifyTrainerOnWorkout ?? true),
     notifyStudentOnPrescribe: Boolean(nextPatch.notifyStudentOnPrescribe ?? prevSettings.notifyStudentOnPrescribe ?? true),
+    autoWeeklyCheckin: Boolean(nextPatch.autoWeeklyCheckin ?? prevSettings.autoWeeklyCheckin ?? false),
+    autoRoutineExpiryAlert: Boolean(nextPatch.autoRoutineExpiryAlert ?? prevSettings.autoRoutineExpiryAlert ?? false),
+    autoChurnNudge: Boolean(nextPatch.autoChurnNudge ?? prevSettings.autoChurnNudge ?? false),
+    autoChurnDays: Number.isFinite(autoChurnRaw) ? Math.max(3, Math.min(90, autoChurnRaw)) : 7,
     evolutionUrl: rawEvoUrl,
     evolutionApiKeyEnc: nextEnc,
     evolutionInstance: rawEvoInstance
@@ -616,7 +639,31 @@ export function getSaasPlan(baseDataDir, planId) {
 
 export function upsertSaasPlan(baseDataDir, planInput) {
   const id = sanitizeTenantId(planInput.id || planInput.name || '');
-  if (!id || id === 'default') throw new Error('Identificador de plano inválido');
+  if (!id || id === 'default') throw new DomainError(400, 'Identificador de plano inválido', 'invalid-plan-id');
+  if (planInput.priceMonthly !== undefined) {
+    const pm = Number(planInput.priceMonthly);
+    if (!Number.isFinite(pm) || pm <= 0) {
+      throw new DomainError(400, 'O preço mensal do plano deve ser maior que zero.', 'invalid-plan-price');
+    }
+  }
+  if (planInput.priceAnnualMonthly !== undefined) {
+    const pam = Number(planInput.priceAnnualMonthly);
+    if (!Number.isFinite(pam) || pam <= 0) {
+      throw new DomainError(400, 'O preço anual mensalizado do plano deve ser maior que zero.', 'invalid-plan-price');
+    }
+  }
+  if (planInput.maxStudents !== undefined) {
+    const ms = Number(planInput.maxStudents);
+    if (!Number.isFinite(ms) || ms < 1) {
+      throw new DomainError(400, 'O limite máximo de alunos deve ser pelo menos 1.', 'invalid-plan-limit');
+    }
+  }
+  if (planInput.maxTrainers !== undefined) {
+    const mt = Number(planInput.maxTrainers);
+    if (!Number.isFinite(mt) || mt < 1) {
+      throw new DomainError(400, 'O limite máximo de profissionais deve ser pelo menos 1.', 'invalid-plan-limit');
+    }
+  }
   const inst = getSqliteInstance(baseDataDir);
   backfillRelationalTables(inst);
 
@@ -625,7 +672,10 @@ export function upsertSaasPlan(baseDataDir, planInput) {
     const plans = ensurePlansPopulatedInTx(inst, now);
     const existingIdx = plans.findIndex(p => p.id === id);
     const prev = existingIdx >= 0 ? plans[existingIdx] : {};
-    const priceMonthly = Math.max(0, Number(planInput.priceMonthly ?? prev.priceMonthly ?? 169));
+    const priceMonthly = Number(planInput.priceMonthly ?? prev.priceMonthly ?? 169);
+    const priceAnnualMonthly = Number(planInput.priceAnnualMonthly ?? prev.priceAnnualMonthly ?? priceMonthly);
+    const maxStudents = Math.floor(Number(planInput.maxStudents ?? prev.maxStudents ?? 150));
+    const maxTrainers = Math.floor(Number(planInput.maxTrainers ?? prev.maxTrainers ?? 3));
     const record = {
       ...prev,
       id,
@@ -633,9 +683,9 @@ export function upsertSaasPlan(baseDataDir, planInput) {
       tagline: String(planInput.tagline ?? prev.tagline ?? '').trim(),
       accountType: planInput.accountType || prev.accountType || (id.startsWith('personal') ? 'personal' : 'gym'),
       priceMonthly,
-      priceAnnualMonthly: Math.max(0, Number(planInput.priceAnnualMonthly ?? prev.priceAnnualMonthly ?? priceMonthly)),
-      maxStudents: Math.max(1, Math.floor(Number(planInput.maxStudents ?? prev.maxStudents ?? 150))),
-      maxTrainers: Math.max(1, Math.floor(Number(planInput.maxTrainers ?? prev.maxTrainers ?? 3))),
+      priceAnnualMonthly,
+      maxStudents,
+      maxTrainers,
       recommended: Boolean(planInput.recommended ?? prev.recommended ?? false),
       features: {
         whiteLabel: true,
@@ -794,6 +844,12 @@ export function getTenantAccessState(baseDataDir, tenantId, nowMs = Date.now()) 
       return { blocked: true, billingOnly: true, reason: 'trial_expired', status: 'trial', tenant: t };
     }
   }
+  if (t.status === 'active') {
+    const nextBillingMs = t.nextBillingAt ? Date.parse(t.nextBillingAt) : NaN;
+    if (Number.isFinite(nextBillingMs) && nextBillingMs <= nowMs) {
+      return { blocked: true, billingOnly: true, reason: 'past_due', status: 'past_due', tenant: t };
+    }
+  }
   return { blocked: false, billingOnly: false, reason: null, status: t.status || 'active', tenant: t };
 }
 
@@ -807,7 +863,26 @@ export function isTenantSuspended(baseDataDir, tenantId, nowMs = Date.now()) {
 export function createTenant(baseDataDir, payload = {}) {
   const cleanId = sanitizeTenantId(payload.id || payload.slug || '');
   if (!cleanId || cleanId === 'default' || !SLUG_RE.test(cleanId)) {
-    throw new Error('Identificador de academia inválido (use apenas letras minúsculas, números e hífens, mín. 2 caracteres)');
+    throw new DomainError(400, 'Identificador de academia inválido (use apenas letras minúsculas, números e hífens, mín. 2 caracteres)', 'invalid-tenant-id');
+  }
+
+  if (payload.mrr !== undefined && payload.mrr !== null && payload.mrr !== '') {
+    const rawMrr = Number(payload.mrr);
+    if (!Number.isFinite(rawMrr) || rawMrr < 0) {
+      throw new DomainError(400, 'Valor de MRR inválido (deve ser numérico e não negativo).', 'invalid-mrr');
+    }
+  }
+  if (payload.maxStudentsOverride !== undefined && payload.maxStudentsOverride !== null && payload.maxStudentsOverride !== '' && payload.maxStudentsOverride !== 0) {
+    const mso = Number(payload.maxStudentsOverride);
+    if (!Number.isFinite(mso) || mso < 1) {
+      throw new DomainError(400, 'Limite personalizado de alunos inválido (mínimo 1).', 'invalid-limit-override');
+    }
+  }
+  if (payload.maxTrainersOverride !== undefined && payload.maxTrainersOverride !== null && payload.maxTrainersOverride !== '' && payload.maxTrainersOverride !== 0) {
+    const mto = Number(payload.maxTrainersOverride);
+    if (!Number.isFinite(mto) || mto < 1) {
+      throw new DomainError(400, 'Limite personalizado de profissionais inválido (mínimo 1).', 'invalid-limit-override');
+    }
   }
 
   const inst = getSqliteInstance(baseDataDir);
@@ -816,7 +891,7 @@ export function createTenant(baseDataDir, payload = {}) {
   runInTransaction(inst, () => {
     const now = Date.now();
     if (inst.stmts.getTenantRow.get(cleanId)) {
-      throw new Error(`Já existe uma academia cadastrada com o identificador "${cleanId}"`);
+      throw new DomainError(409, `Já existe uma academia cadastrada com o identificador "${cleanId}"`, 'slug-in-use');
     }
 
     const plans = ensurePlansPopulatedInTx(inst, now);
@@ -847,7 +922,9 @@ export function createTenant(baseDataDir, payload = {}) {
     });
 
     const status = ['active', 'trial', 'past_due', 'suspended'].includes(payload.status) ? payload.status : 'active';
-    const mrr = payload.mrr !== undefined && payload.mrr !== '' ? Math.max(0, Number(payload.mrr)) : plan.priceMonthly;
+    const mrr = payload.mrr !== undefined && payload.mrr !== null && payload.mrr !== ''
+      ? Number(payload.mrr)
+      : plan.priceMonthly;
     const trialDays = Number(payload.trialDays || meta.platform.trialDays || 14);
     const trialEndsAt = status === 'trial'
       ? (payload.trialEndsAt || new Date(now + trialDays * 86400000).toISOString())
@@ -879,8 +956,8 @@ export function createTenant(baseDataDir, payload = {}) {
       city: String(payload.city || '').trim(),
       address: String(payload.address || branding.address || '').trim(),
       planId: plan.id,
-      ...(payload.maxStudentsOverride ? { maxStudentsOverride: Number(payload.maxStudentsOverride) } : {}),
-      ...(payload.maxTrainersOverride ? { maxTrainersOverride: Number(payload.maxTrainersOverride) } : {}),
+      ...(payload.maxStudentsOverride ? { maxStudentsOverride: Math.floor(Number(payload.maxStudentsOverride)) } : {}),
+      ...(payload.maxTrainersOverride ? { maxTrainersOverride: Math.floor(Number(payload.maxTrainersOverride)) } : {}),
       mrr,
       status,
       trialEndsAt,
@@ -931,7 +1008,26 @@ export function createTenant(baseDataDir, payload = {}) {
  */
 export function updateTenant(baseDataDir, tenantId, patch = {}) {
   const cleanId = sanitizeTenantId(tenantId);
-  if (!cleanId || cleanId === 'default') throw new Error('Identificador de academia inválido');
+  if (!cleanId || cleanId === 'default') throw new DomainError(400, 'Identificador de academia inválido', 'invalid-tenant-id');
+
+  if (patch.mrr !== undefined && patch.mrr !== null && patch.mrr !== '') {
+    const rawMrr = Number(patch.mrr);
+    if (!Number.isFinite(rawMrr) || rawMrr < 0) {
+      throw new DomainError(400, 'Valor de MRR inválido (deve ser numérico e não negativo).', 'invalid-mrr');
+    }
+  }
+  if (patch.maxStudentsOverride !== undefined && patch.maxStudentsOverride !== null && patch.maxStudentsOverride !== '' && patch.maxStudentsOverride !== 0) {
+    const mso = Number(patch.maxStudentsOverride);
+    if (!Number.isFinite(mso) || mso < 1) {
+      throw new DomainError(400, 'Limite personalizado de alunos inválido (mínimo 1).', 'invalid-limit-override');
+    }
+  }
+  if (patch.maxTrainersOverride !== undefined && patch.maxTrainersOverride !== null && patch.maxTrainersOverride !== '' && patch.maxTrainersOverride !== 0) {
+    const mto = Number(patch.maxTrainersOverride);
+    if (!Number.isFinite(mto) || mto < 1) {
+      throw new DomainError(400, 'Limite personalizado de profissionais inválido (mínimo 1).', 'invalid-limit-override');
+    }
+  }
 
   const inst = getSqliteInstance(baseDataDir);
   backfillRelationalTables(inst);
@@ -970,7 +1066,9 @@ export function updateTenant(baseDataDir, tenantId, patch = {}) {
         if (newPlan) baseRecord.mrr = newPlan.priceMonthly;
       }
     }
-    if (patch.mrr !== undefined) baseRecord.mrr = Math.max(0, Number(patch.mrr));
+    if (patch.mrr !== undefined && patch.mrr !== null && patch.mrr !== '') {
+      baseRecord.mrr = Number(patch.mrr);
+    }
     if (patch.status && ['active', 'trial', 'past_due', 'suspended'].includes(patch.status)) {
       baseRecord.status = patch.status;
       if (patch.status === 'trial' && !baseRecord.trialEndsAt) {
@@ -979,8 +1077,12 @@ export function updateTenant(baseDataDir, tenantId, patch = {}) {
     }
     if (patch.trialEndsAt !== undefined) baseRecord.trialEndsAt = patch.trialEndsAt;
     if (patch.nextBillingAt !== undefined) baseRecord.nextBillingAt = patch.nextBillingAt;
-    if (patch.maxStudentsOverride !== undefined) baseRecord.maxStudentsOverride = patch.maxStudentsOverride ? Number(patch.maxStudentsOverride) : undefined;
-    if (patch.maxTrainersOverride !== undefined) baseRecord.maxTrainersOverride = patch.maxTrainersOverride ? Number(patch.maxTrainersOverride) : undefined;
+    if (patch.maxStudentsOverride !== undefined) {
+      baseRecord.maxStudentsOverride = patch.maxStudentsOverride ? Math.floor(Number(patch.maxStudentsOverride)) : undefined;
+    }
+    if (patch.maxTrainersOverride !== undefined) {
+      baseRecord.maxTrainersOverride = patch.maxTrainersOverride ? Math.floor(Number(patch.maxTrainersOverride)) : undefined;
+    }
 
     let nextBranding = tRow?.branding ? JSON.parse(tRow.branding) : currentBranding;
     if (patch.branding || patch.primaryColor || patch.slogan || patch.name) {
@@ -1035,21 +1137,27 @@ export function recordTenantInvoice(baseDataDir, tenantId, invoiceInput = {}) {
     const now = Date.now();
     const nowIso = new Date(now).toISOString();
     const tRow = inst.stmts.getTenantRow.get(cleanId);
-    if (!tRow) throw new Error('Academia não encontrada');
+    if (!tRow) throw new DomainError(404, 'Academia não encontrada', 'tenant-not-found');
     const t = JSON.parse(tRow.data);
 
     if (invoiceInput.amount !== undefined && invoiceInput.amount !== null && invoiceInput.amount !== '') {
       const explicitAmount = Number(invoiceInput.amount);
       if (!Number.isFinite(explicitAmount) || explicitAmount <= 0) {
-        throw new Error('O valor da fatura deve ser maior que zero');
+        throw new DomainError(400, 'O valor da fatura deve ser maior que zero', 'invalid-invoice-amount');
       }
     }
 
     if (invoiceInput.id) {
       const existingRow = inst.stmts.getInvoiceById.get(String(invoiceInput.id));
       if (existingRow && existingRow.tenant_id === cleanId) {
+        if (existingRow.status === 'refunded' || existingRow.status === 'charged_back') {
+          throw new DomainError(409, 'Não é permitido alterar uma fatura reembolsada ou estornada', 'invoice-refunded-immutable');
+        }
         const existingInv = JSON.parse(existingRow.data);
         const nextStatus = invoiceInput.status || existingInv.status;
+        if (existingRow.status === 'paid' && nextStatus !== 'paid') {
+          throw new DomainError(409, 'Não é permitido rebaixar o status de uma fatura já paga', 'invoice-paid-immutable');
+        }
         const paidAtIso = nextStatus === 'paid' ? (existingInv.paidAt || invoiceInput.paidAt || nowIso) : existingInv.paidAt;
         const merged = {
           ...existingInv,
@@ -1069,7 +1177,7 @@ export function recordTenantInvoice(baseDataDir, tenantId, invoiceInput = {}) {
             existingRow.id
           );
           if (upd.changes === 1) {
-            if (t.status === 'past_due' || t.status === 'trial' || t.status === 'suspended') {
+            if (t.status === 'past_due' || t.status === 'trial') {
               t.status = 'active';
             }
             const daysToAdd = (invoiceInput.cycle || merged.cycle) === 'annual' ? 365 : 30;
@@ -1107,7 +1215,7 @@ export function recordTenantInvoice(baseDataDir, tenantId, invoiceInput = {}) {
 
     const resolvedAmount = Number(invoiceInput.amount ?? t.mrr ?? 0);
     if (!Number.isFinite(resolvedAmount) || resolvedAmount <= 0) {
-      throw new Error('O valor da fatura deve ser maior que zero');
+      throw new DomainError(400, 'O valor da fatura deve ser maior que zero', 'invalid-invoice-amount');
     }
 
     const inv = {
@@ -1146,7 +1254,7 @@ export function recordTenantInvoice(baseDataDir, tenantId, invoiceInput = {}) {
     );
 
     if (inv.status === 'paid') {
-      if (t.status === 'past_due' || t.status === 'trial' || t.status === 'suspended') t.status = 'active';
+      if (t.status === 'past_due' || t.status === 'trial') t.status = 'active';
       const daysToAdd = inv.cycle === 'annual' ? 365 : 30;
       const baseDate = t.nextBillingAt && new Date(t.nextBillingAt).getTime() > now
         ? new Date(t.nextBillingAt).getTime()
@@ -1168,7 +1276,7 @@ export function recordTenantInvoice(baseDataDir, tenantId, invoiceInput = {}) {
  */
 export function reservePixCheckoutInvoice(baseDataDir, tenantId, opts = {}) {
   const cleanId = sanitizeTenantId(tenantId);
-  if (!cleanId || cleanId === 'default') throw new Error('Academia não encontrada');
+  if (!cleanId || cleanId === 'default') throw new DomainError(404, 'Academia não encontrada', 'tenant-not-found');
   const inst = getSqliteInstance(baseDataDir);
   backfillRelationalTables(inst);
 
@@ -1176,7 +1284,7 @@ export function reservePixCheckoutInvoice(baseDataDir, tenantId, opts = {}) {
     const now = Date.now();
     const nowIso = new Date(now).toISOString();
     const tRow = inst.stmts.getTenantRow.get(cleanId);
-    if (!tRow) throw new Error('Academia não encontrada');
+    if (!tRow) throw new DomainError(404, 'Academia não encontrada', 'tenant-not-found');
     const t = JSON.parse(tRow.data);
     const plans = ensurePlansPopulatedInTx(inst, now);
     const plan = plans.find(p => p.id === opts.planId) || plans.find(p => p.id === t.planId) || plans[0];
@@ -1185,6 +1293,7 @@ export function reservePixCheckoutInvoice(baseDataDir, tenantId, opts = {}) {
     const amount = opts.amount !== undefined
       ? Math.max(0.01, Number(opts.amount))
       : Math.max(0.01, Number(cycle === 'annual' ? (plan.priceAnnualMonthly || plan.priceMonthly) * 12 : plan.priceMonthly));
+    const expectedAmountCents = Math.max(1, Math.round(amount * 100));
 
     // Expira PIX pendentes vencidos deste plano
     inst.stmts.expireStaleOpenCheckouts.run(cleanId, planId, now);
@@ -1208,7 +1317,9 @@ export function reservePixCheckoutInvoice(baseDataDir, tenantId, opts = {}) {
           openRow.created_at, null, openRow.expires_at, JSON.stringify(staleInv)
         );
       } else if (openRow.status === 'pending') {
-        if ((openInv.cycle || 'monthly') === cycle && openInv.qrCode) {
+        const sameCycle = (openInv.cycle || 'monthly') === cycle;
+        const sameAmount = Math.round(Number(openInv.amount || 0) * 100) === expectedAmountCents;
+        if (sameCycle && sameAmount && openInv.qrCode) {
           return {
             status: 'reused',
             invoice: openInv,
@@ -1216,7 +1327,7 @@ export function reservePixCheckoutInvoice(baseDataDir, tenantId, opts = {}) {
             tenant: buildTenantRecordDto(cleanId, { ...t, invoices: readInvoicesFromInst(inst, cleanId) }, JSON.parse(tRow.branding || '{}'), plans)
           };
         }
-        // Usuário mudou de ciclo (mensal -> anual no mesmo plano) antes de pagar: cancela o PIX antigo pendente
+        // Usuário mudou de ciclo ou o preço do plano foi atualizado antes do pagamento: cancela o PIX antigo pendente
         const cancelledInv = { ...openInv, status: 'cancelled' };
         inst.stmts.upsertInvoiceRow.run(
           openRow.id, cleanId, planId, 'pix_checkout', openRow.amount_cents,
@@ -1234,8 +1345,10 @@ export function reservePixCheckoutInvoice(baseDataDir, tenantId, opts = {}) {
       const prevRow = inst.stmts.getInvoiceByIdem.get(requestedGwKey);
       if (prevRow && prevRow.tenant_id === cleanId && prevRow.plan_id === planId) {
         const prevInv = JSON.parse(prevRow.data);
-        if ((prevInv.cycle || 'monthly') === cycle) {
-          if (prevRow.status === 'pending' && prevInv.qrCode) {
+        const sameCycle = (prevInv.cycle || 'monthly') === cycle;
+        const sameAmount = Math.round(Number(prevInv.amount || 0) * 100) === expectedAmountCents;
+        if (sameCycle) {
+          if (sameAmount && prevRow.status === 'pending' && prevInv.qrCode) {
             return {
               status: 'reused',
               invoice: prevInv,
@@ -1413,8 +1526,15 @@ export function confirmTenantPayment(baseDataDir, tenantId, opts = {}) {
       }
     }
 
+    if (existingRow && (existingRow.status === 'refunded' || existingRow.status === 'charged_back')) {
+      throw new DomainError(409, 'Não é permitido confirmar pagamento de uma fatura já reembolsada ou estornada.', 'invoice-refunded-immutable');
+    }
+
     if (existingRow && existingRow.status === 'paid') {
       const existingInv = JSON.parse(existingRow.data);
+      if (existingInv?.gatewayStatus === 'refunded' || existingInv?.gatewayStatus === 'charged_back') {
+        throw new DomainError(409, 'Não é permitido confirmar pagamento de uma fatura já reembolsada ou estornada.', 'invoice-refunded-immutable');
+      }
       const invoices = readInvoicesFromInst(inst, cleanId);
       return {
         alreadyPaid: true,
@@ -1424,16 +1544,22 @@ export function confirmTenantPayment(baseDataDir, tenantId, opts = {}) {
     }
 
     const existing = existingRow ? JSON.parse(existingRow.data) : null;
-    const requestedPlanId = opts.planId || existing?.planId || t.planId;
+    if (existing?.gatewayStatus === 'refunded' || existing?.gatewayStatus === 'charged_back') {
+      throw new DomainError(409, 'Não é permitido confirmar pagamento de uma fatura já reembolsada ou estornada.', 'invoice-refunded-immutable');
+    }
+    const requestedPlanId = existing?.planId || opts.planId || t.planId;
     const targetPlan = (requestedPlanId && plans.find(p => p.id === requestedPlanId))
       || plans.find(p => p.id === t.planId)
       || plans[0]
       || null;
-    const cycle = (opts.cycle || existing?.cycle) === 'annual' ? 'annual' : 'monthly';
+    const cycle = (existing?.cycle || opts.cycle) === 'annual' ? 'annual' : 'monthly';
     const paidAt = opts.paidAt || nowIso;
     const paidAtMs = toMs(paidAt, now);
+    if (opts.amount !== undefined && (!Number.isFinite(Number(opts.amount)) || Number(opts.amount) < 0)) {
+      throw new DomainError(400, 'Valor de pagamento inválido.', 'invalid-invoice-amount');
+    }
     const amount = opts.amount !== undefined
-      ? Math.max(0, Number(opts.amount))
+      ? Number(opts.amount)
       : Math.max(0, Number(existing?.amount ?? (targetPlan
         ? (cycle === 'annual' ? (targetPlan.priceAnnualMonthly || targetPlan.priceMonthly) * 12 : targetPlan.priceMonthly)
         : t.mrr) ?? 0));
@@ -1515,15 +1641,18 @@ export function confirmTenantPayment(baseDataDir, tenantId, opts = {}) {
       }
     }
 
-    const daysToAdd = cycle === 'annual' ? 365 : 30;
-    const baseDate = t.nextBillingAt && new Date(t.nextBillingAt).getTime() > now
-      ? new Date(t.nextBillingAt).getTime()
-      : now;
-    t.nextBillingAt = new Date(baseDate + daysToAdd * 86400000).toISOString();
-    t.status = 'active';
-    if (targetPlan) {
-      t.planId = targetPlan.id;
-      t.mrr = Number(cycle === 'annual' ? (targetPlan.priceAnnualMonthly || targetPlan.priceMonthly) : targetPlan.priceMonthly);
+    if (t.status !== 'suspended') {
+      const daysToAdd = cycle === 'annual' ? 365 : 30;
+      const baseDate = t.nextBillingAt && new Date(t.nextBillingAt).getTime() > now
+        ? new Date(t.nextBillingAt).getTime()
+        : now;
+      t.nextBillingAt = new Date(baseDate + daysToAdd * 86400000).toISOString();
+      t.status = 'active';
+      if (targetPlan) {
+        t.planId = targetPlan.id;
+        t.accountType = isPersonalPlan(targetPlan) ? 'personal' : 'gym';
+        t.mrr = Number(cycle === 'annual' ? (targetPlan.priceAnnualMonthly || targetPlan.priceMonthly) : targetPlan.priceMonthly);
+      }
     }
     t.updatedAt = nowIso;
 
@@ -1600,26 +1729,43 @@ export function applyGatewayPaymentUpdate(baseDataDir, tenantId, mpData, opts = 
   if (status === 'approved') {
     const paidAmt = Number(mpData.transaction_amount);
     const existingInv = (tenant.invoices || []).find(
-      i => (opts.invoiceId && i.id === opts.invoiceId) || (mpPid && i.mpPaymentId === mpPid)
+      i => opts.invoiceId && i.id === opts.invoiceId
+    ) || (tenant.invoices || []).find(
+      i => mpPid && i.mpPaymentId === mpPid
     );
+    if (
+      existingInv && (
+        existingInv.status === 'refunded' ||
+        existingInv.status === 'charged_back' ||
+        existingInv.gatewayStatus === 'refunded' ||
+        existingInv.gatewayStatus === 'charged_back'
+      )
+    ) {
+      return { outcome: 'ignored_refunded', refunded: true, updated: false, invoice: existingInv };
+    }
     const plans = listSaasPlans(baseDataDir);
-    const targetPlan = (opts.planId && plans.find(p => p.id === opts.planId))
-      || (existingInv?.planId && plans.find(p => p.id === existingInv.planId))
+    const resolvedPlanId = existingInv?.planId || opts.planId || tenant.planId;
+    const targetPlan = (resolvedPlanId && plans.find(p => p.id === resolvedPlanId))
       || plans.find(p => p.id === tenant.planId)
       || plans[0];
-    const cycle = (opts.cycle || existingInv?.cycle) === 'annual' ? 'annual' : 'monthly';
-    const expectedAmount = existingInv?.amount !== undefined
+    const cycle = (existingInv?.cycle || opts.cycle) === 'annual' ? 'annual' : 'monthly';
+    const expectedAmount = existingInv?.amount !== undefined && existingInv?.amount !== null
       ? Number(existingInv.amount)
       : Number(cycle === 'annual' ? (targetPlan?.priceAnnualMonthly || targetPlan?.priceMonthly || 0) * 12 : (targetPlan?.priceMonthly || 0));
 
-    if (Number.isFinite(paidAmt) && Number.isFinite(expectedAmount) && expectedAmount > 0 && paidAmt + 0.05 < expectedAmount) {
+    if (!Number.isFinite(paidAmt) || paidAmt <= 0) {
+      return { outcome: 'amount_mismatch', amountMismatch: true, paidAmt: Number.isFinite(paidAmt) ? paidAmt : 0, expectedAmount };
+    }
+    const paidCents = Math.round(paidAmt * 100);
+    const expectedCents = Math.round((Number.isFinite(expectedAmount) ? expectedAmount : 0) * 100);
+    if (expectedCents > 0 && paidCents + 5 < expectedCents) {
       return { outcome: 'amount_mismatch', amountMismatch: true, paidAmt, expectedAmount };
     }
 
     const resConfirm = confirmTenantPayment(baseDataDir, cleanId, {
       invoiceId: opts.invoiceId || existingInv?.id || undefined,
       mpPaymentId: mpPid || undefined,
-      amount: Number.isFinite(paidAmt) ? paidAmt : expectedAmount,
+      amount: paidAmt,
       paidAt: mpData.date_approved || new Date().toISOString(),
       method: 'PIX (Mercado Pago)',
       cycle,
@@ -1674,19 +1820,40 @@ export function applyGatewayPaymentUpdate(baseDataDir, tenantId, mpData, opts = 
       }
       if (!row) return { outcome: status, updated: false, reason: 'invoice_not_found' };
       const prev = JSON.parse(row.data);
-      if (prev.gatewayStatus === status && prev.refundedAt) {
+      if ((row.status === status || prev.gatewayStatus === status) && prev.refundedAt) {
         return { outcome: status, alreadyRecorded: true, updated: false, invoice: prev };
       }
+      const wasPaid = row.status === 'paid' || prev.status === 'paid';
+      const now = Date.now();
+      const nowIso = new Date(now).toISOString();
       const nextInv = {
         ...prev,
+        status,
         gatewayStatus: status,
-        refundedAt: mpData.date_last_updated || new Date().toISOString()
+        refundedAt: mpData.date_last_updated || nowIso
       };
       inst.stmts.upsertInvoiceRow.run(
         row.id, cleanId, row.plan_id, row.kind || 'pix_checkout', row.amount_cents,
-        row.status, nextInv.method || prev.method || null, row.mp_payment_id || mpPid,
+        status, nextInv.method || prev.method || null, row.mp_payment_id || mpPid,
         row.idempotency_key, row.created_at, row.paid_at, row.expires_at, JSON.stringify(nextInv)
       );
+      if (wasPaid) {
+        const tRow = inst.stmts.getTenantRow.get(cleanId);
+        if (tRow) {
+          const t = JSON.parse(tRow.data);
+          const invCycle = prev.cycle === 'annual' ? 'annual' : 'monthly';
+          const daysToRevert = invCycle === 'annual' ? 365 : 30;
+          const curNextMs = t.nextBillingAt ? Date.parse(t.nextBillingAt) : NaN;
+          t.nextBillingAt = Number.isFinite(curNextMs)
+            ? new Date(Math.min(now, curNextMs - daysToRevert * 86400000)).toISOString()
+            : nowIso;
+          if (t.status !== 'suspended') {
+            t.status = 'past_due';
+          }
+          t.updatedAt = nowIso;
+          inst.stmts.upsertTenantRow.run(cleanId, t.planId, t.status, JSON.stringify(t), tRow.branding, tRow.templates || '[]', now);
+        }
+      }
       syncSaasMirrorInTx(inst);
       return { outcome: status, alreadyRecorded: false, updated: true, invoice: nextInv };
     });
@@ -1706,6 +1873,7 @@ export function deleteTenant(baseDataDir, tenantId) {
 
   runInTransaction(inst, () => {
     inst.stmts.deleteTenantInvoices.run(cleanId);
+    inst.stmts.deleteTenantOutbox.run(cleanId);
     inst.stmts.clearTenantTemplates.run(cleanId);
     inst.stmts.deleteTenantRow.run(cleanId);
     inst.stmts.deleteKv.run(`branding:${cleanId}`);

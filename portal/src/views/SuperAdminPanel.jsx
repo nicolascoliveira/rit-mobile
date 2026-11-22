@@ -16,7 +16,8 @@ import {
   CardHead,
   EmptyState,
   Modal,
-  ConfirmModal
+  ConfirmModal,
+  LoadingState
 } from '../components/ui.jsx';
 import { LineChart, BarRow, StackBar } from '../components/Charts.jsx';
 import { portalApi, toast, fmtBRL, fmtDateBR, getStudentAppUrl, generateTempPassword, getOrRotateIntentKey } from '../lib/api.js';
@@ -282,12 +283,12 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
   };
 
   const handleDisconnectWa = async () => {
-    if (!window.confirm('Deseja realmente desconectar o WhatsApp oficial da Rit?')) return;
     setDisconnectingWa(true);
     try {
       await portalApi('/api/saas/admin/whatsapp/disconnect', { method: 'POST', tenantId: '' });
       setCentralWa({ connected: false, state: 'close' });
       setQrBase64(null);
+      setConfirmDisconnectWa(false);
       toast('WhatsApp oficial da Rit desconectado.');
     } catch (err) {
       toast(err.message || 'Erro ao desconectar');
@@ -316,6 +317,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
     }
   };
 
+  const [confirmDisconnectWa, setConfirmDisconnectWa] = useState(false);
   const [adminWaModal, setAdminWaModal] = useState(null);
   const [sendingAdminWa, setSendingAdminWa] = useState(false);
 
@@ -632,11 +634,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
   };
 
   if (loading && !data) {
-    return (
-      <div style={{ padding: '60px 0', textAlign: 'center' }} className="muted">
-        Carregando central executiva...
-      </div>
-    );
+    return <LoadingState label="Carregando central executiva..." cards={4} />;
   }
 
   const planColors = ['#3b82f6', '#a3e635', '#a855f7', '#06b6d4'];
@@ -804,15 +802,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                               <div style={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                                 <span>{t.name}</span>
                                 <span
-                                  style={{
-                                    fontSize: 10.5,
-                                    fontWeight: 700,
-                                    padding: '1px 7px',
-                                    borderRadius: 99,
-                                    background: (t.accountType === 'personal' || String(t.planId || '').startsWith('personal')) ? 'rgba(163,230,53,0.16)' : 'var(--bg-el)',
-                                    color: (t.accountType === 'personal' || String(t.planId || '').startsWith('personal')) ? 'var(--acc-ink)' : 'var(--label-2)',
-                                    border: '1px solid var(--sep)'
-                                  }}
+                                  className={'b2b-type-badge' + ((t.accountType === 'personal' || String(t.planId || '').startsWith('personal')) ? ' is-personal' : '')}
                                 >
                                   {(t.accountType === 'personal' || String(t.planId || '').startsWith('personal')) ? 'Personal' : 'Academia'}
                                 </span>
@@ -858,6 +848,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                               rel="noreferrer"
                               className="btn ghost sm"
                               title="Abrir Aplicativo do Aluno"
+                              aria-label={`Abrir Aplicativo do Aluno de ${t.name}`}
                             >
                               <Icon name="phoneScreen" size={15} />
                               <span>App Aluno</span>
@@ -868,6 +859,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                                 size="sm"
                                 icon="chat"
                                 title="Enviar mensagem via WhatsApp Oficial"
+                                aria-label={`Enviar WhatsApp para ${t.name}`}
                                 style={{ color: 'var(--green)' }}
                                 onClick={() => {
                                   setAdminWaModal({
@@ -979,15 +971,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                               <div style={{ fontWeight: 700, fontSize: 14.5, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                                 <span>{t.name}</span>
                                 <span
-                                  style={{
-                                    fontSize: 10.5,
-                                    fontWeight: 700,
-                                    padding: '1px 7px',
-                                    borderRadius: 99,
-                                    background: (t.accountType === 'personal' || String(t.planId || '').startsWith('personal')) ? 'rgba(163,230,53,0.16)' : 'var(--bg-el)',
-                                    color: (t.accountType === 'personal' || String(t.planId || '').startsWith('personal')) ? 'var(--acc-ink)' : 'var(--label-2)',
-                                    border: '1px solid var(--sep)'
-                                  }}
+                                  className={'b2b-type-badge' + ((t.accountType === 'personal' || String(t.planId || '').startsWith('personal')) ? ' is-personal' : '')}
                                 >
                                   {(t.accountType === 'personal' || String(t.planId || '').startsWith('personal')) ? 'Personal' : 'Academia'}
                                 </span>
@@ -1014,7 +998,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                         </td>
                         <td data-label="Uso do Plano">
                           <div style={{ flex: '1 1 140px', minWidth: 0 }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginBottom: 4 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, marginBottom: 4 }}>
                               <span className="num"><b>{t.studentCount}</b> / {maxSt} alunos</span>
                               <span className="muted num">{t.trainerCount} prof.</span>
                             </div>
@@ -1040,6 +1024,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                               icon="eye"
                               onClick={() => onImpersonate?.(t)}
                               title="Entrar no painel desta academia"
+                              aria-label={`Acessar painel de ${t.name}`}
                             >
                               Painel
                             </Button>
@@ -1049,6 +1034,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                               rel="noreferrer"
                               className="btn ghost sm"
                               title="Abrir App do Aluno"
+                              aria-label={`Abrir App do Aluno de ${t.name}`}
                             >
                               <Icon name="phoneScreen" size={15} />
                             </a>
@@ -1058,6 +1044,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                                 size="sm"
                                 icon="chat"
                                 title="Enviar mensagem via WhatsApp Oficial"
+                                aria-label={`Enviar WhatsApp para ${t.name}`}
                                 style={{ color: 'var(--green)' }}
                                 onClick={() => {
                                   setAdminWaModal({
@@ -1073,6 +1060,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                               size="sm"
                               icon="pencil"
                               title="Editar cadastro, plano e limites"
+                              aria-label={`Editar cliente ${t.name}`}
                               onClick={() =>
                                 setEditTenant({
                                   ...t,
@@ -1085,6 +1073,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                               size="sm"
                               icon="key"
                               title="Redefinir senha do gestor da academia"
+                              aria-label={`Redefinir senha do gestor de ${t.name}`}
                               onClick={() => {
                                 setPwModalTenant(t);
                                 setNewOwnerPw('');
@@ -1095,6 +1084,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                               size="sm"
                               icon={t.status === 'suspended' ? 'check' : 'lock'}
                               title={t.status === 'suspended' ? 'Reativar acesso da academia' : 'Suspender acesso por inadimplência'}
+                              aria-label={t.status === 'suspended' ? `Reativar acesso de ${t.name}` : `Suspender acesso de ${t.name}`}
                               disabled={togglingTenantId === t.id}
                               onClick={() => handleToggleStatus(t)}
                             />
@@ -1103,7 +1093,8 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                               size="sm"
                               icon="trash"
                               title="Remover academia"
-                              style={{ color: 'var(--red)' }}
+                              aria-label={`Remover cliente ${t.name}`}
+                              className="ghost-danger"
                               onClick={() => setDeleteTarget(t)}
                             />
                           </div>
@@ -1365,11 +1356,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                   subtitle="Canal central que dispara relatórios de treino concluído e notificações para todos os professores e academias clientes."
                 />
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                  <div style={{
-                    padding: '12px 14px',
-                    borderRadius: 10,
-                    background: 'var(--surface-1)',
-                    border: '1px solid var(--sep)',
+                  <div className="b2b-subcard" style={{
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
@@ -1377,19 +1364,13 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                     flexWrap: 'wrap'
                   }}>
                     <div>
-                      <div style={{ fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                         <span>Status do Robô:</span>
-                        {centralWa?.connected ? (
-                          <span style={{ fontSize: 12, padding: '3px 9px', borderRadius: 99, background: 'rgba(34, 197, 94, 0.15)', color: 'var(--green)', fontWeight: 700 }}>
-                            🟢 Conectado e Operante
-                          </span>
-                        ) : (
-                          <span style={{ fontSize: 12, padding: '3px 9px', borderRadius: 99, background: 'rgba(239, 68, 68, 0.15)', color: 'var(--red)', fontWeight: 700 }}>
-                            ⚪ Desconectado
-                          </span>
-                        )}
+                        <StatusPill tone={centralWa?.connected ? 'ok' : 'bad'}>
+                          {centralWa?.connected ? 'Conectado e Operante' : 'Desconectado'}
+                        </StatusPill>
                       </div>
-                      <div className="muted small" style={{ marginTop: 4 }}>
+                      <div className="muted" style={{ marginTop: 4, fontSize: 14 }}>
                         {centralWa?.connected ? (
                           <>
                             Número Pareado: <b>{centralWa.instanceInfo?.phone || 'Conectado'}</b>
@@ -1408,7 +1389,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                           icon="chat"
                           size="sm"
                           onClick={handleOpenQrModal}
-                          disabled={loadingQr}
+                          loading={loadingQr}
                         >
                           {loadingQr ? 'Carregando...' : 'Conectar WhatsApp (QR Code)'}
                         </Button>
@@ -1417,8 +1398,8 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                           variant="danger"
                           size="sm"
                           icon="trash"
-                          onClick={handleDisconnectWa}
-                          disabled={disconnectingWa}
+                          onClick={() => setConfirmDisconnectWa(true)}
+                          loading={disconnectingWa}
                         >
                           {disconnectingWa ? 'Desconectando...' : 'Desconectar WhatsApp'}
                         </Button>
@@ -1428,7 +1409,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
 
                   {/* Teste de Envio */}
                   <div style={{ borderTop: '1px solid var(--sep)', paddingTop: 12 }}>
-                    <div className="small muted" style={{ marginBottom: 6, fontWeight: 600 }}>
+                    <div className="muted" style={{ marginBottom: 6, fontWeight: 600, fontSize: 14 }}>
                       Disparo de Mensagem de Teste pelo Robô Central:
                     </div>
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -1443,7 +1424,8 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                         variant="tinted"
                         icon="chat"
                         size="sm"
-                        disabled={testingWa || !testPhoneInput.trim()}
+                        disabled={!testPhoneInput.trim()}
+                        loading={testingWa}
                         onClick={handleTestCentralWa}
                       >
                         {testingWa ? 'Enviando...' : 'Enviar Teste'}
@@ -1462,11 +1444,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                   subtitle="Conta que recebe os pagamentos de assinaturas das academias e personais via PIX instantâneo."
                 />
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                  <div style={{
-                    padding: '12px 14px',
-                    borderRadius: 10,
-                    background: 'var(--surface-1)',
-                    border: '1px solid var(--sep)',
+                  <div className="b2b-subcard" style={{
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
@@ -1474,19 +1452,13 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                     flexWrap: 'wrap'
                   }}>
                     <div>
-                      <div style={{ fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                         <span>Status da Integração:</span>
-                        {mpStatus?.configured ? (
-                          <span style={{ fontSize: 12, padding: '3px 9px', borderRadius: 99, background: 'rgba(34, 197, 94, 0.15)', color: 'var(--green)', fontWeight: 700 }}>
-                            🟢 Conectado em Produção
-                          </span>
-                        ) : (
-                          <span style={{ fontSize: 12, padding: '3px 9px', borderRadius: 99, background: 'rgba(234, 179, 8, 0.15)', color: 'var(--yellow)', fontWeight: 700 }}>
-                            🟡 Modo Simulação Ativo (Aguardando Token no .env)
-                          </span>
-                        )}
+                        <StatusPill tone={mpStatus?.configured ? 'ok' : 'warn'}>
+                          {mpStatus?.configured ? 'Conectado em Produção' : 'Modo Simulação Ativo (Aguardando Token no .env)'}
+                        </StatusPill>
                       </div>
-                      <div className="muted small" style={{ marginTop: 4 }}>
+                      <div className="muted" style={{ marginTop: 4, fontSize: 14 }}>
                         {mpStatus?.configured ? (
                           <>Credencial Ativa: <code>{mpStatus.maskedToken}</code> · Os valores caem diretamente no seu Mercado Pago</>
                         ) : (
@@ -1496,7 +1468,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                     </div>
                   </div>
 
-                  <div style={{ borderTop: '1px solid var(--sep)', paddingTop: 12, fontSize: 12.5, lineHeight: 1.6, color: 'var(--muted)' }}>
+                  <div style={{ borderTop: '1px solid var(--sep)', paddingTop: 12, fontSize: 14, lineHeight: 1.6, color: 'var(--label-2)' }}>
                     <div><strong>URL do Webhook para Notificações:</strong></div>
                     <code style={{
                       display: 'inline-block',
@@ -1507,7 +1479,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                       padding: '4px 8px',
                       background: 'var(--surface-2)',
                       borderRadius: 6,
-                      color: 'var(--fg)'
+                      color: 'var(--label)'
                     }}>
                       {mpStatus?.webhookUrl || (typeof window !== 'undefined' ? `${window.location.origin}/api/saas/billing/webhook` : '/api/saas/billing/webhook')}
                     </code>
@@ -1750,6 +1722,8 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                 <button
                   type="button"
                   key={hex}
+                  aria-label={`Selecionar cor ${hex}`}
+                  aria-pressed={newForm.primaryColor === hex}
                   onClick={() => setNewForm(p => ({ ...p, primaryColor: hex }))}
                   style={{
                     width: 30,
@@ -1763,6 +1737,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
               ))}
               <input
                 type="color"
+                aria-label="Cor personalizada do aplicativo"
                 value={newForm.primaryColor}
                 onChange={e => setNewForm(p => ({ ...p, primaryColor: e.target.value }))}
                 style={{ width: 36, height: 32, border: 'none', background: 'transparent', cursor: 'pointer' }}
@@ -1889,9 +1864,11 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
         <form onSubmit={handleResetOwnerPassword}>
           <TextField
             label="Nova Senha de Acesso ao Painel da Academia"
+            type="password"
             placeholder="Mínimo de 10 caracteres"
             value={newOwnerPw}
             onChange={setNewOwnerPw}
+            autoComplete="new-password"
             autoFocus
           />
         </form>
@@ -2113,24 +2090,24 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                   style={{ width: 'min(240px, 100%)', height: 'auto', aspectRatio: '1 / 1', display: 'block', borderRadius: 8 }}
                 />
               </div>
-              <div style={{ fontSize: 13, color: 'var(--muted)', maxWidth: 300, lineHeight: 1.5 }}>
+              <div style={{ fontSize: 14, color: 'var(--label-2)', maxWidth: 320, lineHeight: 1.5 }}>
                 1. Abra o <b>WhatsApp</b> no celular do Rit.<br />
                 2. Vá em <b>Aparelhos Conectados</b>.<br />
                 3. Toque em <b>Conectar um aparelho</b> e aponte para o código acima.<br />
-                <span className="small">O código é renovado automaticamente a cada ~20s.</span>
+                <span>O código é renovado automaticamente a cada ~20s.</span>
               </div>
             </>
           ) : (
             <div style={{ padding: '30px 0' }}>
               <div className="muted" style={{ marginBottom: 12 }}>Aguardando inicialização do gateway...</div>
-              <Button size="sm" variant="tinted" onClick={handleOpenQrModal} disabled={loadingQr}>
+              <Button size="sm" variant="tinted" onClick={handleOpenQrModal} loading={loadingQr}>
                 {loadingQr ? 'Gerando...' : 'Tentar Novamente'}
               </Button>
             </div>
           )}
           <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 10, marginTop: 4 }}>
             {qrBase64 && (
-              <Button variant="tinted" size="sm" onClick={handleOpenQrModal} disabled={loadingQr}>
+              <Button variant="tinted" size="sm" onClick={handleOpenQrModal} loading={loadingQr}>
                 {loadingQr ? 'Atualizando...' : 'Atualizar QR'}
               </Button>
             )}
@@ -2138,6 +2115,18 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
           </div>
         </div>
       </Modal>
+
+      <ConfirmModal
+        open={confirmDisconnectWa}
+        onClose={() => !disconnectingWa && setConfirmDisconnectWa(false)}
+        title="Desconectar WhatsApp Oficial?"
+        message="Os envios automáticos de treinos concluídos e notificações da plataforma serão pausados até um novo pareamento por QR Code."
+        confirmLabel="Desconectar WhatsApp"
+        confirmVariant="danger"
+        confirmIcon="trash"
+        loading={disconnectingWa}
+        onConfirm={handleDisconnectWa}
+      />
 
       {/* Modal: Enviar WhatsApp Oficial pelo Super Admin */}
       <Modal
@@ -2152,11 +2141,11 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
               Cancelar
             </Button>
             <Button
-              variant="primary"
+              variant="success"
               icon="chat"
+              loading={sendingAdminWa}
               onClick={handleSendAdminWhatsApp}
-              disabled={sendingAdminWa || !adminWaModal?.phone?.trim() || !adminWaModal?.message?.trim()}
-              style={{ background: 'var(--green)', borderColor: 'var(--green)' }}
+              disabled={!adminWaModal?.phone?.trim() || !adminWaModal?.message?.trim()}
             >
               {sendingAdminWa ? 'Disparando...' : 'Enviar Agora via WhatsApp'}
             </Button>
@@ -2180,8 +2169,8 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
               placeholder="Digite a mensagem para o cliente..."
               required
             />
-            <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-              ⚡ A mensagem será entregue pelo Robô Central da Rit diretamente na conversa do cliente.
+            <div style={{ fontSize: 14, color: 'var(--label-2)' }}>
+              A mensagem será entregue pelo Robô Central da Rit diretamente na conversa do cliente.
             </div>
           </form>
         )}

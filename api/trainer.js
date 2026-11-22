@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
 import { stampPut } from './sync-stamps.js';
+import { excusedOn } from './nudge.js';
+import { addWeighIn } from './weigh-ins.js';
 import {
   getSqliteKv,
   setSqliteKv,
@@ -760,14 +762,688 @@ function ensureBaseStudentState(cur) {
     week: {},
     dayPlan: {},
     workouts: [],
+    bodyweight: [],
     bw: [],
+    measurements: [],
+    assessments: [],
+    routineArchive: [],
+    videoReviews: {},
     customEx: []
   };
   if (!Array.isArray(base.routines)) base.routines = [];
   if (!base.week || typeof base.week !== 'object' || Array.isArray(base.week)) base.week = {};
   if (!base.dayPlan || typeof base.dayPlan !== 'object' || Array.isArray(base.dayPlan)) base.dayPlan = {};
   if (!Array.isArray(base.workouts)) base.workouts = [];
+  if (!Array.isArray(base.bodyweight)) base.bodyweight = [];
+  if (!Array.isArray(base.measurements)) base.measurements = [];
+  if (!Array.isArray(base.assessments)) base.assessments = [];
+  if (!Array.isArray(base.routineArchive)) base.routineArchive = [];
+  if (!base.videoReviews || typeof base.videoReviews !== 'object' || Array.isArray(base.videoReviews)) base.videoReviews = {};
   return base;
+}
+
+const VALID_SHA256_RE = /^[0-9a-f]{64}$/;
+const LB_TO_KG = 0.45359237;
+const ASSESSMENT_WEIGH_IN_ID = 'trainer-assessment';
+const CIRCUMFERENCE_FIELDS = [
+  'neck', 'shoulders', 'chest', 'waist', 'abdomen', 'hips',
+  'upperArmLeft', 'upperArmRight', 'forearmLeft', 'forearmRight',
+  'thighLeft', 'thighRight', 'calfLeft', 'calfRight'
+];
+const SKINFOLD_FIELDS = [
+  'triceps', 'subscapular', 'biceps', 'iliacCrest', 'supraspinale',
+  'abdominal', 'frontThigh', 'medialCalf', 'chestFold', 'midaxillary'
+];
+
+function roundMetric(val, decimals = 1) {
+  const n = Number(val);
+  if (!Number.isFinite(n)) return null;
+  const factor = Math.pow(10, decimals);
+  return Math.round(n * factor) / factor;
+}
+
+function cleanPositiveNum(val, min, max, decimals = 1) {
+  if (val === undefined || val === null || val === '') return null;
+  const n = Number(String(val).replace(',', '.'));
+  if (!Number.isFinite(n) || n < min || n > max) return null;
+  return roundMetric(n, decimals);
+}
+
+function normalizeIsoDay(raw, nowMs = Date.now()) {
+  const str = String(raw || '').trim().slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+  return new Date(nowMs - 3 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+function stampEditedKey(state, key, nowMs) {
+  if (!state.edited || typeof state.edited !== 'object' || Array.isArray(state.edited)) {
+    state.edited = {};
+  }
+  state.edited[key] = nowMs;
+}
+
+/**
+ * Unifica `state.bodyweight` (formato nativo do app do aluno) e `state.bw` (legado B2B)
+ * em quilogramas e em ordem cronológica crescente por data `d`.
+ */
+export function normalizeBodyweightSeries(state) {
+  const byDay = new Map();
+  const sources = [
+    { items: state?.bw, toKg: 1 },
+    { items: state?.bodyweight, toKg: state?.unit === 'lb' ? LB_TO_KG : 1 }
+  ];
+  for (const { items, toKg } of sources) {
+    for (const item of Array.isArray(items) ? items : []) {
+      if (!item || typeof item !== 'object') continue;
+      const d = typeof item.d === 'string' && /^\d{4}-\d{2}-\d{2}/.test(item.d) ? item.d.slice(0, 10) : '';
+      if (!d) continue;
+      const t = Number(item.t) || Date.parse(`${d}T12:00:00Z`) || 0;
+      const prev = byDay.get(d);
+      const rawWeight = item.w ?? item.weight ?? item.value;
+      const weight = Number(String(rawWeight).replace(',', '.'));
+      // Avaliações antigas gravavam o mesmo valor em kg nos dois campos.
+      const isLegacyAssessment = item.src === 'trainer' && !Array.isArray(item.ins) && prev?.t === t && prev.w === weight;
+      const w = cleanPositiveNum(weight * (isLegacyAssessment ? 1 : toKg), 15, 450, 1);
+      if (w !== null && (!prev || t >= prev.t)) {
+        byDay.set(d, { d, w, t, ...(item.src ? { src: String(item.src).slice(0, 24) } : {}) });
+      }
+    }
+  }
+  return Array.from(byDay.values()).sort((a, b) => a.d.localeCompare(b.d));
+}
+
+function buildBodySnapshotFromDay({ day, bwMap, measMap, assessMap }) {
+  const bw = bwMap.get(day);
+  const meas = measMap.get(day);
+  const assess = assessMap.get(day);
+  const weightKg = cleanPositiveNum(assess?.weightKg ?? bw?.w, 15, 450, 1);
+  const bodyFat = cleanPositiveNum(assess?.bodyFat ?? meas?.bodyFat, 2, 70, 1);
+  const leanMassKg = weightKg !== null && bodyFat !== null
+    ? roundMetric(weightKg * (1 - bodyFat / 100), 1)
+    : cleanPositiveNum(assess?.leanMassKg, 10, 350, 1);
+  const fatMassKg = weightKg !== null && bodyFat !== null
+    ? roundMetric(weightKg * (bodyFat / 100), 1)
+    : cleanPositiveNum(assess?.fatMassKg, 1, 300, 1);
+
+  const snap = {
+    d: day,
+    weightKg,
+    bodyFat,
+    leanMassKg,
+    fatMassKg
+  };
+  for (const field of CIRCUMFERENCE_FIELDS) {
+    const val = cleanPositiveNum(meas?.[field] ?? assess?.circumferences?.[field], 10, 300, 1);
+    if (val !== null) snap[field] = val;
+  }
+  return snap;
+}
+
+/**
+ * Calcula automaticamente o comparativo Antes vs. Atual de peso, composição corporal e medidas.
+ */
+export function computeBodyComparison(state) {
+  const bwSeries = normalizeBodyweightSeries(state);
+  const measList = (Array.isArray(state?.measurements) ? state.measurements : [])
+    .filter(m => m && typeof m === 'object' && /^\d{4}-\d{2}-\d{2}/.test(String(m.d || '')))
+    .slice()
+    .sort((a, b) => String(a.d).localeCompare(String(b.d)));
+  const assessList = (Array.isArray(state?.assessments) ? state.assessments : [])
+    .filter(a => a && typeof a === 'object' && /^\d{4}-\d{2}-\d{2}/.test(String(a.d || '')))
+    .slice()
+    .sort((a, b) => String(a.d).localeCompare(String(b.d)));
+
+  const bwMap = new Map(bwSeries.map(x => [x.d, x]));
+  const measMap = new Map(measList.map(x => [String(x.d).slice(0, 10), x]));
+  const assessMap = new Map(assessList.map(x => [String(x.d).slice(0, 10), x]));
+  const allDays = Array.from(new Set([...bwMap.keys(), ...measMap.keys(), ...assessMap.keys()])).sort();
+
+  if (!allDays.length) {
+    return { count: 0, before: null, current: null, deltas: {} };
+  }
+
+  const snaps = allDays.map(day => buildBodySnapshotFromDay({ day, bwMap, measMap, assessMap }));
+  const metricKeys = ['weightKg', 'bodyFat', 'leanMassKg', 'fatMassKg', ...CIRCUMFERENCE_FIELDS];
+  const before = { d: snaps[0].d };
+  const current = { d: snaps[snaps.length - 1].d };
+  const deltas = {};
+
+  for (const key of metricKeys) {
+    let firstVal = null;
+    let lastVal = null;
+    let firstDay = null;
+    let lastDay = null;
+    for (const s of snaps) {
+      if (s[key] !== null && s[key] !== undefined) {
+        if (firstVal === null) {
+          firstVal = s[key];
+          firstDay = s.d;
+        }
+        lastVal = s[key];
+        lastDay = s.d;
+      }
+    }
+    if (firstVal !== null) before[key] = firstVal;
+    if (lastVal !== null) current[key] = lastVal;
+    if (firstVal !== null && lastVal !== null && firstDay !== lastDay) {
+      const diff = roundMetric(lastVal - firstVal, 1);
+      const pct = firstVal > 0 ? roundMetric((diff / firstVal) * 100, 1) : null;
+      deltas[key] = { before: firstVal, current: lastVal, diff, pct, beforeDate: firstDay, currentDate: lastDay };
+    }
+  }
+
+  return {
+    count: allDays.length,
+    before,
+    current,
+    deltas
+  };
+}
+
+/**
+ * Registra avaliação física e antropometria do aluno pelo painel B2B,
+ * compatibilizando `state.bodyweight`, `state.measurements` e `state.assessments`.
+ */
+export function recordStudentAssessment(dataOrTenantDir, studentId, payload = {}, trainerUser = null, stateOps = null) {
+  const now = Date.now();
+  const d = normalizeIsoDay(payload.d || payload.date, now);
+  const weightKg = cleanPositiveNum(payload.weightKg ?? payload.weight, 15, 450, 1);
+  const heightCm = cleanPositiveNum(payload.heightCm ?? payload.height, 80, 260, 1);
+  const bodyFat = cleanPositiveNum(payload.bodyFat ?? payload.bf, 2, 70, 1);
+  const goalWeightKg = cleanPositiveNum(payload.goalWeightKg, 15, 450, 1);
+  const goalBodyFat = cleanPositiveNum(payload.goalBodyFat, 2, 70, 1);
+
+  const circumferences = {};
+  const circSrc = payload.circumferences && typeof payload.circumferences === 'object' ? payload.circumferences : payload;
+  for (const field of CIRCUMFERENCE_FIELDS) {
+    const v = cleanPositiveNum(circSrc?.[field], 10, 300, 1);
+    if (v !== null) circumferences[field] = v;
+  }
+
+  const skinfolds = {};
+  const foldSrc = payload.skinfolds && typeof payload.skinfolds === 'object' ? payload.skinfolds : {};
+  for (const field of SKINFOLD_FIELDS) {
+    const v = cleanPositiveNum(foldSrc?.[field], 1, 120, 1);
+    if (v !== null) skinfolds[field] = v;
+  }
+
+  const clinicalNotes = String(payload.clinicalNotes ?? payload.notes ?? '').trim().slice(0, 1200);
+  const protocol = String(payload.protocol || 'pollock_bioimpedancia').trim().slice(0, 64);
+
+  if (
+    weightKg === null
+    && bodyFat === null
+    && heightCm === null
+    && Object.keys(circumferences).length === 0
+    && Object.keys(skinfolds).length === 0
+    && !clinicalNotes
+  ) {
+    const err = new Error('Informe ao menos peso, % gordura, uma medida corporal ou observação clínica.');
+    err.status = 400;
+    err.code = 'assessment-empty';
+    throw err;
+  }
+
+  let result = null;
+  mutateStudentStateAtomic(dataOrTenantDir, studentId, stateOps, (state) => {
+    if (weightKg !== null) {
+      state.bodyweight = state.bodyweight.filter(item => item && typeof item.d === 'string');
+      const day = state.bodyweight.find(item => item.d === d);
+      if (day?.src === 'trainer' && !Array.isArray(day.ins)) day.ins = [];
+      const previousReading = Array.isArray(day?.ins)
+        ? day.ins.find(reading => reading?.id === ASSESSMENT_WEIGH_IN_ID)
+        : null;
+      const localTimestamp = new Date(now - 3 * 3600000).toISOString();
+      addWeighIn(state, {
+        d,
+        at: previousReading ? previousReading.at : (localTimestamp.startsWith(d) ? localTimestamp.slice(11, 16) : null),
+        w: state.unit === 'lb' ? weightKg / LB_TO_KG : weightKg,
+        t: now,
+        id: ASSESSMENT_WEIGH_IN_ID,
+        src: 'trainer'
+      });
+
+      const legacyBw = Array.isArray(state.bw) ? state.bw.filter(x => x && x.d !== d) : [];
+      legacyBw.push({ d, w: weightKg, t: now });
+      legacyBw.sort((a, b) => String(a.d).localeCompare(String(b.d)));
+      state.bw = legacyBw;
+    }
+
+    if (bodyFat !== null || Object.keys(circumferences).length > 0) {
+      const measArr = Array.isArray(state.measurements) ? state.measurements.filter(x => x && typeof x === 'object') : [];
+      const idx = measArr.findIndex(m => String(m.d || '').slice(0, 10) === d);
+      const existing = idx >= 0 ? { ...measArr[idx] } : { d };
+      const merged = {
+        ...existing,
+        d,
+        t: now,
+        ...circumferences,
+        ...(bodyFat !== null ? { bodyFat } : {})
+      };
+      if (idx >= 0) measArr[idx] = merged;
+      else measArr.push(merged);
+      measArr.sort((a, b) => String(a.d).localeCompare(String(b.d)));
+      state.measurements = measArr;
+    }
+
+    const leanMassKg = weightKg !== null && bodyFat !== null ? roundMetric(weightKg * (1 - bodyFat / 100), 1) : null;
+    const fatMassKg = weightKg !== null && bodyFat !== null ? roundMetric(weightKg * (bodyFat / 100), 1) : null;
+    const bmi = weightKg !== null && heightCm !== null ? roundMetric(weightKg / Math.pow(heightCm / 100, 2), 1) : null;
+
+    const assessRecord = {
+      id: payload.id ? String(payload.id).slice(0, 64) : 'av_' + crypto.randomBytes(6).toString('hex'),
+      d,
+      t: now,
+      trainerId: trainerUser?.id || 'staff',
+      trainerName: trainerUser?.name || 'Professor',
+      protocol,
+      ...(heightCm !== null ? { heightCm } : {}),
+      ...(weightKg !== null ? { weightKg } : {}),
+      ...(bodyFat !== null ? { bodyFat } : {}),
+      ...(bmi !== null ? { bmi } : {}),
+      ...(leanMassKg !== null ? { leanMassKg } : {}),
+      ...(fatMassKg !== null ? { fatMassKg } : {}),
+      ...(goalWeightKg !== null ? { goalWeightKg } : {}),
+      ...(goalBodyFat !== null ? { goalBodyFat } : {}),
+      ...(Object.keys(skinfolds).length ? { skinfolds } : {}),
+      ...(Object.keys(circumferences).length ? { circumferences } : {}),
+      ...(clinicalNotes ? { clinicalNotes } : {})
+    };
+
+    const assessList = Array.isArray(state.assessments) ? state.assessments.filter(Boolean) : [];
+    const exIdx = assessList.findIndex(a => a.d === d);
+    if (exIdx >= 0) assessList[exIdx] = { ...assessList[exIdx], ...assessRecord, id: assessList[exIdx].id || assessRecord.id };
+    else assessList.push(assessRecord);
+    assessList.sort((a, b) => String(a.d).localeCompare(String(b.d)));
+    state.assessments = assessList.slice(-50);
+    stampEditedKey(state, 'assessments', now);
+
+    result = {
+      assessment: assessList.find(a => a.d === d) || assessRecord,
+      bodyweight: normalizeBodyweightSeries(state),
+      measurements: state.measurements,
+      assessments: state.assessments,
+      bodyComparison: computeBodyComparison(state)
+    };
+    return state;
+  });
+
+  return result;
+}
+
+function captureInitialWeightsForRoutine(state, exList = []) {
+  const weights = {};
+  for (const ex of exList) {
+    if (!ex?.id) continue;
+    const logged = cleanPositiveNum(state?.exWeights?.[ex.id]?.w, 0.5, 2000, 1);
+    const target = cleanPositiveNum(ex.w ?? ex.weight, 0.5, 2000, 1);
+    if (logged !== null) weights[ex.id] = logged;
+    else if (target !== null) weights[ex.id] = target;
+  }
+  return weights;
+}
+
+function buildRoutineArchiveSnapshot(state, routine, { archivedAt = Date.now(), reason = 'renewed', trainerUser = null, resolveNameFn = null } = {}) {
+  if (!routine || typeof routine !== 'object') return null;
+  const prescribedAt = Number(routine.prescribedBy?.at) || archivedAt;
+  const exList = Array.isArray(routine.ex) ? routine.ex : [];
+  const exIds = new Set(exList.map(e => String(e?.id || '')).filter(Boolean));
+  const workouts = Array.isArray(state?.workouts) ? state.workouts : [];
+
+  const maxLoggedDuring = new Map();
+  let workoutsCount = 0;
+  for (const w of workouts) {
+    if (!w || typeof w !== 'object') continue;
+    const wMs = Number(w.end) || Number(w.start) || (w.d ? Date.parse(`${w.d}T12:00:00Z`) : 0);
+    if (wMs && prescribedAt && wMs < prescribedAt - 86400000) continue;
+    const wExIds = Array.isArray(w.entries) ? w.entries.map(e => String(e?.id || '')) : [];
+    const matchesRoutine = (w.routineId && w.routineId === routine.id) || wExIds.some(id => exIds.has(id));
+    if (!matchesRoutine) continue;
+    workoutsCount += 1;
+    for (const entry of w.entries || []) {
+      const eid = String(entry?.id || '');
+      if (!eid) continue;
+      for (const s of entry.sets || []) {
+        if (s?.done === false || s?.warmup) continue;
+        const sw = cleanPositiveNum(s?.w, 0.5, 2000, 1);
+        if (sw !== null && sw > (maxLoggedDuring.get(eid) || 0)) {
+          maxLoggedDuring.set(eid, sw);
+        }
+      }
+    }
+  }
+
+  const initialMap = routine.prescribedBy?.initialWeights || {};
+  const exercises = exList.map(e => {
+    const id = String(e?.id || '');
+    const initW = cleanPositiveNum(initialMap[id] ?? e?.w ?? e?.weight, 0.5, 2000, 1);
+    const finW = cleanPositiveNum(maxLoggedDuring.get(id) ?? state?.exWeights?.[id]?.w ?? e?.w ?? e?.weight, 0.5, 2000, 1);
+    const deltaKg = initW !== null && finW !== null ? roundMetric(finW - initW, 1) : null;
+    return {
+      id,
+      name: (typeof resolveNameFn === 'function' ? resolveNameFn(id) : null) || e?.name || id,
+      sets: Number(e?.sets) || 3,
+      reps: e?.reps ?? null,
+      initialWeightKg: initW,
+      finalWeightKg: finW,
+      deltaKg
+    };
+  });
+
+  const durationDays = Math.max(0, Math.round((archivedAt - prescribedAt) / 86400000));
+  return {
+    id: 'arc_' + crypto.randomBytes(6).toString('hex'),
+    routineId: routine.id || null,
+    name: String(routine.name || 'Treino Arquivado'),
+    emoji: String(routine.emoji || 'figureStrength'),
+    prescribedAt: routine.prescribedBy?.at || null,
+    archivedAt,
+    durationDays,
+    reason: String(reason || 'renewed').slice(0, 40),
+    trainerName: trainerUser?.name || routine.prescribedBy?.trainerName || 'Professor',
+    workoutsCount,
+    exercises
+  };
+}
+
+export function archiveRoutineSnapshotsInState(state, routinesToArchive, options = {}) {
+  const archivedAt = Number(options.archivedAt) || Date.now();
+  const list = Array.isArray(routinesToArchive) ? routinesToArchive.filter(r => r && typeof r === 'object') : [];
+  if (!list.length) return [];
+  if (!Array.isArray(state.routineArchive)) state.routineArchive = [];
+  const created = [];
+  for (const r of list) {
+    const snap = buildRoutineArchiveSnapshot(state, r, { ...options, archivedAt });
+    if (snap) {
+      state.routineArchive.push(snap);
+      created.push(snap);
+    }
+  }
+  state.routineArchive = state.routineArchive.slice(-30);
+  stampEditedKey(state, 'routineArchive', archivedAt);
+  return created;
+}
+
+function replaceRoutineScheduleReferences(state, oldId, newId) {
+  if (!oldId || oldId === newId) return;
+  for (const [day, entry] of Object.entries(state.week)) {
+    const ids = [].concat(entry || []);
+    if (!ids.includes(oldId)) continue;
+    const replacement = ids.map(id => id === oldId ? newId : id).filter(Boolean);
+    if (replacement.length === 0) delete state.week[day];
+    else state.week[day] = Array.isArray(entry) ? [...new Set(replacement)] : replacement[0];
+  }
+  for (const [date, id] of Object.entries(state.dayPlan)) {
+    if (id !== oldId) continue;
+    if (newId) state.dayPlan[date] = newId;
+    else delete state.dayPlan[date];
+  }
+}
+
+/**
+ * Arquiva uma ficha específica ou todas as fichas atuais do aluno no histórico de ciclos (`state.routineArchive`).
+ */
+export function archiveStudentRoutines(dataOrTenantDir, studentId, { routineIds = null, removeCurrent = false, reason = 'cycle_completed', trainerUser = null, resolveNameFn = null } = {}, stateOps = null) {
+  let out = { archived: [], routineArchive: [] };
+  mutateStudentStateAtomic(dataOrTenantDir, studentId, stateOps, (state) => {
+    const now = Date.now();
+    const idSet = Array.isArray(routineIds) && routineIds.length ? new Set(routineIds.map(String)) : null;
+    const targets = idSet
+      ? state.routines.filter(r => idSet.has(String(r.id)))
+      : state.routines.slice();
+    const archived = archiveRoutineSnapshotsInState(state, targets, { archivedAt: now, reason, trainerUser, resolveNameFn });
+
+    if (removeCurrent && targets.length) {
+      const removedIds = new Set(targets.map(r => r.id));
+      state.routines = state.routines.filter(r => !removedIds.has(r.id));
+      for (const id of removedIds) replaceRoutineScheduleReferences(state, id, null);
+    }
+    out = { archived, routineArchive: state.routineArchive };
+    return state;
+  });
+  return out;
+}
+
+/**
+ * Constrói séries históricas de carga, 1RM estimado (Epley) e tonelagem por exercício para gráficos.
+ */
+export function buildExerciseLoadHistory(state, resolveNameFn = null) {
+  const map = new Map();
+  const workouts = (Array.isArray(state?.workouts) ? state.workouts : [])
+    .filter(w => w && typeof w === 'object' && Array.isArray(w.entries))
+    .slice()
+    .sort((a, b) => String(a.d || '').localeCompare(String(b.d || '')));
+
+  for (const w of workouts) {
+    const d = String(w.d || '').slice(0, 10);
+    if (!d) continue;
+    const parts = d.split('-');
+    const label = parts.length === 3 ? `${parts[2]}/${parts[1]}` : d;
+
+    for (const entry of w.entries) {
+      const id = String(entry?.id || '');
+      if (!id) continue;
+      let maxW = 0;
+      let best1Rm = 0;
+      let volKg = 0;
+      let topReps = 0;
+      let hasWork = false;
+      for (const s of entry.sets || []) {
+        if (!s || s.done === false || s.warmup) continue;
+        const sw = Number(s.w) || 0;
+        const sr = Number(s.r) || 0;
+        if (sw <= 0 && sr <= 0) continue;
+        hasWork = true;
+        if (sw > maxW) {
+          maxW = sw;
+          topReps = sr;
+        }
+        if (sw > 0 && sr > 0) {
+          volKg += sw * sr;
+          const epley = sr === 1 ? sw : sw * (1 + sr / 30);
+          if (epley > best1Rm) best1Rm = epley;
+        }
+      }
+      if (!hasWork || maxW <= 0) continue;
+
+      if (!map.has(id)) {
+        map.set(id, {
+          id,
+          name: (typeof resolveNameFn === 'function' ? resolveNameFn(id) : null) || entry.name || id,
+          series: []
+        });
+      }
+      map.get(id).series.push({
+        d,
+        label,
+        maxWeightKg: roundMetric(maxW, 1),
+        est1Rm: roundMetric(best1Rm, 1),
+        volumeKg: Math.round(volKg),
+        topReps
+      });
+    }
+  }
+
+  const exercises = [];
+  for (const item of map.values()) {
+    const s = item.series;
+    if (!s.length) continue;
+    const bestWeightKg = Math.max(...s.map(p => p.maxWeightKg || 0));
+    const bestEst1Rm = Math.max(...s.map(p => p.est1Rm || 0));
+    exercises.push({
+      id: item.id,
+      name: item.name,
+      sessionsCount: s.length,
+      firstWeightKg: s[0].maxWeightKg,
+      latestWeightKg: s[s.length - 1].maxWeightKg,
+      deltaKg: roundMetric((s[s.length - 1].maxWeightKg || 0) - (s[0].maxWeightKg || 0), 1),
+      bestWeightKg,
+      bestEst1Rm: roundMetric(bestEst1Rm, 1),
+      series: s.slice(-24)
+    });
+  }
+  exercises.sort((a, b) => b.sessionsCount - a.sessionsCount || a.name.localeCompare(b.name));
+  return { exercises };
+}
+
+function makeVideoReviewKey(w, entryIdx, setIdx, hash) {
+  const wid = String(w?.id || w?.d || 'w');
+  return `${wid}:${entryIdx}:${setIdx}:${hash}`;
+}
+
+export function isMediaHashInStudentState(state, hash) {
+  if (!VALID_SHA256_RE.test(String(hash || ''))) return false;
+  for (const w of Array.isArray(state?.workouts) ? state.workouts : []) {
+    if (!w || typeof w !== 'object') continue;
+    for (const m of Array.isArray(w.media) ? w.media : []) {
+      if (m && m.hash === hash && m.local !== true) return true;
+      if (m?.poster?.hash === hash && m.local !== true) return true;
+    }
+    for (const e of Array.isArray(w.entries) ? w.entries : []) {
+      for (const s of Array.isArray(e?.sets) ? e.sets : []) {
+        const m = s?.media;
+        if (!m || m.local === true) continue;
+        if (m.hash === hash || m.poster?.hash === hash) return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Lista vídeos/mídias de execução enviados pelo aluno nos treinos (excluindo `local: true`).
+ */
+export function collectStudentFormVideos(state, resolveNameFn = null, limit = 40) {
+  const reviews = state?.videoReviews && typeof state.videoReviews === 'object' ? state.videoReviews : {};
+  const workouts = (Array.isArray(state?.workouts) ? state.workouts : [])
+    .slice()
+    .sort((a, b) => String(b?.d || '').localeCompare(String(a?.d || '')));
+
+  const items = [];
+  for (const w of workouts) {
+    if (!w || typeof w !== 'object') continue;
+    const entries = Array.isArray(w.entries) ? w.entries : [];
+    for (let eIdx = 0; eIdx < entries.length; eIdx++) {
+      const entry = entries[eIdx];
+      const sets = Array.isArray(entry?.sets) ? entry.sets : [];
+      for (let sIdx = 0; sIdx < sets.length; sIdx++) {
+        const set = sets[sIdx];
+        const m = set?.media;
+        if (!m || typeof m !== 'object' || m.local === true) continue;
+        if (!VALID_SHA256_RE.test(String(m.hash || ''))) continue;
+        const key = makeVideoReviewKey(w, eIdx, sIdx, m.hash);
+        const review = reviews[key] || reviews[m.hash] || null;
+        items.push({
+          key,
+          hash: m.hash,
+          kind: m.kind || 'video',
+          mime: m.mime || 'video/mp4',
+          dur: m.dur || null,
+          width: m.width || null,
+          height: m.height || null,
+          posterHash: m.poster?.hash || null,
+          workoutId: w.id || null,
+          workoutDate: w.d || null,
+          workoutName: w.name || w.routineName || 'Treino',
+          exerciseId: entry.id || null,
+          exerciseName: (typeof resolveNameFn === 'function' ? resolveNameFn(entry.id) : null) || entry.name || entry.id || 'Exercício',
+          setIndex: sIdx + 1,
+          weightKg: set.w ?? null,
+          reps: set.r ?? null,
+          rpe: set.rpe ?? null,
+          rir: set.rir ?? null,
+          at: m.at || w.end || w.start || null,
+          review
+        });
+        if (items.length >= limit) return items;
+      }
+    }
+    for (let mIdx = 0; mIdx < (Array.isArray(w.media) ? w.media.length : 0); mIdx++) {
+      const m = w.media[mIdx];
+      if (!m || typeof m !== 'object' || m.local === true) continue;
+      if (!VALID_SHA256_RE.test(String(m.hash || ''))) continue;
+      const key = makeVideoReviewKey(w, -1, mIdx, m.hash);
+      const review = reviews[key] || reviews[m.hash] || null;
+      items.push({
+        key,
+        hash: m.hash,
+        kind: m.kind || 'video',
+        mime: m.mime || 'video/mp4',
+        dur: m.dur || null,
+        width: m.width || null,
+        height: m.height || null,
+        posterHash: m.poster?.hash || null,
+        workoutId: w.id || null,
+        workoutDate: w.d || null,
+        workoutName: w.name || w.routineName || 'Treino',
+        exerciseId: null,
+        exerciseName: 'Registro geral da sessão',
+        setIndex: null,
+        weightKg: null,
+        reps: null,
+        at: m.at || w.end || w.start || null,
+        review
+      });
+      if (items.length >= limit) return items;
+    }
+  }
+  return items;
+}
+
+/**
+ * Registra o parecer/correção biomecânica do professor sobre um vídeo de execução do aluno.
+ */
+export function saveStudentVideoReview(dataOrTenantDir, studentId, { key, hash, status = 'reviewed', comment = '', trainerUser = null } = {}, stateOps = null) {
+  const cleanHash = String(hash || '').trim().toLowerCase();
+  if (!VALID_SHA256_RE.test(cleanHash)) {
+    const err = new Error('Hash de vídeo inválido.');
+    err.status = 400;
+    err.code = 'invalid-media-hash';
+    throw err;
+  }
+  const cleanComment = String(comment || '').trim().slice(0, 1000);
+  if (!cleanComment) {
+    const err = new Error('Escreva um feedback técnico para o aluno.');
+    err.status = 400;
+    err.code = 'empty-review-comment';
+    throw err;
+  }
+
+  let savedReview = null;
+  let videos = [];
+  mutateStudentStateAtomic(dataOrTenantDir, studentId, stateOps, (state) => {
+    if (!isMediaHashInStudentState(state, cleanHash)) {
+      const err = new Error('Vídeo não encontrado ou restrito ao dispositivo do aluno.');
+      err.status = 404;
+      err.code = 'video-not-found';
+      throw err;
+    }
+    const now = Date.now();
+    if (!state.videoReviews || typeof state.videoReviews !== 'object' || Array.isArray(state.videoReviews)) {
+      state.videoReviews = {};
+    }
+    const targetKey = String(key || cleanHash).slice(0, 140);
+    savedReview = {
+      key: targetKey,
+      hash: cleanHash,
+      status: status === 'adjust_needed' ? 'adjust_needed' : 'reviewed',
+      comment: cleanComment,
+      trainerId: trainerUser?.id || 'staff',
+      trainerName: trainerUser?.name || 'Professor',
+      at: now
+    };
+    state.videoReviews[targetKey] = savedReview;
+    const keys = Object.keys(state.videoReviews);
+    if (keys.length > 100) {
+      keys.sort((a, b) => (Number(state.videoReviews[a]?.at) || 0) - (Number(state.videoReviews[b]?.at) || 0));
+      for (const k of keys.slice(0, keys.length - 100)) delete state.videoReviews[k];
+    }
+    stampEditedKey(state, 'videoReviews', now);
+    videos = collectStudentFormVideos(state, null, 40);
+    return state;
+  });
+
+  return { review: savedReview, videos };
 }
 
 /**
@@ -795,11 +1471,14 @@ export function listStudents(db, dataOrTenantDir, options = {}) {
     tenantId = null,
     includeDisabled = false,
     churnDaysThreshold = 5,
+    routineCycleDays = 30,
+    includeWorkoutDates = false,
     stateOps = null,
     livePresence = null,
     nowMs = Date.now()
   } = options;
 
+  const safeCycleDays = Math.max(1, Number(routineCycleDays || 30) || 30);
   const users = Array.isArray(db?.users) ? db.users : [];
   const trainersById = new Map(
     users
@@ -818,6 +1497,7 @@ export function listStudents(db, dataOrTenantDir, options = {}) {
   });
 
   const sevenDaysAgo = new Date(nowMs - 7 * 86400000).toISOString().slice(0, 10);
+  const fourteenDaysAgo = new Date(nowMs - 14 * 86400000).toISOString().slice(0, 10);
   const thirtyDaysAgo = new Date(nowMs - 30 * 86400000).toISOString().slice(0, 10);
 
   return students.map(u => {
@@ -828,18 +1508,68 @@ export function listStudents(db, dataOrTenantDir, options = {}) {
     const rawRLen = Array.isArray(state?.routines) ? state.routines.length : 0;
 
     let summary = studentMetricsCache.get(u.id);
-    if (!summary || summary.rev !== rev || summary.ts !== ts || summary.wLen !== rawWLen || summary.rLen !== rawRLen) {
+    if (
+      !summary ||
+      summary.rev !== rev ||
+      summary.ts !== ts ||
+      summary.wLen !== rawWLen ||
+      summary.rLen !== rawRLen ||
+      summary.feedbackEvents === undefined
+    ) {
       const workouts = Array.isArray(state?.workouts) ? state.workouts.filter(Boolean) : [];
       const routines = Array.isArray(state?.routines) ? state.routines.filter(Boolean) : [];
       const prescribedCount = routines.filter(r => r.prescribedBy).length;
+      const routineIdSet = new Set(routines.map(r => r.id).filter(Boolean));
+
+      let lastPrescribedAt = 0;
+      for (const r of routines) {
+        const at = Number(r?.prescribedBy?.at || 0);
+        if (Number.isFinite(at) && at > lastPrescribedAt) lastPrescribedAt = at;
+      }
+
+      const rawWeek = state?.week && typeof state.week === 'object' ? state.week : {};
+      let scheduledDaysCount = 0;
+      for (let d = 0; d <= 6; d++) {
+        const ids = [].concat(rawWeek[String(d)] || []).filter(id => id && routineIdSet.has(id));
+        if (ids.length > 0) scheduledDaysCount++;
+      }
+      const plannedWeeklyDays = routines.length === 0
+        ? 0
+        : (scheduledDaysCount > 0 ? scheduledDaysCount : Math.min(Math.max(routines.length, 3), 5));
+
       let lastWorkout = null;
       const workoutDates = [];
+      const feedbackEvents = [];
       for (const w of workouts) {
         if (w?.d) {
           workoutDates.push(w.d);
           if (!lastWorkout || w.d > lastWorkout) lastWorkout = w.d;
+          const noteStr = String(w.note || '').trim();
+          const prCount = Array.isArray(w.prs) ? w.prs.length : 0;
+          if (noteStr || prCount > 0) {
+            feedbackEvents.push({
+              workoutId: w.id || '',
+              date: w.d,
+              routineName: String(w.name || 'Treino').trim(),
+              note: noteStr,
+              prCount,
+              vol: Number(w.vol || 0)
+            });
+          }
         }
       }
+      feedbackEvents.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+
+      const firstR = routines[0]
+        ? {
+            id: routines[0].id,
+            name: routines[0].name,
+            emoji: routines[0].emoji || 'figureStrength',
+            ex: Array.isArray(routines[0].ex) ? routines[0].ex : [],
+            prescribedBy: routines[0].prescribedBy || null
+          }
+        : null;
+
       summary = {
         rev,
         ts,
@@ -848,8 +1578,12 @@ export function listStudents(db, dataOrTenantDir, options = {}) {
         workoutCount: workouts.length,
         routineCount: routines.length,
         prescribedCount,
+        lastPrescribedAt: lastPrescribedAt || null,
+        plannedWeeklyDays,
+        firstRoutine: firstR,
         lastWorkout,
         workoutDates,
+        feedbackEvents,
         routines: routines.map(r => ({
           id: r.id,
           name: r.name,
@@ -857,12 +1591,25 @@ export function listStudents(db, dataOrTenantDir, options = {}) {
           exCount: Array.isArray(r.ex) ? r.ex.length : 0,
           prescribedBy: r.prescribedBy || null
         })),
-        week: state?.week || {}
+        week: rawWeek
       };
       if (state) studentMetricsCache.set(u.id, summary);
     }
 
-    const { workoutCount, routineCount, prescribedCount, lastWorkout, workoutDates, routines: mappedRoutines, week } = summary;
+    const {
+      workoutCount,
+      routineCount,
+      prescribedCount,
+      lastPrescribedAt,
+      plannedWeeklyDays,
+      firstRoutine,
+      lastWorkout,
+      workoutDates,
+      feedbackEvents,
+      routines: mappedRoutines,
+      week
+    } = summary;
+
     const workoutsLast7d = workoutDates.filter(d => d >= sevenDaysAgo).length;
     const workoutsLast30d = workoutDates.filter(d => d >= thirtyDaysAgo).length;
     const daysInactive = lastWorkout ? daysSinceDate(lastWorkout, nowMs) : null;
@@ -879,7 +1626,67 @@ export function listStudents(db, dataOrTenantDir, options = {}) {
       churnStatus = 'warning';
     }
 
+    // Quick-Win Anti-Falso-Positivo no Churn: desconta dias justificados (viagem/doença/recuperação) via nudge.js
+    const recentIsoCandidates = [
+      new Date(nowMs).toISOString().slice(0, 10),
+      new Date(nowMs - 3 * 3600 * 1000).toISOString().slice(0, 10),
+      new Date(nowMs - 86400000).toISOString().slice(0, 10),
+      new Date(nowMs - 86400000 - 3 * 3600 * 1000).toISOString().slice(0, 10)
+    ];
+    const TAG_LABELS = {
+      sick: 'Saúde / Atestado',
+      travel: 'Viagem',
+      rest: 'Descanso programado',
+      injured: 'Recuperação / Lesão'
+    };
+    let excusedInfo = null;
+    for (const iso of recentIsoCandidates) {
+      if (excusedOn(state, iso)) {
+        const note = state?.dayNotes?.[iso];
+        const tag = String(note?.tag || 'excused');
+        excusedInfo = {
+          iso,
+          kind: tag,
+          label: String(note?.text || TAG_LABELS[tag] || 'Ausência justificada').slice(0, 120)
+        };
+        break;
+      }
+    }
+    if ((churnStatus === 'warning' || churnStatus === 'critical') && excusedInfo) {
+      churnStatus = 'excused';
+    }
+
+    const routineAgeDays = lastPrescribedAt
+      ? Math.max(0, Math.floor((nowMs - lastPrescribedAt) / 86400000))
+      : null;
+    const daysUntilRoutineExpiry = routineAgeDays !== null
+      ? (safeCycleDays - routineAgeDays)
+      : null;
+
+    let routineStatus = 'up_to_date';
+    if (routineCount === 0) {
+      routineStatus = 'missing';
+    } else if (daysUntilRoutineExpiry !== null && daysUntilRoutineExpiry < 0) {
+      routineStatus = 'expired';
+    } else if (daysUntilRoutineExpiry !== null && daysUntilRoutineExpiry <= 5) {
+      routineStatus = 'expiring_soon';
+    }
+
+    const onboardingPending = Boolean(!u.disabled && !u.onboardedAt && !u.lastPull && workoutCount === 0);
+    const weeklyGoalHit = Boolean(!u.disabled && plannedWeeklyDays > 0 && workoutsLast7d >= plannedWeeklyDays);
+    const recentFeedbacks = (feedbackEvents || [])
+      .filter(f => f.date >= fourteenDaysAgo)
+      .slice(0, 3);
+
     const live = typeof livePresence === 'function' ? livePresence(u.id) : null;
+    const formVideos = collectStudentFormVideos(state, null, 20);
+    const pendingVideoReviewsCount = formVideos.filter(v => !v.review).length;
+    const bwSeries = normalizeBodyweightSeries(state);
+    const latestBw = bwSeries.length ? bwSeries[bwSeries.length - 1] : null;
+    const measArr = Array.isArray(state?.measurements) ? state.measurements : [];
+    const latestMeas = measArr.length ? measArr[measArr.length - 1] : null;
+    const assessArr = Array.isArray(state?.assessments) ? state.assessments : [];
+    const latestAssess = assessArr.length ? assessArr[assessArr.length - 1] : null;
 
     return {
       id: u.id,
@@ -893,17 +1700,38 @@ export function listStudents(db, dataOrTenantDir, options = {}) {
       assignedTrainerId: u.assignedTrainerId || null,
       assignedTrainerName: u.assignedTrainerId ? (trainersById.get(u.assignedTrainerId) || '') : '',
       created: u.created || null,
+      inviteCode: u.inviteCode || null,
+      welcomeWhatsapp: u.welcomeWhatsapp || null,
+      onboardedAt: u.onboardedAt || null,
       lastSync: ts || u.lastPull || null,
       lastWorkout,
+      lastWorkoutDate: lastWorkout,
       daysInactive,
       churnStatus,
+      excused: Boolean(excusedInfo),
+      excusedReason: excusedInfo?.label || null,
+      pendingVideoReviewsCount,
+      latestWeightKg: latestAssess?.weightKg ?? latestBw?.w ?? null,
+      latestBodyFat: latestAssess?.bodyFat ?? latestMeas?.bodyFat ?? null,
+      latestAssessmentAt: latestAssess?.t || latestMeas?.t || null,
+      routineArchiveCount: Array.isArray(state?.routineArchive) ? state.routineArchive.length : 0,
       workoutCount,
       workoutsLast7d,
       workoutsLast30d,
       routineCount,
       prescribedCount,
+      lastPrescribedAt,
+      routineAgeDays,
+      daysUntilRoutineExpiry,
+      routineStatus,
+      plannedWeeklyDays,
+      weeklyGoalHit,
+      onboardingPending,
+      recentFeedbacks,
+      firstRoutine,
       routines: mappedRoutines,
       week,
+      ...(includeWorkoutDates ? { _workoutDates: workoutDates } : {}),
       trainingNow: live ? {
         routineName: live.name || 'Treino em andamento',
         startedAt: live.startedAt || null,
@@ -917,11 +1745,17 @@ export function listStudents(db, dataOrTenantDir, options = {}) {
  * Prescreve ou atualiza uma rotina/ficha para o aluno atomicamente (`BEGIN IMMEDIATE`),
  * agendando nos dias da semana (`state.week`) sem perder prescrições ou treinos simultâneos.
  */
-export function prescribeRoutineToStudent(dataOrTenantDir, studentId, { routine, day, days, replaceSchedule = false, trainerUser }, stateOps = null) {
+export function prescribeRoutineToStudent(dataOrTenantDir, studentId, { routine, day, days, replaceSchedule = false, archivePrevious = false, trainerUser, recordNotice = true }, stateOps = null) {
   return mutateStudentStateAtomic(dataOrTenantDir, studentId, stateOps, (state) => {
     const now = Date.now();
     const routineId = routine.id || 'r_' + crypto.randomBytes(6).toString('hex');
     const normalizedEx = Array.isArray(routine.ex) ? routine.ex.map(normalizeExerciseSlot) : [];
+    const trainerName = trainerUser?.name || 'Professor';
+
+    const existingIdx = state.routines.findIndex(r => r.id === routineId || r.name === String(routine.name || 'Treino Prescrito').trim());
+    if (archivePrevious && existingIdx >= 0) {
+      archiveRoutineSnapshotsInState(state, [state.routines[existingIdx]], { archivedAt: now, reason: 'renewed', trainerUser });
+    }
 
     const routineRecord = {
       id: routineId,
@@ -930,16 +1764,18 @@ export function prescribeRoutineToStudent(dataOrTenantDir, studentId, { routine,
       ex: normalizedEx,
       prescribedBy: {
         trainerId: trainerUser?.id || 'staff',
-        trainerName: trainerUser?.name || 'Professor',
-        at: now
+        name: trainerName,
+        trainerName,
+        at: now,
+        initialWeights: captureInitialWeightsForRoutine(state, normalizedEx)
       }
     };
 
-    const existingIdx = state.routines.findIndex(r => r.id === routineId || r.name === routineRecord.name);
-    const finalRoutineId = existingIdx >= 0 ? state.routines[existingIdx].id : routineId;
+    const finalRoutineId = existingIdx >= 0 && !archivePrevious ? state.routines[existingIdx].id : routineId;
     routineRecord.id = finalRoutineId;
 
     if (existingIdx >= 0) {
+      replaceRoutineScheduleReferences(state, state.routines[existingIdx].id, finalRoutineId);
       state.routines[existingIdx] = routineRecord;
     } else {
       state.routines.push(routineRecord);
@@ -969,7 +1805,132 @@ export function prescribeRoutineToStudent(dataOrTenantDir, studentId, { routine,
       }
     }
 
+    if (recordNotice !== false) {
+      const prescribedList = state.routines.filter(r => r?.prescribedBy);
+      const activeList = prescribedList.length > 0 ? prescribedList : state.routines;
+      state.prescriptionNotice = {
+        id: 'pn_' + now + '_' + crypto.randomBytes(3).toString('hex'),
+        at: now,
+        trainerId: trainerUser?.id || 'staff',
+        trainerName,
+        routineIds: activeList.map(r => r.id),
+        routineNames: activeList.map(r => r.name)
+      };
+    }
+
     return { state, result: routineRecord };
+  });
+}
+
+/**
+ * Prescreve ou atualiza um lote de fichas (ex.: Treinos A, B e C) atomicamente em uma única
+ * transação (`BEGIN IMMEDIATE`), registrando um único `prescriptionNotice` consolidado para o aluno.
+ */
+export function prescribeRoutinesBatchToStudent(dataOrTenantDir, studentId, { routines = [], archivePrevious = false, replaceAll = false, trainerUser = null }, stateOps = null) {
+  return mutateStudentStateAtomic(dataOrTenantDir, studentId, stateOps, (state) => {
+    const now = Date.now();
+    const trainerName = trainerUser?.name || 'Professor';
+    const prescribedRecords = [];
+    const replacedIds = replaceAll ? state.routines.map(r => r?.id).filter(Boolean) : [];
+
+    if (archivePrevious && state.routines.length) {
+      archiveRoutineSnapshotsInState(state, state.routines, { archivedAt: now, reason: replaceAll ? 'new_cycle' : 'renewed', trainerUser });
+    }
+    if (replaceAll) {
+      state.routines = [];
+      state.week = {};
+    }
+
+    for (const item of Array.isArray(routines) ? routines : []) {
+      const rInput = item?.routine || item;
+      if (!rInput || !rInput.name || !Array.isArray(rInput.ex)) continue;
+
+      const routineId = rInput.id || 'r_' + crypto.randomBytes(6).toString('hex');
+      const normalizedEx = rInput.ex.map(normalizeExerciseSlot);
+      const targetName = String(rInput.name || 'Treino Prescrito').trim();
+
+      const routineRecord = {
+        id: routineId,
+        name: targetName,
+        emoji: String(rInput.emoji || rInput.glyph || 'figureStrength'),
+        ex: normalizedEx,
+        prescribedBy: {
+          trainerId: trainerUser?.id || 'staff',
+          name: trainerName,
+          trainerName,
+          at: now,
+          initialWeights: captureInitialWeightsForRoutine(state, normalizedEx)
+        }
+      };
+
+      const existingIdx = state.routines.findIndex(r => r.id === routineId || r.name === targetName);
+      const finalRoutineId = existingIdx >= 0 && !archivePrevious ? state.routines[existingIdx].id : routineId;
+      routineRecord.id = finalRoutineId;
+
+      if (existingIdx >= 0) {
+        replaceRoutineScheduleReferences(state, state.routines[existingIdx].id, finalRoutineId);
+        state.routines[existingIdx] = routineRecord;
+      } else {
+        state.routines.push(routineRecord);
+      }
+
+      const rawDays = item?.days ?? rInput.days ?? rInput.suggestedDays;
+      const rawDay = item?.day ?? rInput.day;
+      const replaceSchedule = Boolean(item?.replaceSchedule ?? rInput.replaceSchedule);
+      const targetDays = Array.isArray(rawDays)
+        ? rawDays.map(Number).filter(d => Number.isInteger(d) && d >= 0 && d <= 6)
+        : (rawDay !== undefined && rawDay !== null && rawDay !== '' && Number.isInteger(Number(rawDay)) && Number(rawDay) >= 0 && Number(rawDay) <= 6)
+          ? [Number(rawDay)]
+          : null;
+
+      if (targetDays) {
+        if (replaceSchedule) {
+          for (const k of Object.keys(state.week)) {
+            const nextList = [].concat(state.week[k] || []).filter(id => id !== finalRoutineId);
+            if (nextList.length) state.week[k] = nextList;
+            else delete state.week[k];
+          }
+        }
+        for (const d of targetDays) {
+          const key = String(d);
+          const currentList = [].concat(state.week[key] || []).filter(Boolean);
+          if (!currentList.includes(finalRoutineId)) {
+            currentList.push(finalRoutineId);
+          }
+          if (currentList.length) state.week[key] = currentList;
+        }
+      }
+
+      prescribedRecords.push(routineRecord);
+    }
+
+    if (replacedIds.length) {
+      const keptIds = new Set(state.routines.map(r => r.id));
+      for (const id of replacedIds) {
+        if (!keptIds.has(id)) replaceRoutineScheduleReferences(state, id, null);
+      }
+    }
+
+    const prescribedList = state.routines.filter(r => r?.prescribedBy);
+    const activeList = prescribedList.length > 0 ? prescribedList : state.routines;
+    state.prescriptionNotice = {
+      id: 'pn_' + now + '_' + crypto.randomBytes(3).toString('hex'),
+      at: now,
+      trainerId: trainerUser?.id || 'staff',
+      trainerName,
+      routineIds: activeList.map(r => r.id),
+      routineNames: activeList.map(r => r.name)
+    };
+
+    return {
+      state,
+      result: {
+        routines: prescribedRecords,
+        allRoutines: state.routines,
+        week: state.week,
+        prescriptionNotice: state.prescriptionNotice
+      }
+    };
   });
 }
 

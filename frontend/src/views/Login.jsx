@@ -1,6 +1,6 @@
 import { useStore } from '../store/useStore.js'
 import { useUI } from '../store/useUI.js'
-import { webauthnOK, passkeyLogin, passkeyRegister, passkeyError, bio } from '../lib/api.js'
+import { api, webauthnOK, passkeyLogin, passkeyRegister, passkeyError, bio } from '../lib/api.js'
 import { hasData } from '../store/useStore.js'
 import { t } from '../lib/i18n.js'
 import { DEMO, REPO } from '../lib/demo.js'
@@ -15,19 +15,46 @@ import { openLostAccess } from '../components/LostAccess.jsx'
 import { useBranding } from '../lib/branding.js'
 import InstallPwaBanner from '../components/InstallPwaBanner.jsx'
 
-function RegisterSheet({ close }) {
+function readInviteCodeFromUrl() {
+  if (typeof window === 'undefined') return ''
+  try {
+    const sp = new URLSearchParams(window.location.search)
+    const raw = sp.get('convite') || sp.get('invite') || sp.get('code') || ''
+    return String(raw).trim().toUpperCase().slice(0, 40)
+  } catch {
+    return ''
+  }
+}
+
+function clearInviteFromUrl() {
+  if (typeof window === 'undefined' || !window.history?.replaceState) return
+  try {
+    const u = new URL(window.location.href)
+    u.searchParams.delete('convite')
+    u.searchParams.delete('invite')
+    u.searchParams.delete('code')
+    if (/\/cadastro\/?$/i.test(u.pathname)) {
+      u.pathname = u.pathname.replace(/cadastro\/?$/i, '') || '/'
+    }
+    window.history.replaceState({}, '', u.pathname + u.search + u.hash)
+  } catch { /* ignore */ }
+}
+
+function RegisterSheet({ close, initialCode = '' }) {
   const { setUser, pushState, pullState, loadConfig } = useStore()
   const config = useStore(s => s.config)
+  const cleanInitialCode = String(initialCode || '').trim().toUpperCase()
   const [name, setName] = useState('')
-  const [code, setCode] = useState('')
+  const [code, setCode] = useState(cleanInitialCode)
   const inviteOnly = !!config?.invite_only
+  const showCodeField = inviteOnly || Boolean(cleanInitialCode) || Boolean(String(code || '').trim())
   // A password is offered only where the instance allows it (#118), and is the only choice in a
   // browser that cannot make a passkey. Where both work, the passkey stays the first one (except
   // on custom B2B gym tenants where students receive a password at enrollment).
   const pwOn = passwordOn(config)
   const branding = useBranding()
   const [how, setHow] = useState(
-    !webauthnOK() || (branding.isCustomTenant && pwOn) ? 'password' : 'passkey'
+    !webauthnOK() || ((branding.isCustomTenant || Boolean(cleanInitialCode)) && pwOn) ? 'password' : 'passkey'
   )
   const [busy, setBusy] = useState(false)
   const busyRef = useRef(false)
@@ -36,6 +63,17 @@ function RegisterSheet({ close }) {
   // Boot already fetched this; retry here only if that attempt failed, so the invite field still
   // appears on an instance whose config arrived late rather than never.
   useEffect(() => { loadConfig() }, [loadConfig])
+  useEffect(() => {
+    if (!cleanInitialCode) return
+    let active = true
+    api(`/api/invite/preview?code=${encodeURIComponent(cleanInitialCode)}`)
+      .then(data => {
+        if (!active) return
+        if (data?.studentName) setName(prev => prev || data.studentName)
+      })
+      .catch(() => { /* ignore preview errors; server validates on submit */ })
+    return () => { active = false }
+  }, [cleanInitialCode])
   const go = async () => {
     if (busyRef.current) return
     const n = name.trim()
@@ -45,6 +83,7 @@ function RegisterSheet({ close }) {
     setBusy(true)
     try {
       const u = await passkeyRegister(n, code.trim())
+      clearInviteFromUrl()
       setUser(u); close()
       if (hasData(useStore.getState().S)) { await pushState(); useUI.getState().toast(t('Profile created, and this device’s data moved into it')) }
       else { await pullState(); useUI.getState().toast(t('Welcome, {0}', u.name)) }
@@ -60,18 +99,20 @@ function RegisterSheet({ close }) {
     <h3>{t('Create your profile')}</h3>
     {choose}
     <div className="muted small" style={{ marginBottom: 14 }}>{t('Pick a name and a password. You sign in with both.')}</div>
-    <PasswordRegisterForm close={close} inviteOnly={inviteOnly} name={name} setName={setName} code={code} setCode={setCode} />
+    <PasswordRegisterForm close={close} inviteOnly={inviteOnly} name={name} setName={setName} code={code} setCode={setCode} forceShowCode={Boolean(cleanInitialCode)} onRegistered={clearInviteFromUrl} />
   </>
   return <>
     <h3>{t('Create your profile')}</h3>
     {choose}
     <div className="muted small" style={{ marginBottom: 14 }}>{t('Pick a name, then confirm with {0}. The passkey lives on your device, so no password needed.', bio())}</div>
     <input ref={ref} className="input" placeholder={t('Your name')} maxLength={40} value={name} onChange={e => setName(e.target.value)} />
-    {inviteOnly && <>
+    {showCodeField && <>
       <div style={{ height: 10 }} />
       <input className="input" placeholder={t('Invite code')} maxLength={40} value={code}
         onChange={e => setCode(e.target.value.toUpperCase())} style={{ letterSpacing: '.14em', fontWeight: 600, textAlign: 'center' }} />
-      <div className="dim small" style={{ marginTop: 6 }}>{t('This app is invite-only. Enter the code you were given.')}</div>
+      <div className="dim small" style={{ marginTop: 6 }}>
+        {inviteOnly ? t('This app is invite-only. Enter the code you were given.') : t('Invite code linked to your gym profile.')}
+      </div>
     </>}
     <div style={{ height: 12 }} />
     <Button variant="primary" onClick={go} disabled={busy}>{t('Create passkey')}</Button>
@@ -85,7 +126,15 @@ export default function Login() {
   const pwOn = passwordOn(config)
   const [signingIn, setSigningIn] = useState(false)
   const signInRef = useRef(false)
-  const register = () => useUI.getState().openSheet(close => <RegisterSheet close={close} />)
+  const autoOpenedInviteRef = useRef(false)
+  useEffect(() => {
+    if (DEMO || autoOpenedInviteRef.current) return
+    const urlInvite = readInviteCodeFromUrl()
+    if (!urlInvite) return
+    autoOpenedInviteRef.current = true
+    useUI.getState().openSheet(close => <RegisterSheet close={close} initialCode={urlInvite} />)
+  }, [])
+  const register = () => useUI.getState().openSheet(close => <RegisterSheet close={close} initialCode={readInviteCodeFromUrl()} />)
   const signIn = async () => {
     if (signInRef.current) return
     signInRef.current = true

@@ -6,6 +6,7 @@ COPY portal/package.json portal/package-lock.json* ./
 RUN npm ci --ignore-scripts
 
 COPY portal/ ./
+COPY api/student-import.js /app/api/student-import.js
 ARG VITE_STUDENT_APP_URL=""
 ENV VITE_STUDENT_APP_URL=$VITE_STUDENT_APP_URL
 RUN npm run build

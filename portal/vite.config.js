@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
@@ -7,6 +8,7 @@ import react from '@vitejs/plugin-react';
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const backend = process.env.API_TARGET || 'http://127.0.0.1:3000';
 const apiOrigin = process.env.API_ORIGIN || 'http://localhost:8080';
+const isMobileEmbed = process.env.VITE_MOBILE_EMBED === '1';
 
 const catalogueMedia = {
   name: 'rit-portal-catalogue-media',
@@ -33,9 +35,25 @@ const catalogueMedia = {
 const localLeanQr = resolve(__dirname, 'node_modules/lean-qr/index.mjs');
 const fallbackLeanQr = resolve(__dirname, '../frontend/node_modules/lean-qr/index.mjs');
 
+const stampPortalServiceWorker = {
+  name: 'stamp-portal-sw',
+  apply: 'build',
+  closeBundle() {
+    if (isMobileEmbed) return;
+    const outDir = resolve(__dirname, 'dist');
+    const htmlPath = join(outDir, 'index.html');
+    const swPath = join(outDir, 'sw.js');
+    if (!existsSync(htmlPath) || !existsSync(swPath)) return;
+    const hash = createHash('sha256').update(readFileSync(htmlPath)).digest('hex').slice(0, 12);
+    const stamped = readFileSync(swPath, 'utf8').replaceAll('__PORTAL_BUILD__', hash);
+    writeFileSync(swPath, stamped);
+  }
+};
+
 export default defineConfig({
   root: __dirname,
-  plugins: [react(), catalogueMedia],
+  base: isMobileEmbed ? './' : '/',
+  plugins: [react(), catalogueMedia, stampPortalServiceWorker],
   resolve: {
     alias: {
       'lean-qr': existsSync(localLeanQr) ? localLeanQr : fallbackLeanQr

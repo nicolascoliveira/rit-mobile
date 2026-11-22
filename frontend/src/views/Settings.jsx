@@ -32,6 +32,7 @@ import { t, tn, LANGS, INSTR_LANGS, EXERCISE_NAME_LANGS, baseLang, dateLocale } 
 import { effectiveLang } from '../lib/default-lang.js'
 import { DEMO, REPO } from '../lib/demo.js'
 import { MOBILE, isAndroid, shareExport, shareExportBlob, syncReminder } from '../lib/mobile.js'
+import { openPortalNativeApp } from '../lib/rit-native.js'
 import { NUDGE_COPY, NUDGE_TONES, toneOf } from '../lib/nudge.js'
 import { referencedFiles } from '../lib/media-refs.js'
 import { mediaStore } from '../lib/media-store.js'
@@ -1212,6 +1213,11 @@ export default function Settings({ page = null, find = null, via = null, entryKe
       </Section>}
       {/* Signed in or paired: the account can be deleted from here (App Store rule 5.1.1(v)). A
           phone in local-only mode has no account; "Reset everything" in Data & backup wipes it. */}
+      {MOBILE && <Section title="Rit Painel">
+        <Row icon="crown" iconTint="var(--acc)" title="Rit Painel (Personal / Academia)"
+          subtitle="Alternar para gestão de alunos, fichas e assinatura" accessory="chevron"
+          onClick={() => openPortalNativeApp('/login')} />
+      </Section>}
       {user && !DEMO && <Section>
         <DeleteAccountRow exportBackup={doExport} exportBackupZip={doExportZip} hasMedia={hasMedia} done={() => nav('/login')} />
       </Section>}

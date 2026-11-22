@@ -1,3 +1,5 @@
+import { isNativePortalApp, nativePortalHttpRequest, resolvePortalApiUrl } from './native.js';
+
 const TOKEN_KEY = 'rit_admin_token';
 const LEGACY_TOKEN_KEY = 'opengym_b2b_token';
 const TENANT_KEY = 'rit_admin_tenant_override';
@@ -107,14 +109,24 @@ export async function portalApi(path, opts = {}) {
   if (tenantOverride) headers['X-Tenant-Id'] = tenantOverride;
   if (opts.idempotencyKey) headers['Idempotency-Key'] = String(opts.idempotencyKey);
 
-  const res = await fetch(path, {
-    ...opts,
-    credentials: 'omit',
-    headers,
-    body: opts.body && typeof opts.body === 'object' && !(opts.body instanceof FormData)
-      ? JSON.stringify(opts.body)
-      : opts.body
-  });
+  const url = resolvePortalApiUrl(path);
+  const isFormData = typeof FormData !== 'undefined' && opts.body instanceof FormData;
+  const serializedBody = opts.body && typeof opts.body === 'object' && !isFormData
+    ? JSON.stringify(opts.body)
+    : opts.body;
+
+  const res = isNativePortalApp() && !isFormData
+    ? await nativePortalHttpRequest(url, {
+        method: opts.method || 'GET',
+        headers,
+        body: serializedBody
+      })
+    : await fetch(url, {
+        ...opts,
+        credentials: 'omit',
+        headers,
+        body: serializedBody
+      });
 
   let data = null;
   try {
@@ -126,7 +138,7 @@ export async function portalApi(path, opts = {}) {
   if (!res.ok) {
     if (res.status === 401) {
       setStoredToken('');
-      if (typeof window !== 'undefined' && !window.location.pathname.includes('/login')) {
+      if (typeof window !== 'undefined' && !window.location.pathname.includes('/login') && !window.location.hash.includes('login')) {
         window.dispatchEvent(new CustomEvent('rit:unauthorized'));
       }
     }
@@ -168,6 +180,9 @@ export function getStudentAppUrl(tenantSlug) {
     : '';
 
   let base = configured;
+  if (!base && isNativePortalApp()) {
+    base = 'https://app.treinerit.com.br';
+  }
   if (!base && typeof window !== 'undefined') {
     const host = window.location.hostname || 'localhost';
     const proto = window.location.protocol || 'http:';
@@ -249,4 +264,141 @@ export function getOrRotateIntentKey(ref, signature) {
     ref.current = { sig, key: newIdempotencyKey() };
   }
   return ref.current.key;
+}
+
+export function createGymStudent(payload, idempotencyKey) {
+  return portalApi('/api/gym/students', {
+    method: 'POST',
+    body: payload,
+    ...(idempotencyKey ? { idempotencyKey } : {})
+  });
+}
+
+export function resendStudentWelcome(studentId, regenerateInvite = false) {
+  return portalApi('/api/gym/students/welcome-resend', {
+    method: 'POST',
+    body: { studentId, regenerateInvite: Boolean(regenerateInvite) }
+  });
+}
+
+const WEEKDAY_SHORT_PT = { 0: 'Dom', 1: 'Seg', 2: 'Ter', 3: 'Qua', 4: 'Qui', 5: 'Sex', 6: 'Sáb' };
+
+/**
+ * Monta mensagem consolidada em formato WhatsApp para uma ou várias fichas do aluno.
+ */
+export function formatStudentPlanWhatsApp({
+  studentName = 'Aluno',
+  routines = [],
+  weekMap = null,
+  tenantName = 'Sua Academia',
+  trainerName = '',
+  tenantSlug = ''
+}) {
+  const firstName = String(studentName || 'Aluno').trim().split(' ')[0];
+  const list = (Array.isArray(routines) ? routines : []).filter(Boolean);
+  if (list.length === 0) return '';
+
+  const total = list.length;
+  const senderText = trainerName ? `Seu professor *${trainerName}*` : `A equipe da *${tenantName}*`;
+  const appUrl = getStudentAppUrl(tenantSlug);
+
+  const sections = list.map((r, idx) => {
+    const rName = String(r.name || `Treino ${idx + 1}`).trim();
+    const exList = Array.isArray(r.ex) ? r.ex : [];
+    const scheduledDays = weekMap && typeof weekMap === 'object' && r.id
+      ? [1, 2, 3, 4, 5, 6, 0].filter(d => [].concat(weekMap[String(d)] || []).includes(r.id))
+      : [];
+    const dayLabels = scheduledDays.map(d => WEEKDAY_SHORT_PT[d]).filter(Boolean);
+
+    const exLines = exList.map((e, i) => {
+      const setsCount = Array.isArray(e?.sets) ? e.sets.length : Number(e?.sets || 3);
+      const setsLabel = `${setsCount} ${setsCount === 1 ? 'série' : 'séries'}`;
+      const repsText = e?.repsMin && e?.repsMax && Number(e.repsMin) !== Number(e.repsMax)
+        ? `${e.repsMin}-${e.repsMax} reps`
+        : (e?.reps ? `${e.reps} reps` : '');
+      const wNum = Number(Array.isArray(e?.sets) ? e.sets[0]?.w : e?.weight);
+      const weightPart = Number.isFinite(wNum) && wNum > 0 ? `⚖️ ${wNum} kg` : '';
+      const restNum = Number(e?.restSec);
+      const restPart = Number.isFinite(restNum) && restNum > 0 ? `⏱️ ${Math.round(restNum)}s descanso` : '';
+      const detail = [repsText ? `${setsLabel} × ${repsText}` : setsLabel, weightPart, restPart].filter(Boolean).join(' · ');
+      const note = e?.note && String(e.note).trim() ? `\n   _💡 Obs: ${String(e.note).trim()}_` : '';
+      return `• *${i + 1}. ${e?.name || e?.id || 'Exercício'}*\n   ▸ ${detail}${note}`;
+    });
+
+    if (total > 1) {
+      const meta = dayLabels.length
+        ? `📅 *Dias programados:* ${dayLabels.join(', ')} · _${exList.length} ${exList.length === 1 ? 'exercício' : 'exercícios'}_`
+        : `🏋️‍♂️ _${exList.length} ${exList.length === 1 ? 'exercício' : 'exercícios'}_`;
+      return [
+        `━━━━━━━━━━━━━━━━━━━━`,
+        `🔥 *${idx + 1}. ${rName.toUpperCase()}*`,
+        meta,
+        exLines.length ? `\n${exLines.join('\n\n')}` : ''
+      ].filter(Boolean).join('\n');
+    }
+
+    return [
+      `🏋️‍♂️ *Ficha:* ${rName}`,
+      dayLabels.length ? `📅 *Dias programados:* ${dayLabels.join(', ')}` : null,
+      exLines.length ? `\n🔥 *Exercícios Prescritos (${exList.length}):*\n\n${exLines.join('\n\n')}` : null
+    ].filter(Boolean).join('\n');
+  });
+
+  return [
+    total > 1 ? `🏋️‍♂️ *SEU NOVO PLANO DE TREINO ESTÁ PRONTO!*` : `📋 *Nova Ficha de Treino Disponível!*`,
+    `🏢 *${tenantName}* · _Aplicativo Rit_`,
+    ``,
+    total > 1
+      ? `Olá, *${firstName}*! Tudo bem? 💪\n${senderText} liberou sua programação completa com *${total} fichas de treino*:`
+      : `Olá, *${firstName}*! ${senderText} acabou de publicar uma nova prescrição para você:`,
+    ``,
+    sections.join('\n\n'),
+    total > 1 ? `━━━━━━━━━━━━━━━━━━━━` : null,
+    ``,
+    `📲 *Acesse seu treino no App Rit:*`,
+    `Abra o aplicativo *Rit* para ver os vídeos de execução, registrar suas cargas e iniciar seu treino:`,
+    `👉 ${appUrl}`,
+    ``,
+    `_Bons treinos! Qualquer dúvida, fale com seu professor._ 🚀`
+  ].filter(l => l !== null).join('\n');
+}
+
+export async function saveStudentAssessment(payload) {
+  return portalApi('/api/gym/student/assessment', { method: 'POST', body: payload });
+}
+
+export async function archiveStudentCycle(payload) {
+  return portalApi('/api/gym/student/archive-cycle', { method: 'POST', body: payload });
+}
+
+export async function applyTemplateBatch(payload) {
+  return portalApi('/api/gym/templates/apply-batch', { method: 'POST', body: payload });
+}
+
+export async function importStudentsBatch(payload) {
+  return portalApi('/api/gym/students/import', { method: 'POST', body: payload });
+}
+
+export async function suggestCoachWorkouts(payload) {
+  return portalApi('/api/gym/coach/suggest', { method: 'POST', body: payload });
+}
+
+export async function saveVideoReview(payload) {
+  return portalApi('/api/gym/student/video-review', { method: 'POST', body: payload });
+}
+
+export async function sendWeeklyCheckin(payload) {
+  return portalApi('/api/gym/student/weekly-checkin', { method: 'POST', body: payload });
+}
+
+export async function runGymEngagement(payload = {}) {
+  return portalApi('/api/gym/engagement/run', { method: 'POST', body: payload });
+}
+
+export async function fetchGymAudit(limit = 120) {
+  return portalApi(`/api/gym/audit?limit=${encodeURIComponent(limit)}`);
+}
+
+export async function exportGymLgpd() {
+  return portalApi('/api/gym/export');
 }

@@ -1,6 +1,6 @@
 {
-  "appId": "ch.duartesantos.opengym",
-  "appName": "openGym",
+  "appId": "br.com.treinerit.app",
+  "appName": "Rit",
   "webDir": "dist",
   "backgroundColor": "#0c0e12",
   "android": {

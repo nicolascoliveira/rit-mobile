@@ -132,7 +132,7 @@ export function getPortalTourSteps(isPersonal = false) {
       tab: 'team',
       target: '[data-tour="gym-team-head"]',
       prefer: 'bottom',
-      title: isPersonal ? 'Colaboradores & Acessos' : 'Equipe de Professores',
+      title: isPersonal ? 'Meu Perfil & Equipe' : 'Equipe de Professores',
       body: isPersonal
         ? 'Adicione estagiários ou parceiros com permissões separadas, sem precisar compartilhar a sua senha principal.'
         : 'Cadastre professores e coordenadores para que toda a equipe prescreva treinos ao mesmo tempo no mesmo painel.'

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Icon from './Icon.jsx';
 import {
   Button,
+  ConfirmModal,
   Modal,
   TextField,
   NumberField,
@@ -11,7 +12,7 @@ import {
   Stepper,
   Segmented
 } from './ui.jsx';
-import { portalApi, toast } from '../lib/api.js';
+import { portalApi, toast, newIdempotencyKey, suggestCoachWorkouts } from '../lib/api.js';
 import ExerciseMediaModal, { GymExThumb } from './ExerciseMediaModal.jsx';
 
 const ROUTINE_GLYPHS = [
@@ -63,10 +64,12 @@ const mapExercise = x => ({
   sets: Number(x.sets) || 3,
   reps: Number(x.reps) || 10,
   weight: Number(x.weight) || 0,
-  restSec: Number(x.restSec) || 90,
+  restSec: Number(x.restSec ?? x.rest) || 90,
   prog: x.prog || 'double',
   note: x.note || '',
-  thumb: `/exercise-media/still/${x.id || '0025'}.webp`
+  thumb: `/exercise-media/still/${x.id || '0025'}.webp`,
+  ...(x.custom ? { custom: true } : {}),
+  ...(x.customUrl ? { customUrl: x.customUrl } : {})
 });
 
 const makeWorkout = ({ id, name, emoji, days, ex } = {}) => ({
@@ -123,6 +126,19 @@ export default function WorkoutBuilderModal({
   const [mobilePane, setMobilePane] = useState('routine');
   const [validationError, setValidationError] = useState(null);
   const [attemptedSave, setAttemptedSave] = useState(false);
+  const [confirmRemoveIdx, setConfirmRemoveIdx] = useState(null);
+
+  // Fase 3.1 Copiloto IA + Fase 2.3 Arquivar ciclo anterior
+  const [archivePrevious, setArchivePrevious] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiGoal, setAiGoal] = useState('hipertrofia');
+  const [aiLevel, setAiLevel] = useState('intermediario');
+  const [aiDays, setAiDays] = useState('3');
+  const [aiSessionMin, setAiSessionMin] = useState('55');
+  const [aiEquipment, setAiEquipment] = useState('full_gym');
+  const [aiNotes, setAiNotes] = useState('');
+  const [aiMeta, setAiMeta] = useState(null);
 
   useEffect(() => {
     setValidationError(null);
@@ -143,10 +159,6 @@ export default function WorkoutBuilderModal({
   }, [open]);
 
   useEffect(() => {
-    setValidationError(null);
-  }, [workouts]);
-
-  useEffect(() => {
     if (!open) return;
     setMobilePane('routine');
     setCustomOnly(false);
@@ -154,6 +166,18 @@ export default function WorkoutBuilderModal({
     setActiveIdx(0);
     setValidationError(null);
     setAttemptedSave(false);
+    setArchivePrevious(false);
+    setAiOpen(false);
+    setAiMeta(null);
+    const goalLow = String(student?.goal || '').toLowerCase();
+    setAiGoal(
+      goalLow.includes('for') ? 'forca'
+        : goalLow.includes('ema') || goalLow.includes('perd') ? 'emagrecimento'
+          : goalLow.includes('cond') || goalLow.includes('resis') ? 'condicionamento'
+            : goalLow.includes('adap') || goalLow.includes('inic') ? 'adaptacao'
+              : 'hipertrofia'
+    );
+    setAiNotes(String(student?.notes || ''));
     if (initialRoutine) {
       setCategory(initialRoutine.category || 'Hipertrofia');
       setDescription(initialRoutine.description || '');
@@ -180,10 +204,6 @@ export default function WorkoutBuilderModal({
       ]);
     }
   }, [open, initialRoutine, mode]);
-
-  useEffect(() => {
-    setValidationError(null);
-  }, [workouts]);
 
   useEffect(() => {
     if (!open) return;
@@ -309,15 +329,23 @@ export default function WorkoutBuilderModal({
     toast('Treino duplicado. Escolha os dias dele.');
   };
 
+  const performRemoveWorkoutAt = idx => {
+    if (workouts.length <= 1) return;
+    setWorkouts(prev => prev.filter((_, i) => i !== idx));
+    setActiveIdx(prev => (prev > idx ? prev - 1 : Math.max(0, Math.min(prev, workouts.length - 2))));
+    setValidationError(null);
+    setConfirmRemoveIdx(null);
+  };
+
   const removeWorkoutAt = idx => {
     if (workouts.length <= 1) return;
     const target = workouts[idx];
     if (!target) return;
-    const label = target.name || `Treino ${letterOf(idx)}`;
-    if (target.exercises.length > 0 && !window.confirm(`Remover "${label}" e os ${target.exercises.length} exercícios dele?`)) return;
-    setWorkouts(prev => prev.filter((_, i) => i !== idx));
-    setActiveIdx(prev => (prev > idx ? prev - 1 : Math.max(0, Math.min(prev, workouts.length - 2))));
-    setValidationError(null);
+    if (target.exercises.length > 0) {
+      setConfirmRemoveIdx(idx);
+      return;
+    }
+    performRemoveWorkoutAt(idx);
   };
 
   const removeWorkout = () => removeWorkoutAt(safeIdx);
@@ -416,34 +444,39 @@ export default function WorkoutBuilderModal({
   };
 
   const handleSave = async () => {
-    if (!validate()) return;
+    if (saving || !validate()) return;
 
     setSaving(true);
     try {
       if (mode === 'prescribe') {
-        for (let i = 0; i < workouts.length; i++) {
-          const w = workouts[i];
-          await portalApi('/api/gym/prescribe', {
-            method: 'POST',
-            body: {
-              studentId: student.id,
+        const res = await portalApi('/api/gym/prescribe', {
+          method: 'POST',
+          idempotencyKey: newIdempotencyKey(),
+          body: {
+            studentId: student.id,
+            replaceSchedule: true,
+            archivePrevious,
+            notifyWhatsApp: true,
+            routines: workouts.map(w => ({
+              id: w.id,
+              name: w.name.trim(),
+              emoji: w.emoji,
               days: w.days,
               replaceSchedule: true,
-              // O aluno recebe um único aviso no WhatsApp, no último treino salvo.
-              notifyWhatsApp: i === workouts.length - 1,
-              routine: {
-                id: w.id,
-                name: w.name.trim(),
-                emoji: w.emoji,
-                ex: w.exercises
-              }
-            }
-          });
-        }
+              ex: w.exercises
+            }))
+          }
+        });
+        const waInfo = res?.whatsapp;
+        const waSuffix = waInfo?.sent
+          ? ' · Aviso enviado no WhatsApp!'
+          : waInfo?.queued
+            ? ' · Aviso na fila do WhatsApp!'
+            : '';
         toast(
-          multi
+          (multi
             ? `${workouts.length} treinos sincronizados no app de ${student.name}!`
-            : `Ficha sincronizada no app de ${student.name}!`
+            : `Ficha sincronizada no app de ${student.name}!`) + waSuffix
         );
       } else {
         for (const w of workouts) {
@@ -475,6 +508,44 @@ export default function WorkoutBuilderModal({
     }
   };
 
+  const handleGenerateAi = async () => {
+    if (aiLoading) return;
+    setAiLoading(true);
+    try {
+      const res = await suggestCoachWorkouts({
+        studentId: mode === 'prescribe' ? student?.id : undefined,
+        goal: aiGoal,
+        level: aiLevel,
+        daysPerWeek: Number(aiDays) || 3,
+        sessionMin: Number(aiSessionMin) || 55,
+        equipmentPreset: aiEquipment,
+        clinicalNotes: aiNotes
+      });
+      const built = Array.isArray(res?.workouts) ? res.workouts.map(w => makeWorkout({
+        name: w.name,
+        emoji: w.emoji || w.glyph || 'figureStrength',
+        days: w.days || [],
+        ex: w.ex || []
+      })) : [];
+      if (!built.length) {
+        toast('Nenhuma ficha sugerida para os filtros informados.');
+        return;
+      }
+      setWorkouts(built);
+      setActiveIdx(0);
+      setAiMeta({
+        engine: res.engine,
+        rationale: res.rationale,
+        cautions: Array.isArray(res.cautions) ? res.cautions : []
+      });
+      toast(`${built.length} treino(s) preenchidos no construtor! Revise e salve.`);
+    } catch (err) {
+      toast(err.message || 'Não foi possível gerar sugestão de treino');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   const activeLabel = active.name.trim() || `Treino ${letterOf(safeIdx)}`;
   const saveLabel = saving
     ? 'Salvando...'
@@ -494,6 +565,8 @@ export default function WorkoutBuilderModal({
             key={g.id}
             onClick={() => patchActive({ emoji: g.id })}
             title={g.label}
+            aria-label={`Ícone ${g.label}`}
+            aria-pressed={active.emoji === g.id}
             className={'b2b-day-pill' + (active.emoji === g.id ? ' on' : '')}
             style={{ minWidth: 38, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
           >
@@ -516,14 +589,146 @@ export default function WorkoutBuilderModal({
       }
       subtitle="Conectado ao catálogo oficial Rit (5.632 exercícios com animações e progressão automática)"
       footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>Cancelar</Button>
-          <Button variant="primary" icon="check" onClick={handleSave} disabled={saving}>
-            {saveLabel}
-          </Button>
-        </>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, width: '100%' }}>
+          {mode === 'prescribe' && student?.id ? (
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14, color: 'var(--label)' }}>
+              <input
+                type="checkbox"
+                checked={archivePrevious}
+                onChange={e => setArchivePrevious(e.target.checked)}
+                style={{ width: 17, height: 17, accentColor: 'var(--acc)' }}
+              />
+              Arquivar fichas anteriores no histórico antes de salvar
+            </label>
+          ) : <span />}
+          <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
+            <Button variant="ghost" onClick={onClose}>Cancelar</Button>
+            <Button variant="primary" icon="check" onClick={handleSave} disabled={saving}>
+              {saveLabel}
+            </Button>
+          </div>
+        </div>
       }
     >
+      {/* Copiloto IA de Prescrição (Fase 3.1) */}
+      <div className="b2b-card" style={{ padding: 14, marginBottom: 14, background: 'var(--bg-el)', border: '1px solid var(--sep)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span className="b2b-ico-badge" style={{ background: 'var(--acc-tint)', color: 'var(--acc)' }}>
+              <Icon name="sparkles" size={18} />
+            </span>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--label)' }}>
+                Copiloto IA de Prescrição
+              </div>
+              <div style={{ fontSize: 14, color: 'var(--label-3)' }}>
+                Sugere divisão semanal e exercícios seguros respeitando restrições clínicas e equipamentos
+              </div>
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant={aiOpen ? 'ghost' : 'secondary'}
+            icon="sparkles"
+            onClick={() => setAiOpen(v => !v)}
+          >
+            {aiOpen ? 'Ocultar Copiloto' : 'Sugerir Fichas automaticamente'}
+          </Button>
+        </div>
+
+        {aiOpen && (
+          <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--sep)', display: 'grid', gap: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10 }}>
+              <SelectField
+                label="Objetivo principal"
+                value={aiGoal}
+                onChange={setAiGoal}
+                options={[
+                  { value: 'hipertrofia', label: 'Hipertrofia Muscular' },
+                  { value: 'forca', label: 'Força Pura' },
+                  { value: 'emagrecimento', label: 'Emagrecimento' },
+                  { value: 'condicionamento', label: 'Condicionamento' },
+                  { value: 'adaptacao', label: 'Adaptação / Retorno' }
+                ]}
+              />
+              <SelectField
+                label="Nível do aluno"
+                value={aiLevel}
+                onChange={setAiLevel}
+                options={[
+                  { value: 'iniciante', label: 'Iniciante' },
+                  { value: 'intermediario', label: 'Intermediário' },
+                  { value: 'avancado', label: 'Avançado' }
+                ]}
+              />
+              <SelectField
+                label="Treinos na semana"
+                value={aiDays}
+                onChange={setAiDays}
+                options={[
+                  { value: '1', label: '1 dia (Full Body)' },
+                  { value: '2', label: '2 dias (AB)' },
+                  { value: '3', label: '3 dias (ABC)' },
+                  { value: '4', label: '4 dias (ABCD)' },
+                  { value: '5', label: '5 dias (ABCDE)' },
+                  { value: '6', label: '6 dias (PPL 2x)' }
+                ]}
+              />
+              <SelectField
+                label="Equipamentos disponíveis"
+                value={aiEquipment}
+                onChange={setAiEquipment}
+                options={[
+                  { value: 'full_gym', label: 'Academia Completa' },
+                  { value: 'machines_cables', label: 'Máquinas & Cabos' },
+                  { value: 'dumbbells_bodyweight', label: 'Halteres & Peso Corporal' },
+                  { value: 'home_minimal', label: 'Em Casa / Minimalista' }
+                ]}
+              />
+              <SelectField
+                label="Duração da sessão"
+                value={aiSessionMin}
+                onChange={setAiSessionMin}
+                options={[
+                  { value: '35', label: '35 min (Expresso)' },
+                  { value: '45', label: '45 min' },
+                  { value: '55', label: '55 min (Padrão)' },
+                  { value: '75', label: '75 min (Avançado)' }
+                ]}
+              />
+            </div>
+            <TextField
+              label="Restrições clínicas, lesões ou observações (lidas automaticamente do prontuário)"
+              placeholder="Ex.: Condromalácia no joelho esquerdo, desconforto no ombro..."
+              value={aiNotes}
+              onChange={setAiNotes}
+            />
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+              <span style={{ fontSize: 14, color: 'var(--label-3)' }}>
+                Os treinos gerados substituem apenas o rascunho acima para você revisar antes de salvar.
+              </span>
+              <Button variant="primary" icon="sparkles" onClick={handleGenerateAi} disabled={aiLoading}>
+                {aiLoading ? 'Gerando divisão...' : 'Gerar Rascunho de Fichas'}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {aiMeta && (
+          <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: 'var(--surface)', border: '1px solid var(--sep)', fontSize: 14 }}>
+            <div style={{ fontWeight: 700, color: 'var(--label)', marginBottom: 4 }}>
+              {aiMeta.engine === 'ai_coach' ? 'Sugestão gerada por IA Coach' : 'Sugestão gerada pelo Motor Biomecânico'}:
+            </div>
+            <div style={{ color: 'var(--label-2)' }}>{aiMeta.rationale}</div>
+            {aiMeta.cautions?.length > 0 && (
+              <ul style={{ margin: '8px 0 0', paddingLeft: 18, color: 'var(--orange)' }}>
+                {aiMeta.cautions.map((c, idx) => <li key={idx}>{c}</li>)}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* Treinos da ficha (A, B, C…): sempre visível no topo (desktop e mobile) */}
       <div className="b2b-wk-bar">
         <div className="b2b-wk-tabs" role="tablist" aria-label="Treinos da ficha">
@@ -673,6 +878,7 @@ export default function WorkoutBuilderModal({
                   <button
                     type="button"
                     key={w.d}
+                    aria-pressed={mine}
                     className={'b2b-day-pill' + (mine ? ' on' : '') + (taken ? ' taken' : '')}
                     onClick={() => toggleDay(w.d)}
                     title={taken ? `${w.label}: ${workouts[owner].name || `Treino ${letterOf(owner)}`} (toque para mover para este treino)` : undefined}
@@ -780,16 +986,38 @@ export default function WorkoutBuilderModal({
                               }
                         })}
                         title={isCustomId ? 'Editar exercício e vídeo' : 'Trocar vídeo deste exercício'}
+                        aria-label={isCustomId ? `Editar exercício ${cx?.name || slot.name}` : `Editar vídeo de ${cx?.name || slot.name}`}
                       >
                         <Icon name={isCustomId ? 'pencil' : 'video'} size={15} />
                       </button>
-                      <button type="button" className="b2b-icon-btn" onClick={() => moveSlot(idx, -1)} disabled={idx === 0} title="Subir">
+                      <button
+                        type="button"
+                        className="b2b-icon-btn"
+                        onClick={() => moveSlot(idx, -1)}
+                        disabled={idx === 0}
+                        title="Subir"
+                        aria-label={`Subir exercício ${cx?.name || slot.name}`}
+                      >
                         <Icon name="arrowUp" size={14} />
                       </button>
-                      <button type="button" className="b2b-icon-btn" onClick={() => moveSlot(idx, 1)} disabled={idx === exercises.length - 1} title="Descer">
+                      <button
+                        type="button"
+                        className="b2b-icon-btn"
+                        onClick={() => moveSlot(idx, 1)}
+                        disabled={idx === exercises.length - 1}
+                        title="Descer"
+                        aria-label={`Descer exercício ${cx?.name || slot.name}`}
+                      >
                         <Icon name="arrowDown" size={14} />
                       </button>
-                      <button type="button" className="b2b-icon-btn" onClick={() => removeSlot(idx)} style={{ color: 'var(--red)' }} title="Remover">
+                      <button
+                        type="button"
+                        className="b2b-icon-btn"
+                        onClick={() => removeSlot(idx)}
+                        style={{ color: 'var(--red)' }}
+                        title="Remover"
+                        aria-label={`Remover exercício ${cx?.name || slot.name}`}
+                      >
                         <Icon name="trash" size={14} />
                       </button>
                     </div>
@@ -968,6 +1196,7 @@ export default function WorkoutBuilderModal({
                           : item
                       })}
                       title={item.tenantCustom ? 'Editar exercício / vídeo' : 'Trocar vídeo deste exercício'}
+                      aria-label={item.tenantCustom ? `Editar exercício ${item.name}` : `Editar vídeo de ${item.name}`}
                     >
                       <Icon name={item.tenantCustom ? 'pencil' : 'video'} size={15} />
                     </button>
@@ -976,6 +1205,7 @@ export default function WorkoutBuilderModal({
                       className="b2b-icon-btn"
                       onClick={() => addExerciseFromCatalogue(item)}
                       title="Adicionar exercício à ficha"
+                      aria-label={`Adicionar ${item.name} à ficha`}
                       style={{
                         background: addedCount > 0 ? 'color-mix(in srgb, var(--green) 18%, transparent)' : 'var(--acc-soft)',
                         color: addedCount > 0 ? 'var(--green)' : 'var(--acc-ink)'
@@ -1058,6 +1288,25 @@ export default function WorkoutBuilderModal({
           }
           setCatVersion(v => v + 1);
         }}
+      />
+
+      <ConfirmModal
+        open={confirmRemoveIdx !== null}
+        onClose={() => setConfirmRemoveIdx(null)}
+        title="Remover treino da ficha?"
+        subtitle={confirmRemoveIdx !== null ? (workouts[confirmRemoveIdx]?.name || `Treino ${letterOf(confirmRemoveIdx)}`) : ''}
+        message={
+          confirmRemoveIdx !== null ? (
+            <>
+              Deseja remover <b>"{workouts[confirmRemoveIdx]?.name || `Treino ${letterOf(confirmRemoveIdx)}`}"</b> e os{' '}
+              <b>{workouts[confirmRemoveIdx]?.exercises?.length || 0}</b> exercício(s) configurados nele?
+            </>
+          ) : ''
+        }
+        confirmLabel="Remover treino"
+        confirmVariant="danger"
+        confirmIcon="trash"
+        onConfirm={() => performRemoveWorkoutAt(confirmRemoveIdx)}
       />
     </Modal>
   );

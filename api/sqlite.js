@@ -442,7 +442,7 @@ export function getSqliteInstance(dirOrTenantDir) {
         plan_id = COALESCE(?, plan_id),
         amount_cents = ?,
         data = ?
-      WHERE id = ? AND status != 'paid'
+      WHERE id = ? AND status NOT IN ('paid', 'refunded', 'charged_back')
     `),
     deleteTenantInvoices: db.prepare('DELETE FROM saas_invoices WHERE tenant_id = ?'),
     countTenantTemplates: db.prepare('SELECT COUNT(*) AS cnt FROM gym_templates WHERE tenant_id = ?'),
@@ -497,6 +497,7 @@ export function getSqliteInstance(dirOrTenantDir) {
         data = excluded.data
     `),
     deleteOutboxRow: db.prepare('DELETE FROM whatsapp_outbox WHERE id = ?'),
+    deleteTenantOutbox: db.prepare('DELETE FROM whatsapp_outbox WHERE tenant_id = ?'),
     clearOutbox: db.prepare('DELETE FROM whatsapp_outbox'),
     getCoachDaily: db.prepare('SELECT count FROM coach_daily_usage WHERE user_id = ? AND day = ?'),
     ensureCoachDaily: db.prepare('INSERT OR IGNORE INTO coach_daily_usage (user_id, day, count) VALUES (?, ?, 0)'),

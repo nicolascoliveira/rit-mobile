@@ -227,12 +227,13 @@ export const openPasswordSignIn = onPasskey => ui().openSheet(close => <Password
 
 /* The password half of creating a profile. Name and invite code are the caller's state, so
    switching between passkey and password on the sign-up sheet keeps what was typed. */
-export function PasswordRegisterForm({ close, inviteOnly, name, setName, code, setCode }) {
+export function PasswordRegisterForm({ close, inviteOnly, name, setName, code, setCode, forceShowCode = false, onRegistered = null }) {
   const [email, setEmail] = useState('')
   const [pw, setPw] = useState('')
   const [again, setAgain] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
+  const showCodeField = Boolean(inviteOnly || forceShowCode || String(code || '').trim())
   const submit = async ev => {
     ev.preventDefault()
     if (busy) return
@@ -248,6 +249,7 @@ export function PasswordRegisterForm({ close, inviteOnly, name, setName, code, s
     setBusy(true); setErr(null)
     try {
       const u = await passwordRegister(n, pw, code.trim(), mail)
+      if (typeof onRegistered === 'function') onRegistered(u)
       const st = useStore.getState()
       st.setUser(u); close()
       if (hasData(useStore.getState().S)) { await st.pushState(); toast(t('Profile created, and this device’s data moved into it')) }
@@ -262,11 +264,15 @@ export function PasswordRegisterForm({ close, inviteOnly, name, setName, code, s
     <input className="input" type="email" name="email" autoComplete="email" inputMode="email" placeholder={t('E-mail (optional)')} maxLength={254}
       value={email} onChange={e => setEmail(e.target.value)} {...field} />
     <div className="dim small" style={{ marginTop: 6 }}>{t('Lets you sign in with it instead of your name. Nothing is ever sent to it.')}</div>
-    {inviteOnly && <>
+    {showCodeField && <>
       <div style={{ height: 10 }} />
       <input className="input" placeholder={t('Invite code')} maxLength={40} value={code}
         onChange={e => setCode(e.target.value.toUpperCase())} style={codeStyle} />
-      <div className="dim small" style={{ marginTop: 6 }}>{t('This app is invite-only. Enter the code you were given.')}</div>
+      <div className="dim small" style={{ marginTop: 6 }}>
+        {inviteOnly
+          ? t('This app is invite-only. Enter the code you were given.')
+          : t('Invite code linked to your gym profile.')}
+      </div>
     </>}
     <div style={{ height: 10 }} />
     <input className="input" type="password" name="new-password" autoComplete="new-password" placeholder={t('Password')}

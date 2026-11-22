@@ -1,8 +1,14 @@
-import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
+import React, { Component, Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import Icon from './components/Icon.jsx';
 import { Button, StatusPill, ToastHost } from './components/ui.jsx';
 import PortalTour from './components/PortalTour.jsx';
 import LandingView from './views/LandingView.jsx';
+import AuthView from './views/AuthView.jsx';
+import {
+  InstallPortalPwaButton,
+  IosInstallHintCard,
+  OfflineStatusBanner
+} from './components/InstallPortalPwa.jsx';
 import {
   shouldOfferPortalTour,
   clearPortalTourProgress
@@ -19,10 +25,92 @@ import {
   getStudentAppUrl,
   toast
 } from './lib/api.js';
+import {
+  isNativePortalApp,
+  nativePortalHttpRequest,
+  openStudentNativeApp,
+  rememberPortalNativeMode,
+  resolvePortalApiUrl,
+  sendPortalNativeNotification
+} from './lib/native.js';
 
-const AuthView = lazy(() => import('./views/AuthView.jsx'));
-const SuperAdminPanel = lazy(() => import('./views/SuperAdminPanel.jsx'));
-const GymPanel = lazy(() => import('./views/GymPanel.jsx'));
+const lazyWithRetry = importer => lazy(async () => {
+  try {
+    return await importer();
+  } catch (err) {
+    if (typeof window !== 'undefined' && typeof sessionStorage !== 'undefined') {
+      const key = 'rit_chunk_reloaded_at';
+      const last = Number(sessionStorage.getItem(key) || 0);
+      if (Date.now() - last > 15000) {
+        sessionStorage.setItem(key, String(Date.now()));
+        window.location.reload();
+        return new Promise(() => { });
+      }
+    }
+    throw err;
+  }
+});
+
+class PortalErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, info) {
+    console.error('[PortalErrorBoundary]', error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      const msg = String(this.state.error?.message || '');
+      const isChunkError =
+        this.state.error?.name === 'ChunkLoadError' ||
+        /Loading chunk|Failed to fetch dynamically imported module|Importing a module script failed/i.test(msg);
+
+      return (
+        <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, background: 'var(--bg, #000)', color: 'var(--label, #fff)' }}>
+          <div className="card" style={{ maxWidth: 420, padding: 28, textAlign: 'center' }}>
+            <h2 style={{ marginTop: 0, marginBottom: 8, fontSize: 20 }}>
+              {isChunkError ? 'Nova versão disponível' : 'Erro inesperado nesta tela'}
+            </h2>
+            <p className="muted" style={{ marginTop: 0, marginBottom: 20, fontSize: 15, lineHeight: 1.5 }}>
+              {isChunkError
+                ? 'Recarregue a página para concluir a transição da tela com os arquivos mais recentes.'
+                : 'Recarregue o painel ou volte ao início. Se persistir, verifique o console.'}
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <Button variant="primary" block onClick={() => window.location.reload()}>
+                Recarregar Painel
+              </Button>
+              {!isChunkError && (
+                <Button
+                  variant="tinted"
+                  block
+                  onClick={() => {
+                    this.setState({ hasError: false, error: null });
+                    if (isNativePortalApp()) {
+                      window.location.assign('./index.html#/painel');
+                    } else {
+                      window.location.assign('/painel');
+                    }
+                  }}
+                >
+                  Voltar ao início
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+const SuperAdminPanel = lazyWithRetry(() => import('./views/SuperAdminPanel.jsx'));
+const GymPanel = lazyWithRetry(() => import('./views/GymPanel.jsx'));
 
 const SUPER_NAV = [
   { id: 'overview', label: 'Visão Executiva', icon: 'chartLine' },
@@ -41,12 +129,30 @@ const GYM_NAV = [
   { id: 'settings', label: 'Configurações', icon: 'gear' }
 ];
 
+function pushPortalRoute(path, replace = false) {
+  if (typeof window === 'undefined') return;
+  const clean = path.startsWith('/') ? path : `/${path}`;
+  if (isNativePortalApp()) {
+    const nextHash = `#${clean}`;
+    if (window.location.hash === nextHash) return;
+    const base = `${window.location.pathname}${window.location.search}`;
+    if (replace) window.history.replaceState(null, '', `${base}${nextHash}`);
+    else window.history.pushState(null, '', `${base}${nextHash}`);
+    return;
+  }
+  if (window.location.pathname !== clean || window.location.hash) {
+    if (replace) window.history.replaceState(null, '', clean);
+    else window.history.pushState(null, '', clean);
+  }
+}
+
 function parsePortalRoute() {
   if (typeof window === 'undefined') {
     return { isLoginRoute: false, authMode: 'login', signupAccountType: 'gym', tab: '' };
   }
+  const native = isNativePortalApp();
   const isPortalSubdomain = /^(painel|portal|admin|gestao)\./i.test(window.location.hostname || '');
-  const rawPath = window.location.pathname.replace(/^\/+|\/+$/g, '').toLowerCase();
+  const rawPath = native ? '' : window.location.pathname.replace(/^\/+|\/+$/g, '').toLowerCase();
   const rawHash = window.location.hash.replace(/^#\/?/, '').toLowerCase();
   const sp = new URLSearchParams(window.location.search || '');
   const searchMode = (sp.get('mode') || '').toLowerCase();
@@ -73,6 +179,7 @@ function parsePortalRoute() {
     searchMode === 'cadastro';
 
   const isLoginRoute =
+    native ||
     isSignupRoute ||
     rawPath === 'login' ||
     rawPath === 'entrar' ||
@@ -93,7 +200,7 @@ function parsePortalRoute() {
   };
 }
 
-export default function App() {
+function PortalApp() {
   const [theme, setTheme] = useState(() => setStoredTheme(getStoredTheme()));
   const [showLogin, setShowLogin] = useState(() => parsePortalRoute().isLoginRoute);
   const [authMode, setAuthMode] = useState(() => parsePortalRoute().authMode);
@@ -120,22 +227,45 @@ export default function App() {
 
   const selectSuperTab = useCallback(tab => {
     setSuperTab(tab);
-    if (typeof window !== 'undefined') {
-      const nextPath = tab === 'overview' ? '/painel' : `/painel/${tab}`;
-      if (window.location.pathname !== nextPath || window.location.hash) {
-        window.history.replaceState(null, '', nextPath);
-      }
-    }
+    const nextPath = tab === 'overview' ? '/painel' : `/painel/${tab}`;
+    pushPortalRoute(nextPath, true);
   }, []);
 
   const selectGymTab = useCallback(tab => {
     setGymTab(tab);
-    if (typeof window !== 'undefined') {
-      const nextPath = tab === 'dashboard' ? '/painel' : `/painel/${tab}`;
-      if (window.location.pathname !== nextPath || window.location.hash) {
-        window.history.replaceState(null, '', nextPath);
-      }
+    const nextPath = tab === 'dashboard' ? '/painel' : `/painel/${tab}`;
+    pushPortalRoute(nextPath, true);
+  }, []);
+
+  const mobileOpenRef = useRef(false);
+  mobileOpenRef.current = mobileOpen;
+
+  useEffect(() => {
+    if (!isNativePortalApp() || typeof window === 'undefined') return undefined;
+    rememberPortalNativeMode();
+    const appPlugin = window.Capacitor?.Plugins?.App;
+    if (!appPlugin?.addListener) return undefined;
+    let handlePromise = null;
+    let disposed = false;
+    try {
+      handlePromise = appPlugin.addListener('backButton', () => {
+        if (mobileOpenRef.current) {
+          setMobileOpen(false);
+          return;
+        }
+        openStudentNativeApp();
+      });
+    } catch {
+      return undefined;
     }
+    return () => {
+      disposed = true;
+      Promise.resolve(handlePromise)
+        .then(h => {
+          if (disposed && typeof h?.remove === 'function') h.remove();
+        })
+        .catch(() => { });
+    };
   }, []);
 
   useEffect(() => {
@@ -219,6 +349,22 @@ export default function App() {
 
   const isSuperUser = user?.saasRole === 'superadmin';
   const isGymMode = Boolean(user && (!isSuperUser || activeTenant));
+  const lastAtRiskNotifiedRef = useRef(0);
+
+  useEffect(() => {
+    if (!isNativePortalApp() || !isGymMode) return;
+    const risk = Number(gymKpis?.atRiskCount || 0);
+    if (risk <= 0 || risk === lastAtRiskNotifiedRef.current) return;
+    lastAtRiskNotifiedRef.current = risk;
+    sendPortalNativeNotification({
+      id: 4201,
+      title: 'Rit Painel · Alerta Anti-Evasão',
+      body: risk === 1
+        ? '1 aluno precisa de atenção para evitar evasão.'
+        : `${risk} alunos estão em risco de evasão e precisam de atenção.`,
+      interactive: true
+    }).catch(() => { });
+  }, [isGymMode, gymKpis?.atRiskCount]);
 
   // Sincroniza cor de destaque (Lime padrão no Super Admin, cor White-Label da academia no Painel da Academia)
   useEffect(() => {
@@ -275,12 +421,10 @@ export default function App() {
     const nextType = accountType === 'personal' ? 'personal' : 'gym';
     setAuthMode(nextMode);
     setSignupAccountType(nextType);
-    if (typeof window !== 'undefined') {
-      const targetUrl = nextMode === 'signup'
-        ? (nextType === 'personal' ? '/cadastro?tipo=personal' : '/cadastro')
-        : '/login';
-      window.history.pushState(null, '', targetUrl);
-    }
+    const targetUrl = nextMode === 'signup'
+      ? (nextType === 'personal' ? '/cadastro?tipo=personal' : '/cadastro')
+      : '/login';
+    pushPortalRoute(targetUrl, false);
     setShowLogin(true);
     if (typeof window !== 'undefined') {
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -316,10 +460,8 @@ export default function App() {
     }
   };
 
-  const handleLogout = async () => {
-    try {
-      await portalApi('/api/logout', { method: 'POST', body: {} });
-    } catch { /* ignore */ }
+  const clearSessionAndOpenLogin = useCallback(() => {
+    setMobileOpen(false);
     setStoredToken('');
     setTenantOverride('');
     setUser(null);
@@ -329,11 +471,33 @@ export default function App() {
     pendingNewSignupRef.current = false;
     setAuthMode('login');
     applyPortalAccent(null, theme);
-    if (typeof window !== 'undefined') {
-      window.history.pushState(null, '', '/login');
-    }
+    pushPortalRoute('/login', false);
     setShowLogin(true);
-    await refreshBootstrap();
+  }, [theme]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const onUnauthorized = () => {
+      clearSessionAndOpenLogin();
+    };
+    window.addEventListener('rit:unauthorized', onUnauthorized);
+    return () => window.removeEventListener('rit:unauthorized', onUnauthorized);
+  }, [clearSessionAndOpenLogin]);
+
+  const handleLogout = () => {
+    const tokenSnapshot = getStoredToken();
+    clearSessionAndOpenLogin();
+    if (tokenSnapshot && typeof fetch === 'function') {
+      nativePortalHttpRequest(resolvePortalApiUrl('/api/logout'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenSnapshot}`
+        },
+        body: '{}'
+      }).catch(() => { });
+    }
+    refreshBootstrap();
   };
 
   const handleStartImpersonation = useCallback(tenant => {
@@ -400,7 +564,7 @@ export default function App() {
       );
     }
     return (
-      <Suspense fallback={<div style={{ minHeight: '100vh', background: '#080808' }} />}>
+      <>
         <AuthView
           bootstrap={bootstrap}
           onAuthenticated={handleAuthenticated}
@@ -410,6 +574,10 @@ export default function App() {
           initialMode={authMode}
           initialAccountType={signupAccountType}
           onBackToLanding={() => {
+            if (isNativePortalApp()) {
+              openStudentNativeApp();
+              return;
+            }
             if (isPortalSubdomain && typeof window !== 'undefined') {
               const rootHost = window.location.hostname.replace(/^(painel|portal|admin|gestao)\./i, '');
               window.location.href = `${window.location.protocol}//${rootHost}`;
@@ -421,7 +589,7 @@ export default function App() {
           }}
         />
         <ToastHost />
-      </Suspense>
+      </>
     );
   }
 
@@ -477,16 +645,28 @@ export default function App() {
             </span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <a
-              href={getStudentAppUrl(activeTenant.id)}
-              target="_blank"
-              rel="noreferrer"
-              className="btn ghost sm"
-              style={{ color: '#fff', borderColor: 'rgba(255,255,255,0.35)' }}
-            >
-              <Icon name="phoneScreen" size={14} />
-              <span>App Aluno</span>
-            </a>
+            {isNativePortalApp() ? (
+              <button
+                type="button"
+                onClick={() => openStudentNativeApp(activeTenant.id)}
+                className="btn ghost sm"
+                style={{ color: '#fff', borderColor: 'rgba(255,255,255,0.35)' }}
+              >
+                <Icon name="phoneScreen" size={14} />
+                <span>App Aluno</span>
+              </button>
+            ) : (
+              <a
+                href={getStudentAppUrl(activeTenant.id)}
+                target="_blank"
+                rel="noreferrer"
+                className="btn ghost sm"
+                style={{ color: '#fff', borderColor: 'rgba(255,255,255,0.35)' }}
+              >
+                <Icon name="phoneScreen" size={14} />
+                <span>App Aluno</span>
+              </a>
+            )}
             <Button
               variant="plain"
               size="sm"
@@ -582,18 +762,32 @@ export default function App() {
           </nav>
 
           <div className="portal-sidebar-foot">
+            <InstallPortalPwaButton sidebarMode label="Instalar App / Painel" />
+
             {isGymMode && activeTenant?.id && (
-              <a
-                href={getStudentAppUrl(activeTenant.id)}
-                target="_blank"
-                rel="noreferrer"
-                className="portal-nav-btn"
-                style={{ textDecoration: 'none' }}
-              >
-                <Icon name="phoneScreen" size={18} />
-                <span>Aplicativo do Aluno</span>
-                <Icon name="externalLink" size={14} style={{ marginLeft: 'auto', opacity: 0.6 }} />
-              </a>
+              isNativePortalApp() ? (
+                <button
+                  type="button"
+                  onClick={() => openStudentNativeApp(activeTenant.id)}
+                  className="portal-nav-btn"
+                >
+                  <Icon name="phoneScreen" size={18} />
+                  <span>Aplicativo do Aluno</span>
+                  <Icon name="chevronRight" size={14} style={{ marginLeft: 'auto', opacity: 0.6 }} />
+                </button>
+              ) : (
+                <a
+                  href={getStudentAppUrl(activeTenant.id)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="portal-nav-btn"
+                  style={{ textDecoration: 'none' }}
+                >
+                  <Icon name="phoneScreen" size={18} />
+                  <span>Aplicativo do Aluno</span>
+                  <Icon name="externalLink" size={14} style={{ marginLeft: 'auto', opacity: 0.6 }} />
+                </a>
+              )
             )}
 
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '6px 8px 2px' }}>
@@ -658,17 +852,30 @@ export default function App() {
             </div>
 
             <div className="portal-topbar-r">
+              <InstallPortalPwaButton variant="tinted" label="Instalar Painel" />
               {isGymMode && activeTenant?.id && (
-                <a
-                  href={getStudentAppUrl(activeTenant.id)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="btn ghost sm portal-topbar-app-link"
-                  title="Abrir Aplicativo do Aluno"
-                >
-                  <Icon name="phoneScreen" size={15} />
-                  <span>App do Aluno</span>
-                </a>
+                isNativePortalApp() ? (
+                  <button
+                    type="button"
+                    onClick={() => openStudentNativeApp(activeTenant.id)}
+                    className="btn ghost sm portal-topbar-app-link"
+                    title="Abrir Aplicativo do Aluno"
+                  >
+                    <Icon name="phoneScreen" size={15} />
+                    <span>App do Aluno</span>
+                  </button>
+                ) : (
+                  <a
+                    href={getStudentAppUrl(activeTenant.id)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn ghost sm portal-topbar-app-link"
+                    title="Abrir Aplicativo do Aluno"
+                  >
+                    <Icon name="phoneScreen" size={15} />
+                    <span>App do Aluno</span>
+                  </a>
+                )
               )}
               {isGymMode && !isTenantBillingLocked && (
                 <Button
@@ -697,7 +904,10 @@ export default function App() {
             </div>
           </header>
 
+          <OfflineStatusBanner />
+
           <main className="portal-main">
+            <IosInstallHintCard />
             <Suspense fallback={<div className="muted" style={{ padding: 32 }}>Carregando painel...</div>}>
               {isGymMode ? (
                 <GymPanel
@@ -737,5 +947,13 @@ export default function App() {
 
       <ToastHost />
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <PortalErrorBoundary>
+      <PortalApp />
+    </PortalErrorBoundary>
   );
 }
