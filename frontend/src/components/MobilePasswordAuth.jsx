@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store/useStore.js'
 import { useUI } from '../store/useUI.js'
 import { t } from '../lib/i18n.js'
-import { MIN_PASSWORD, looksLikeEmail, passwordError } from './PasswordAuth.jsx'
+import { MIN_PASSWORD, looksLikeEmail, looksLikePhone, formatPhoneInput, passwordError } from './PasswordAuth.jsx'
 import {
   rememberStudentNativeMode,
   RIT_STUDENT_SERVER,
@@ -638,6 +638,7 @@ export function MobileRegisterSheet({
   const [code, setCode] = useState(cleanInitialCode)
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
+  const [phone, setPhone] = useState('')
   const [pw, setPw] = useState('')
   const [again, setAgain] = useState('')
   const [inviteOnly, setInviteOnly] = useState(Boolean(requireInvite))
@@ -711,6 +712,8 @@ export function MobileRegisterSheet({
       const res = await sendMobileVerificationCode(targetUrl, {
         purpose: 'register',
         email: email.trim(),
+        phone: phone.trim(),
+        requirePhone: true,
         name: name.trim(),
         password: pw,
         code: code.trim().toUpperCase(),
@@ -736,6 +739,7 @@ export function MobileRegisterSheet({
     if (busy) return
     const n = name.trim()
     const mail = email.trim()
+    const tel = phone.trim()
     const cleanCode = code.trim().toUpperCase()
 
     if (otpState) {
@@ -754,6 +758,8 @@ export function MobileRegisterSheet({
             password: pw,
             code: cleanCode,
             email: mail,
+            phone: tel,
+            requirePhone: true,
             challengeId: otpState.challengeId,
             otpCode: cleanOtp,
             deviceId: typeof getOrCreateDeviceId === 'function' ? getOrCreateDeviceId() : '',
@@ -777,6 +783,8 @@ export function MobileRegisterSheet({
       : !n ? t('Enter a name')
       : !mail ? 'Informe seu endereço de e-mail.'
       : !looksLikeEmail(mail) ? t('That is not an e-mail address.')
+      : !tel ? 'Informe seu número de telefone (WhatsApp) com DDD.'
+      : !looksLikePhone(tel) ? 'Informe um número de telefone (WhatsApp) válido com DDD.'
       : [...String(pw || '')].length < MIN_PASSWORD ? t('Use at least {0} characters.', MIN_PASSWORD)
       : pw !== again ? t('The two passwords are not the same.')
       : ''
@@ -788,6 +796,8 @@ export function MobileRegisterSheet({
         const res = await sendMobileVerificationCode(targetUrl, {
           purpose: 'register',
           email: mail,
+          phone: tel,
+          requirePhone: true,
           name: n,
           password: pw,
           code: cleanCode,
@@ -799,7 +809,11 @@ export function MobileRegisterSheet({
           return
         }
       }
-      const u = await registerMobileWithPassword(targetUrl, { name: n, password: pw, code: cleanCode, email: mail }, askAddDeviceData)
+      const u = await registerMobileWithPassword(
+        targetUrl,
+        { name: n, password: pw, code: cleanCode, email: mail, phone: tel, requirePhone: true },
+        askAddDeviceData
+      )
       rememberStudentNativeMode()
       close?.()
       useUI.getState().toast(t('Welcome, {0}', u?.name || n))
@@ -940,6 +954,28 @@ export function MobileRegisterSheet({
             onChange={e => setEmail(e.target.value)}
             {...FIELD_ATTRS}
           />
+        </div>
+
+        <div className="rit-auth-field">
+          <label className="rit-auth-label">
+            <span>Telefone (WhatsApp)<span className="rit-auth-label-req">*</span></span>
+          </label>
+          <input
+            className="rit-auth-input"
+            type="tel"
+            name="phone"
+            autoComplete="tel"
+            inputMode="tel"
+            placeholder="(11) 99999-9999"
+            maxLength={20}
+            value={phone}
+            onFocus={onFocus}
+            onChange={e => setPhone(formatPhoneInput(e.target.value))}
+            {...FIELD_ATTRS}
+          />
+          <div className="rit-auth-helper">
+            Usado para enviar seu código de verificação e avisos do treinador.
+          </div>
         </div>
 
         <div className="rit-auth-field">

@@ -4489,6 +4489,10 @@ export function createSaasRoutes({
 
         const rawPhone = String(body?.phone || preEnrolled?.phone || inv?.studentPhone || '').trim();
         const cleanedPhone = cleanWhatsAppPhone(rawPhone);
+        const hasBodyPhone = typeof body?.phone === 'string' && body.phone.trim() !== '';
+        if ((body?.requirePhone === true || hasBodyPhone) && !cleanedPhone) {
+          return json(res, 400, { error: 'Informe um número de telefone (WhatsApp) válido com DDD.', code: 'phone-invalid' });
+        }
         const challengeId = crypto.randomBytes(16).toString('base64url');
         const otpCode = generateOtpCode();
         const codeHash = hashOtpCode(otpCode, secretKey, challengeId);

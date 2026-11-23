@@ -1761,8 +1761,17 @@ const passwordRoutes = {
     const hasEmail = typeof body.email === 'string' && body.email.trim() !== '';
     const email = hasEmail ? normalizeEmail(body.email) : null;
     if (hasEmail && !email) return json(res, 400, EMAIL_ERRORS.invalid);
+    const hasPhone = typeof body.phone === 'string' && body.phone.trim() !== '';
+    const bodyPhone = hasPhone ? cleanWhatsAppPhone(body.phone) : '';
+    if (hasPhone && !bodyPhone) {
+      return json(res, 400, { error: 'Informe um número de telefone (WhatsApp) válido com DDD.', code: 'phone-invalid' });
+    }
     const otpCheck = verifyRegistrationOtpChallenge(req, res, body, email);
     if (!otpCheck.ok) return;
+    const effectivePhone = bodyPhone || otpCheck.phone || '';
+    if (body.requirePhone === true && !effectivePhone && !earlyCtx.preEnrolled?.phone) {
+      return json(res, 400, { error: 'Informe um número de telefone (WhatsApp) válido com DDD.', code: 'phone-invalid' });
+    }
     const emailRefused = () => {
       strikeAddress(req, 'email');
       audit(req, 'auth.register.fail', { ok: false, name, msg: 'email-taken' });
@@ -1804,6 +1813,7 @@ const passwordRoutes = {
           const prevName = preEnrolled.name;
           const prevPw = preEnrolled.pw;
           const prevEmail = preEnrolled.email;
+          const prevPhone = preEnrolled.phone;
           const prevSv = preEnrolled.sv;
           const prevInvitedBy = preEnrolled.invitedBy;
           const prevOnboardedAt = preEnrolled.onboardedAt;
@@ -1811,6 +1821,7 @@ const passwordRoutes = {
           preEnrolled.name = name;
           setPassword(preEnrolled, h);
           if (email) preEnrolled.email = email;
+          if (effectivePhone) preEnrolled.phone = effectivePhone;
           preEnrolled.invitedBy = inv.code;
           preEnrolled.onboardedAt = created;
 
@@ -1820,6 +1831,7 @@ const passwordRoutes = {
             preEnrolled.name = prevName;
             if (prevPw !== undefined) preEnrolled.pw = prevPw; else delete preEnrolled.pw;
             if (prevEmail !== undefined) preEnrolled.email = prevEmail; else delete preEnrolled.email;
+            if (prevPhone !== undefined) preEnrolled.phone = prevPhone; else delete preEnrolled.phone;
             if (prevSv !== undefined) preEnrolled.sv = prevSv; else delete preEnrolled.sv;
             if (prevInvitedBy !== undefined) preEnrolled.invitedBy = prevInvitedBy; else delete preEnrolled.invitedBy;
             if (prevOnboardedAt !== undefined) preEnrolled.onboardedAt = prevOnboardedAt; else delete preEnrolled.onboardedAt;
@@ -1838,6 +1850,7 @@ const passwordRoutes = {
         const user = {
           id: userId, name, created, pw: { h, set: created },
           ...(email ? { email } : {}),
+          ...(effectivePhone ? { phone: effectivePhone } : {}),
           ...(signupTenant !== 'default' ? { tenantId: signupTenant, saasRole: 'student', role: 'student' } : {})
         };
         if (inv) {

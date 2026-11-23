@@ -189,13 +189,25 @@ describe('MobileOnboarding & web-like mobile password auth', () => {
     expect(host.querySelector('[role="alert"]')?.textContent).toContain('e-mail')
     expect(sendMobileVerificationCode).not.toHaveBeenCalled()
 
+    // Missing phone must be rejected
     type(host.querySelector('input[name="email"]'), 'mari@atlas.br')
+    await act(async () => { buttonByText('Create profile').click() })
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('telefone')
+    expect(sendMobileVerificationCode).not.toHaveBeenCalled()
+
+    const phoneInput = host.querySelector('input[name="phone"]')
+    expect(phoneInput).toBeTruthy()
+    type(phoneInput, '11988776655')
+    expect(phoneInput.value).toBe('(11) 98877-6655')
+
     await act(async () => { buttonByText('Create profile').click() })
     expect(sendMobileVerificationCode).toHaveBeenCalledWith(
       'https://app.treinerit.duckdns.org',
       expect.objectContaining({
         purpose: 'register',
         email: 'mari@atlas.br',
+        phone: '(11) 98877-6655',
+        requirePhone: true,
         name: 'Mariana',
         code: 'RIT500'
       })
@@ -217,6 +229,8 @@ describe('MobileOnboarding & web-like mobile password auth', () => {
         password: 'senhasegura123',
         code: 'RIT500',
         email: 'mari@atlas.br',
+        phone: '(11) 98877-6655',
+        requirePhone: true,
         challengeId: 'chal_reg_1',
         otpCode: '654321',
         deviceId: 'dev_test_123456',

@@ -202,7 +202,8 @@ export async function registerWithPassword(
     challengeId = '',
     otpCode = '',
     deviceId = '',
-    requireEmailOtp = false
+    requireEmailOtp = false,
+    requirePhone = false
   }
 ) {
   const cleanCode = String(code || '').trim().toUpperCase()
@@ -213,6 +214,7 @@ export async function registerWithPassword(
   if (otpCode) extra.otpCode = String(otpCode).trim()
   if (deviceId) extra.deviceId = String(deviceId).trim()
   if (requireEmailOtp) extra.requireEmailOtp = true
+  if (requirePhone) extra.requirePhone = true
   return authenticatePasswordRoute(
     rawUrl,
     '/api/register/password',

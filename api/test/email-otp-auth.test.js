@@ -129,11 +129,26 @@ test('Fluxo completo: E-mail obrigatório + OTP 6 dígitos (WhatsApp/E-mail) + C
   assert.equal(preview.data.studentEmail, 'rafael.costa@aluno.com.br');
   assert.equal(preview.data.hasPhone, true);
 
-  // 4. Solicita código de verificação de 6 dígitos para o cadastro
+  // 4. Solicita código de verificação de 6 dígitos para o cadastro (valida telefone quando informado/exigido)
+  const badPhoneOtp = await reqJson('POST', '/api/auth/verification/send', {
+    purpose: 'register',
+    email: 'rafael.costa@aluno.com.br',
+    phone: '123',
+    requirePhone: true,
+    name: 'Rafael Costa',
+    password: 'senhasegura2026',
+    code: inviteCode,
+    channel: 'auto'
+  });
+  assert.equal(badPhoneOtp.status, 400);
+  assert.equal(badPhoneOtp.data.code, 'phone-invalid');
+
   const msgCountBefore = evo.messages.length;
   const sendRegOtp = await reqJson('POST', '/api/auth/verification/send', {
     purpose: 'register',
     email: 'rafael.costa@aluno.com.br',
+    phone: '(11) 98765-4321',
+    requirePhone: true,
     name: 'Rafael Costa',
     password: 'senhasegura2026',
     code: inviteCode,

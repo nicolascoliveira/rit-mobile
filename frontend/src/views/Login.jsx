@@ -102,7 +102,7 @@ function RegisterSheet({ close, initialCode = '' }) {
   if (pwOn && how === 'password') return <>
     <h3>{t('Create your profile')}</h3>
     {choose}
-    <div className="muted small" style={{ marginBottom: 14 }}>Crie sua conta com seu nome, e-mail e código de convite do professor.</div>
+    <div className="muted small" style={{ marginBottom: 14 }}>Crie sua conta com seu nome, e-mail, telefone (WhatsApp) e código de convite do professor.</div>
     <PasswordRegisterForm
       close={close}
       inviteOnly={inviteOnly}

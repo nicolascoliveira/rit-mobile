@@ -32,6 +32,23 @@ export const looksLikeEmail = s => {
   const e = foldEmail(s)
   return !!e && [...e].length <= 254 && EMAIL_RE.test(e) && !e.includes('..')
 }
+export const looksLikePhone = s => {
+  const digits = String(s || '').replace(/\D/g, '')
+  return digits.length >= 10 && digits.length <= 15
+}
+export function formatPhoneInput(raw) {
+  const str = String(raw || '')
+  const hasPlus = str.trim().startsWith('+')
+  const digits = str.replace(/\D/g, '').slice(0, 15)
+  if (!digits) return hasPlus ? '+' : ''
+  if (hasPlus || digits.length > 11) {
+    return `${hasPlus ? '+' : ''}${digits}`
+  }
+  if (digits.length <= 2) return `(${digits}`
+  if (digits.length <= 6) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`
+  if (digits.length <= 10) return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`
+  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7, 11)}`
+}
 
 const ui = () => useUI.getState()
 const toast = m => ui().toast(m)
@@ -59,6 +76,7 @@ export function passwordError(e) {
     case 'email-invalid': return t('That is not an e-mail address.')
     case 'email-taken': return t('Another profile already uses this e-mail address.')
     case 'email-not-found': return 'Nenhuma conta encontrada com este endereço de e-mail.'
+    case 'phone-invalid': return 'Informe um número de telefone (WhatsApp) válido com DDD.'
     case 'invite': return t('That invite code is not valid.')
     case 'current-required': case 'current-wrong': return t('Your current password is not right.')
     case 'passkey': case 'passkey-required': return t('Your passkey could not be confirmed.')
@@ -475,11 +493,13 @@ export function PasswordRegisterForm({
   code,
   setCode,
   initialEmail = '',
+  initialPhone = '',
   forceShowCode = false,
   requireEmailOtp = false,
   onRegistered = null
 }) {
   const [email, setEmail] = useState(initialEmail || '')
+  const [phone, setPhone] = useState(initialPhone ? formatPhoneInput(initialPhone) : '')
   const [pw, setPw] = useState('')
   const [again, setAgain] = useState('')
   const [otpState, setOtpState] = useState(null)
@@ -490,6 +510,9 @@ export function PasswordRegisterForm({
   useEffect(() => {
     if (initialEmail && !email) setEmail(initialEmail)
   }, [initialEmail]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (initialPhone && !phone) setPhone(formatPhoneInput(initialPhone))
+  }, [initialPhone]) // eslint-disable-line react-hooks/exhaustive-deps
   const showCodeField = Boolean(inviteOnly || forceShowCode || String(code || '').trim())
 
   const handleResendOtp = async channel => {
@@ -500,6 +523,8 @@ export function PasswordRegisterForm({
       const res = await sendVerificationCode({
         purpose: 'register',
         email: email.trim(),
+        phone: phone.trim(),
+        requirePhone: true,
         name: name.trim(),
         password: pw,
         code: code.trim().toUpperCase(),
@@ -521,6 +546,7 @@ export function PasswordRegisterForm({
     if (busy) return
     const n = name.trim()
     const mail = email.trim()
+    const tel = phone.trim()
     if (requireEmailOtp && otpState) {
       const cleanOtp = otpCode.replace(/\D/g, '')
       if (cleanOtp.length !== 6) {
@@ -531,6 +557,8 @@ export function PasswordRegisterForm({
       try {
         const u = await passwordRegister(n, pw, code.trim(), mail, {
           requireEmailOtp: true,
+          requirePhone: true,
+          phone: tel,
           deviceId: getOrCreateDeviceId(),
           challengeId: otpState.challengeId,
           otpCode: cleanOtp
@@ -550,6 +578,8 @@ export function PasswordRegisterForm({
     const bad = !n ? t('Enter a name')
       : requireEmailOtp && !mail ? 'Informe seu endereço de e-mail.'
       : mail && !looksLikeEmail(mail) ? t('That is not an e-mail address.')
+      : requireEmailOtp && !tel ? 'Informe seu número de telefone (WhatsApp) com DDD.'
+      : requireEmailOtp && !looksLikePhone(tel) ? 'Informe um número de telefone (WhatsApp) válido com DDD.'
       : inviteOnly && !code.trim() ? t('An invite code is required')
       : length(pw) < MIN_PASSWORD ? t('Use at least {0} characters.', MIN_PASSWORD)
       : pw !== again ? t('The two passwords are not the same.')
@@ -561,6 +591,8 @@ export function PasswordRegisterForm({
         const res = await sendVerificationCode({
           purpose: 'register',
           email: mail,
+          phone: tel,
+          requirePhone: true,
           name: n,
           password: pw,
           code: code.trim().toUpperCase(),
@@ -572,7 +604,9 @@ export function PasswordRegisterForm({
           return
         }
       }
-      const u = await passwordRegister(n, pw, code.trim(), mail)
+      const u = requireEmailOtp
+        ? await passwordRegister(n, pw, code.trim(), mail, { phone: tel, requirePhone: true })
+        : await passwordRegister(n, pw, code.trim(), mail)
       if (typeof onRegistered === 'function') onRegistered(u)
       const st = useStore.getState()
       st.setUser(u); close()
@@ -649,6 +683,15 @@ export function PasswordRegisterForm({
         ? 'Usado para entrar na sua conta e receber o código de verificação.'
         : t('Lets you sign in with it instead of your name. Nothing is ever sent to it.')}
     </div>
+    {requireEmailOtp && <>
+      <div style={{ height: 10 }} />
+      <input className="input" type="tel" name="phone" autoComplete="tel" inputMode="tel"
+        placeholder="Telefone / WhatsApp com DDD — Ex: (11) 99999-9999" maxLength={20}
+        value={phone} onChange={e => setPhone(formatPhoneInput(e.target.value))} {...field} />
+      <div className="dim small" style={{ marginTop: 6 }}>
+        Usado para enviar seu código de verificação no WhatsApp e avisos do seu treinador.
+      </div>
+    </>}
     {showCodeField && <>
       <div style={{ height: 10 }} />
       <input className="input" placeholder={t('Invite code')} maxLength={40} value={code}

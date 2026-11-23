@@ -458,6 +458,7 @@ export async function passwordRegister(name, password, code, email, otpOpts = un
   const extra = {}
   if (otpOpts && typeof otpOpts === 'object') {
     if (otpOpts.requireEmailOtp) extra.requireEmailOtp = true
+    if (otpOpts.requirePhone) extra.requirePhone = true
     if (otpOpts.deviceId) extra.deviceId = otpOpts.deviceId
     if (otpOpts.challengeId) extra.challengeId = otpOpts.challengeId
     if (otpOpts.otpCode) extra.otpCode = otpOpts.otpCode
