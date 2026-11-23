@@ -28,8 +28,8 @@
   <img src="/icon-180.png" alt="" width="72" height="72">
   <h1>This is an openGym sticker</h1>
   <p>Tap it with openGym on your phone and it starts your workout, shows your gym code or jumps to an exercise.</p>
-  <a class="btn" id="open" href="opengym://nfc">Open in openGym</a>
-  <small>No openGym yet? <a href="/">Get it here</a>. It’s free and open source.</small>
+  <a class="btn" id="open" href="rit://nfc">Abrir no Rit</a>
+  <small>Ainda não tem o Rit? <a href="/">Baixe aqui</a>.</small>
 </main>
 <script>
 (function () {
@@ -39,7 +39,7 @@
     var v = q.get(k)
     if (v && /^[A-Za-z0-9_-]{1,64}$/.test(v)) out.set(k, v)
   })
-  var link = 'opengym://nfc' + (String(out) ? '?' + out : '')
+  var link = 'rit://nfc' + (String(out) ? '?' + out : '')
   document.getElementById('open').href = link
   // Straight into the app where it is installed; the page stays as it is where it isn't.
   if (String(out) && /Android|iPhone|iPad/i.test(navigator.userAgent)) location.href = link

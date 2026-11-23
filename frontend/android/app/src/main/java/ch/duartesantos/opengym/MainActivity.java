@@ -48,6 +48,7 @@ public class MainActivity extends BridgeActivity {
         super.onCreate(savedInstanceState);
         installExerciseMediaProxy();
         passSystemBarsToPage();
+        forwardNotificationRoute(getIntent());
     }
 
     private boolean hasBundledExerciseMedia() {
@@ -85,15 +86,32 @@ public class MainActivity extends BridgeActivity {
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        setIntent(intent);
         showHealthPrivacy(intent);
+        forwardNotificationRoute(intent);
     }
 
     // Health Connect's "why does this app ask?" link (the two activity-aliases in the manifest)
     // must show the privacy policy, the same one the Play listing names: opened in the browser.
-    static final String PRIVACY_URL = "https://opengym.ch/privacy";
+    static final String PRIVACY_URL = "https://treinerit.com.br/privacidade";
     static boolean isHealthRationale(String action) {
         return "androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE".equals(action)
                 || "android.intent.action.VIEW_PERMISSION_USAGE".equals(action);
+    }
+
+    private void forwardNotificationRoute(Intent intent) {
+        if (intent == null || bridge == null) return;
+        String ritUrl = intent.getStringExtra("rit_url");
+        if (ritUrl == null || ritUrl.trim().isEmpty()) return;
+        intent.removeExtra("rit_url");
+        final String targetHash = ritUrl.trim().startsWith("#") ? ritUrl.trim() : ("#" + ritUrl.trim());
+        WebView web = bridge.getWebView();
+        if (web != null) {
+            web.post(() -> web.evaluateJavascript(
+                "window.location.hash = " + org.json.JSONObject.quote(targetHash) + ";",
+                null
+            ));
+        }
     }
 
     private void showHealthPrivacy(Intent intent) {

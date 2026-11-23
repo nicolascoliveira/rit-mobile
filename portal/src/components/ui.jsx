@@ -576,6 +576,16 @@ export function ActionMenu({
 
   useEffect(() => {
     if (!open) return undefined;
+    const getFocusableItems = () =>
+      menuRef.current
+        ? Array.from(menuRef.current.querySelectorAll('button[role="menuitem"]:not(:disabled)'))
+        : [];
+
+    const firstItems = getFocusableItems();
+    if (firstItems.length > 0) {
+      firstItems[0].focus();
+    }
+
     const onPointerDown = e => {
       if (triggerRef.current?.contains(e.target) || menuRef.current?.contains(e.target)) return;
       setOpen(false);
@@ -585,6 +595,23 @@ export function ActionMenu({
         e.stopPropagation();
         setOpen(false);
         triggerRef.current?.focus();
+        return;
+      }
+      if (e.key === 'Tab') {
+        setOpen(false);
+        return;
+      }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {
+        const els = getFocusableItems();
+        if (!els.length) return;
+        e.preventDefault();
+        const curIdx = els.indexOf(document.activeElement);
+        let nextIdx = 0;
+        if (e.key === 'ArrowDown') nextIdx = curIdx >= 0 ? (curIdx + 1) % els.length : 0;
+        else if (e.key === 'ArrowUp') nextIdx = curIdx > 0 ? curIdx - 1 : els.length - 1;
+        else if (e.key === 'Home') nextIdx = 0;
+        else if (e.key === 'End') nextIdx = els.length - 1;
+        els[nextIdx]?.focus();
       }
     };
     const onScroll = e => {

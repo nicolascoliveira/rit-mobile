@@ -139,17 +139,25 @@ export async function evaluateTenantEngagement({
   const alertAtAgeDays = Math.max(7, routineCycleDays - 5);
 
   const evo = resolveTenantEvolutionSettings(dataDir, tenant.id);
-  const hasWa = Boolean(evo.evolutionUrl && evo.evolutionInstance);
+  const hasOwnWa = Boolean(evo.evolutionUrl && evo.evolutionInstance);
+  const hasPlatformWa = !evo.evolutionUrl && Boolean(
+    String(process.env.EVOLUTION_API_URL || '').trim() &&
+    String(process.env.EVOLUTION_API_KEY || '').trim()
+  );
+  const hasWa = hasOwnWa || hasPlatformWa;
   const tenantSettings = { ...s, ...evo };
 
   const users = Array.isArray(db?.users) ? db.users : [];
   const staffById = new Map(
     users
-      .filter(u => (u.tenantId || 'default') === tenant.id && u.role !== 'student' && !u.disabled)
+      .filter(u => (u.tenantId || 'default') === tenant.id && u.role !== 'student' && u.saasRole !== 'student' && !u.disabled)
       .map(u => [u.id, u])
   );
   const fallbackOwner = users.find(
-    u => (u.tenantId || 'default') === tenant.id && (u.role === 'gym_owner' || u.role === 'gym_manager') && !u.disabled && cleanWhatsAppPhone(u.phone)
+    u => (u.tenantId || 'default') === tenant.id &&
+      (u.saasRole === 'gym_owner' || u.saasRole === 'gym_manager' || u.role === 'gym_owner' || u.role === 'gym_manager') &&
+      !u.disabled &&
+      cleanWhatsAppPhone(u.phone)
   ) || null;
 
   const students = listStudents(db, dataDir, {
@@ -187,6 +195,7 @@ export async function evaluateTenantEngagement({
             waWeeklyItems.push({
               phone,
               userId: st.id,
+              recipientName: st.name,
               targetName: st.name,
               dedupKey: weeklyKey,
               message: formatWeeklyCheckinWhatsAppMessage({
@@ -227,10 +236,12 @@ export async function evaluateTenantEngagement({
           marks[expiryKey] = nowMs;
           marksChanged = true;
           if (hasWa && staffPhone) {
+            const staffRecipient = targetStaff?.name || tenant.name;
             waExpiryItems.push({
               phone: staffPhone,
               userId: targetStaff?.id || null,
-              targetName: targetStaff?.name || tenant.name,
+              recipientName: staffRecipient,
+              targetName: staffRecipient,
               dedupKey: expiryKey,
               message: formatRoutineExpiryTrainerMessage({
                 trainerName: targetStaff?.name || trainerName || 'Professor',
@@ -271,6 +282,7 @@ export async function evaluateTenantEngagement({
               waChurnItems.push({
                 phone,
                 userId: st.id,
+                recipientName: st.name,
                 targetName: st.name,
                 dedupKey: churnKey,
                 message: formatChurnRecoveryWhatsAppMessage({
@@ -283,8 +295,11 @@ export async function evaluateTenantEngagement({
             }
             if (typeof sendPushFn === 'function') {
               try {
-                const topRoutine = Array.isArray(state?.routines) && state.routines[0]?.name ? state.routines[0].name : '';
-                await sendPushFn(st.id, nudgePush(lang, st.daysInactive >= 14 ? 'long' : 'soft', topRoutine));
+                const topRoutineObj = Array.isArray(state?.routines) && state.routines[0]?.name
+                  ? { name: state.routines[0].name }
+                  : null;
+                const tone = st.daysInactive >= 14 ? 'direct' : 'warm';
+                await sendPushFn(st.id, nudgePush(lang, tone, topRoutineObj, todayIso));
                 result.churnPushSent += 1;
               } catch { /* ignore */ }
             }

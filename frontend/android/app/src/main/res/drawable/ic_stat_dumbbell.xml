@@ -4,8 +4,11 @@
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
-    <!-- Status-bar icons are an alpha mask, so this stays white. -->
+    <!-- Status-bar icons are an alpha mask, so this stays white (Rit official "R" mark). -->
     <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M2,8h2.4v8H2zM4.8,9.6h1.8v4.8H4.8zM7,11.1h10v1.8H7zM17.4,9.6h1.8v4.8h-1.8zM19.6,8H22v8h-2.4z" />
+        android:pathData="M3.55,10.22 L6.12,7.71 Q6.37,7.52 6.76,7.52 L18.27,7.52 A3.44,3.44 0 0,1 18.27,14.40 L11.13,14.40 Q10.68,14.40 10.36,14.72 L7.08,17.74 Q6.83,18.00 6.38,18.00 L2.20,18.00 L7.92,12.34 Q8.24,12.08 8.76,12.08 L17.56,12.08 A0.93,0.93 0 0,0 17.56,10.22 Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M11.00,15.10 L15.44,15.10 L20.00,19.48 L15.95,19.48 Q15.56,19.48 15.31,19.22 Z" />
 </vector>

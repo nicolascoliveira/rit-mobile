@@ -1,8 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 512 512">
-  <!-- openGym app icon "halloween", drawn by hand (the only one not written by scripts/app-icons.mjs,
-       which renders it). The dumbbell is the glyph of resources/icon.svg in pumpkin orange; around
-       it a purple night, a crescent moon, a cobweb near the corner and its spider. Only rect, circle,
-       line, polyline, polygon and one radialGradient: what the script knows how to draw. -->
+  <!-- Rit app icon "halloween": the official Rit "R" in pumpkin orange under a purple night,
+       a crescent moon, a cobweb near the corner and its spider. Rendered by scripts/app-icons.mjs. -->
   <defs>
     <radialGradient id="night" gradientUnits="userSpaceOnUse" cx="256" cy="300" r="380">
       <stop offset="0" stop-color="#3d1a63"/>
@@ -10,17 +8,14 @@
     </radialGradient>
   </defs>
   <rect width="512" height="512" fill="url(#night)"/>
-  <!-- Everything that matters stays within 228 of the centre: Android cuts the art to a circle and
-       only promises the middle 66 dp of its 72, and iOS rounds the corners off. -->
-  <!-- the moon: a pale disc with the night bitten out of it -->
+  <!-- Everything that matters stays within 228 of the centre (Android safe zone). -->
   <circle cx="128" cy="128" r="46" fill="#f7e8b4"/>
   <circle cx="150" cy="112" r="42" fill="url(#night)"/>
   <g fill="#f7e8b4">
     <circle cx="222" cy="72" r="6"/>
-    <circle cx="246" cy="164" r="4"/>
+    <circle cx="246" cy="148" r="4"/>
     <circle cx="66" cy="236" r="4"/>
   </g>
-  <!-- the cobweb, its hub pulled in from the top right corner; only the moorings run off the edge -->
   <g stroke="#b7a2de" stroke-width="4">
     <line x1="412" y1="100" x2="512" y2="44"/>
     <line x1="412" y1="100" x2="468" y2="0"/>
@@ -35,35 +30,23 @@
     <polyline points="324.9,100 337.4,106.5 344.6,112.4 345.2,119.5 342.2,128.9 355.4,129 363.9,130.6 367.8,135 369.8,142.2 379.1,139.1 385.5,138.4 389.3,141.3 392.5,147 398.8,142.6 403.6,141 407.6,143.2 412,148.2"/>
     <polyline points="282,100 300.7,109.7 311.3,118.5 312.4,129.1 307.9,143.1 327.5,143.3 340.2,145.6 346,152.3 349,163 362.9,158.4 372.4,157.3 378.2,161.6 382.9,170.2 392.4,163.6 399.5,161.1 405.5,164.5 412,172"/>
   </g>
-  <!-- its spider, on a thread from the web, clear of the plates -->
-  <line x1="294" y1="106" x2="294" y2="162" stroke="#b7a2de" stroke-width="4"/>
+  <!-- spider hanging above the Rit R -->
+  <line x1="294" y1="106" x2="294" y2="152" stroke="#b7a2de" stroke-width="4"/>
   <g stroke="#ecdfff" stroke-width="4.5">
-    <polyline points="287.6,168.4 276.4,160.4 271.6,168.4"/>
-    <polyline points="300.4,168.4 311.6,160.4 316.4,168.4"/>
-    <polyline points="287.6,173.2 273.2,171.6 268.4,181.2"/>
-    <polyline points="300.4,173.2 314.8,171.6 319.6,181.2"/>
-    <polyline points="288.4,178 276.4,182.8 274.8,192.4"/>
-    <polyline points="299.6,178 311.6,182.8 313.2,192.4"/>
+    <polyline points="287.6,158.4 276.4,150.4 271.6,158.4"/>
+    <polyline points="300.4,158.4 311.6,150.4 316.4,158.4"/>
+    <polyline points="287.6,163.2 273.2,161.6 268.4,171.2"/>
+    <polyline points="300.4,163.2 314.8,161.6 319.6,171.2"/>
+    <polyline points="288.4,168 276.4,172.8 274.8,182.4"/>
+    <polyline points="299.6,168 311.6,172.8 313.2,182.4"/>
   </g>
   <g fill="#ecdfff">
-    <circle cx="294" cy="165.2" r="7.2"/>
-    <circle cx="294" cy="178" r="10.4"/>
+    <circle cx="294" cy="155.2" r="7.2"/>
+    <circle cx="294" cy="168" r="10.4"/>
   </g>
-  <!-- the dumbbell, pumpkin orange -->
+  <!-- the Rit "R" in pumpkin orange, shifted slightly down (+18y) so the spider hangs clearly above -->
   <g fill="#ff7a1a">
-    <rect x="80" y="242" width="352" height="28"/>
-    <rect x="80" y="199" width="36" height="114"/>
-    <rect x="131" y="169" width="47" height="174"/>
-    <rect x="334" y="169" width="47" height="174"/>
-    <rect x="396" y="199" width="36" height="114"/>
-  </g>
-  <!-- the big plates carved like jack-o'-lanterns: two eyes and a grin each, lit from inside -->
-  <g fill="#ffd166">
-    <polygon points="136,214 151,214 143.5,198"/>
-    <polygon points="158,214 173,214 165.5,198"/>
-    <polygon points="136,292 154.5,302 173,292 170,310 164,304 154.5,316 145,304 139,310"/>
-    <polygon points="339,214 354,214 346.5,198"/>
-    <polygon points="361,214 376,214 368.5,198"/>
-    <polygon points="339,292 357.5,302 376,292 373,310 367,304 357.5,316 348,304 342,310"/>
+    <polygon points="124.0,228.0 162.0,191.0 165.1,188.8 168.2,187.2 171.6,186.3 175.0,186.0 354.0,186.0 361.0,186.5 367.8,187.8 374.5,190.1 380.8,193.2 386.6,197.1 391.8,201.7 396.4,206.9 400.3,212.8 403.4,219.0 405.7,225.7 407.0,232.5 407.5,239.5 407.0,246.5 405.7,253.3 403.4,260.0 400.3,266.2 396.4,272.1 391.8,277.3 386.6,281.9 380.8,285.8 374.5,288.9 367.8,291.2 361.0,292.5 354.0,293.0 243.0,293.0 239.1,293.4 235.5,294.5 232.1,296.4 229.0,299.0 181.0,344.0 177.9,346.2 174.8,347.8 171.4,348.7 168.0,349.0 103.0,349.0 191.0,263.0 194.1,260.4 197.5,258.5 201.1,257.4 205.0,257.0 342.5,257.0 345.7,256.6 348.8,255.6 351.5,253.8 353.8,251.5 355.6,248.8 356.6,245.7 357.0,242.5 356.6,239.3 355.6,236.2 353.8,233.5 351.5,231.2 348.8,229.4 345.7,228.4 342.5,228.0"/>
+    <polygon points="240.0,304.0 309.0,304.0 380.0,372.0 318.0,372.0 314.6,371.7 311.5,370.8 308.6,369.2 306.0,367.0"/>
   </g>
 </svg>

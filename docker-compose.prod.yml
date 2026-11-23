@@ -132,6 +132,7 @@ services:
       - web
       - portal
       - api
+    command: "/bin/sh -c 'while :; do sleep 6h & wait $${!}; nginx -s reload; done & exec nginx -g \"daemon off;\"'"
     networks:
       - public_net
 

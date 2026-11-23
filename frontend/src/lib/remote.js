@@ -10,7 +10,12 @@ import { pairRedeem, setRemoteAuth, getAccessHeadersFor } from './api.js'
 import { loadRemoteFile, saveRemoteFile } from './mobile.js'
 import { clearCfAccess } from './cf-access.js'
 import { nativeFetch } from './capacitor-fetch.js'
-import { RIT_STUDENT_SERVER, extractSessionToken, clearNativeCookiesForUrl } from './rit-native.js'
+import {
+  RIT_STUDENT_SERVER,
+  extractSessionToken,
+  clearNativeCookiesForUrl,
+  setTrustedDeviceToken
+} from './rit-native.js'
 
 // Accepts what someone actually types: bare host, no scheme, trailing slash, stray whitespace.
 // Defaults to https:// (self-hosting docs already push for HTTPS; the one exception, localhost,
@@ -150,9 +155,16 @@ async function authenticatePasswordRoute(rawUrl, path, payload, upgradeSecret, f
     },
     body: JSON.stringify({ ...payload, mobile: true })
   })
+  if (body?.verificationRequired) {
+    return body
+  }
   const rawToken = extractSessionToken(body, headers)
   if (!rawToken || !body?.user?.id) {
     throw Object.assign(new Error('Resposta inesperada do servidor.'), { status: 200, code: 'bad-response', data: {} })
+  }
+  if (body?.trustedDeviceToken) {
+    const emailIdentity = payload?.email || payload?.name || fallbackName
+    if (emailIdentity) setTrustedDeviceToken(emailIdentity, body.trustedDeviceToken)
   }
   const token = typeof body.token === 'string' && body.token.trim()
     ? rawToken
@@ -160,33 +172,92 @@ async function authenticatePasswordRoute(rawUrl, path, payload, upgradeSecret, f
   return persistRemoteAuth(base, token, body.user, fallbackName)
 }
 
-export async function connectWithPassword(rawUrl, name, password) {
+export async function connectWithPassword(rawUrl, name, password, otpOpts = undefined) {
+  const extra = {}
+  if (otpOpts && typeof otpOpts === 'object') {
+    if (otpOpts.requireEmailOtp) extra.requireEmailOtp = true
+    if (otpOpts.deviceId) extra.deviceId = otpOpts.deviceId
+    if (otpOpts.trustedDeviceToken) extra.trustedDeviceToken = otpOpts.trustedDeviceToken
+    if (otpOpts.challengeId) extra.challengeId = otpOpts.challengeId
+    if (otpOpts.otpCode) extra.otpCode = otpOpts.otpCode
+    if (otpOpts.channel) extra.channel = otpOpts.channel
+  }
   return authenticatePasswordRoute(
     rawUrl,
     '/api/login/password',
-    { name, password },
+    { name, password, ...extra },
     password,
     name
   )
 }
 
-export async function registerWithPassword(rawUrl, { name, password, code = '', email = '' }) {
+export async function registerWithPassword(
+  rawUrl,
+  {
+    name,
+    password,
+    code = '',
+    email = '',
+    phone = '',
+    challengeId = '',
+    otpCode = '',
+    deviceId = '',
+    requireEmailOtp = false
+  }
+) {
   const cleanCode = String(code || '').trim().toUpperCase()
   const cleanEmail = typeof email === 'string' && email.trim() ? email.trim() : ''
+  const extra = {}
+  if (phone) extra.phone = String(phone).trim()
+  if (challengeId) extra.challengeId = String(challengeId).trim()
+  if (otpCode) extra.otpCode = String(otpCode).trim()
+  if (deviceId) extra.deviceId = String(deviceId).trim()
+  if (requireEmailOtp) extra.requireEmailOtp = true
   return authenticatePasswordRoute(
     rawUrl,
     '/api/register/password',
-    { name, password, code: cleanCode, ...(cleanEmail ? { email: cleanEmail } : {}) },
+    {
+      name,
+      password,
+      code: cleanCode,
+      ...(cleanEmail ? { email: cleanEmail } : {}),
+      ...extra
+    },
     password,
-    name
+    cleanEmail || name
   )
 }
 
-export async function resetPasswordAndConnect(rawUrl, { name, code, next }) {
+export async function sendRemoteVerificationCode(rawUrl, payload = {}) {
+  const base = normalizeServerUrl(rawUrl || RIT_STUDENT_SERVER)
+  if (!base) throw new Error('Enter a valid server address')
+  const { body } = await nativeJsonRequest(
+    base + '/api/auth/verification/send',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAccessHeadersFor(base)
+      },
+      body: JSON.stringify(payload)
+    },
+    15000
+  )
+  return body
+}
+
+export async function resetPasswordAndConnect(
+  rawUrl,
+  { name, code, next, challengeId = '', otpCode = '', deviceId = '' }
+) {
+  const extra = {}
+  if (challengeId) extra.challengeId = String(challengeId).trim()
+  if (otpCode) extra.otpCode = String(otpCode).trim()
+  if (deviceId) extra.deviceId = String(deviceId).trim()
   return authenticatePasswordRoute(
     rawUrl,
     '/api/login/password-reset',
-    { name, code: String(code || '').trim().toUpperCase(), next },
+    { name, code: String(code || otpCode || '').trim().toUpperCase(), next, ...extra },
     next,
     name
   )

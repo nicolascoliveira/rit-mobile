@@ -32,51 +32,21 @@ export const DENSITIES = { ldpi: 0.75, mdpi: 1, hdpi: 1.5, xhdpi: 2, xxhdpi: 3, 
 export const PREVIEW = 112
 export const IOS_SIZE = 1024
 
-/** The glyph's rectangles, in the 512 grid of resources/icon.svg: one source for every icon. */
+/** The glyph's polygons (or rectangles) in the 512 grid of resources/icon.svg: one source for every icon. */
 export function glyph(svg = readFileSync(join(ROOT, 'resources/icon.svg'), 'utf8')) {
   const g = svg.match(/<g[^>]*>([\s\S]*?)<\/g>/)?.[1] || ''
+  const polys = [...g.matchAll(/<polygon\s+points="([^"]+)"/g)].map(m => ({ type: 'polygon', points: m[1] }))
+  if (polys.length) return polys
   return [...g.matchAll(/<rect\s+x="(\d+)"\s+y="(\d+)"\s+width="(\d+)"\s+height="(\d+)"/g)]
-    .map(m => m.slice(1, 5).map(Number))
+    .map(m => ({ type: 'rect', rect: m.slice(1, 5).map(Number) }))
 }
 
 const rgb = hex => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16))
 
-/** One icon `size` px square: the background, the glyph on it, optionally cut to a circle. */
+/** One icon `size` px square: the background, the Rit "R" glyph on it, optionally cut to a circle. */
 export function draw(v, size, { round = false, rects = glyph() } = {}) {
   if (v.art) return drawArt(readFileSync(join(ROOT, v.art), 'utf8'), size, { round })
-  const k = size <= 256 ? 8 : 4
-  const bg = rgb(v.bg), fg = rgb(v.fg)
-  const ch = round ? 4 : 3
-  const out = Buffer.alloc(size * size * ch)
-  const scale = 512 / size
-  // Per sample row, the glyph's spans across it: the inner loop then only compares numbers.
-  const spans = []
-  for (let s = 0; s < size * k; s++) {
-    const gy = (s + 0.5) / k * scale
-    spans.push(rects.filter(([, ry, , rh]) => gy >= ry && gy < ry + rh).map(([rx, , rw]) => [rx, rx + rw]))
-  }
-  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
-    let inside = 0, on = 0
-    for (let sy = 0; sy < k; sy++) {
-      const py = y + (sy + 0.5) / k
-      const row = spans[y * k + sy]
-      for (let sx = 0; sx < k; sx++) {
-        const px = x + (sx + 0.5) / k
-        if (round) {
-          const dx = px - size / 2, dy = py - size / 2
-          if (dx * dx + dy * dy > (size / 2) * (size / 2)) continue
-        }
-        inside++
-        const gx = px * scale
-        for (const [a, b] of row) if (gx >= a && gx < b) { on++; break }
-      }
-    }
-    const o = (y * size + x) * ch
-    const a = inside ? on / inside : 0
-    for (let c = 0; c < 3; c++) out[o + c] = Math.round(bg[c] + (fg[c] - bg[c]) * a)
-    if (round) out[o + 3] = Math.round(255 * inside / (k * k))
-  }
-  return png(size, size, out, ch)
+  return drawArt(svgOf(v, rects), size, { round })
 }
 
 // --- the hand-made icons: a renderer for the little SVG they are allowed to use ---
@@ -217,11 +187,13 @@ export function pngInfo(buf) {
   return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20), alpha: buf[25] === 6 || buf[25] === 4 }
 }
 
-const svgOf = (v, rects) => `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 512 512">
-  <!-- openGym app icon "${v.id}", written by scripts/app-icons.mjs (the glyph of resources/icon.svg). -->
+const svgOf = (v, shapes) => `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 512 512">
+  <!-- Rit app icon "${v.id}", written by scripts/app-icons.mjs (the "R" glyph of resources/icon.svg). -->
   <rect width="512" height="512" fill="${v.bg}"/>
   <g fill="${v.fg}">
-${rects.map(([x, y, w, h]) => `    <rect x="${x}" y="${y}" width="${w}" height="${h}"/>`).join('\n')}
+${shapes.map(s => s.type === 'polygon'
+  ? `    <polygon points="${s.points}"/>`
+  : `    <rect x="${s.rect[0]}" y="${s.rect[1]}" width="${s.rect[2]}" height="${s.rect[3]}"/>`).join('\n')}
   </g>
 </svg>
 `
@@ -261,7 +233,10 @@ export function files(rects = glyph()) {
   const colors = []
   for (const v of APP_ICON_VARIANTS) {
     out.push([`public/app-icons/${v.id}.png`, () => draw(v, PREVIEW, { rects })])
-    if (v.id === 'default') continue
+    if (v.id === 'default') {
+      out.push(['ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png', () => draw(v, IOS_SIZE, { rects })])
+      continue
+    }
     if (!v.art) out.push([`resources/icons/${v.id}.svg`, () => svgOf(v, rects)])
     const set = `ios/App/App/Assets.xcassets/${v.ios}.appiconset`
     out.push([`${set}/Contents.json`, () => iosContents])
@@ -286,17 +261,28 @@ ${colors.join('\n')}
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const check = process.argv.includes('--check')
+  const list = files()
+  const total = list.length
   const bad = []
-  for (const [rel, make] of files()) {
+  let lastPct = -1
+  for (let i = 0; i < total; i++) {
+    const [rel, make] = list[i]
     const p = join(ROOT, rel)
     const body = make()
     const buf = Buffer.isBuffer(body) ? body : Buffer.from(body)
     if (check) {
       if (!existsSync(p) || !readFileSync(p).equals(buf)) bad.push(rel)
-      continue
+    } else {
+      mkdirSync(dirname(p), { recursive: true })
+      writeFileSync(p, buf)
     }
-    mkdirSync(dirname(p), { recursive: true })
-    writeFileSync(p, buf)
+    const pct = Math.round(((i + 1) / total) * 100)
+    if (pct >= lastPct + 10 || i + 1 === total) {
+      lastPct = pct
+      const filled = Math.round(pct / 10)
+      const bar = '█'.repeat(filled) + '░'.repeat(10 - filled)
+      console.log(`[${bar}] ${pct}% (${i + 1}/${total}) - ${check ? 'Verificando' : 'Gerando'} ícones Rit`)
+    }
   }
   if (bad.length) { console.error('app icons out of date (run node scripts/app-icons.mjs):\n  ' + bad.join('\n  ')); process.exit(1) }
   console.log(check ? 'app icons up to date' : 'app icons written')

@@ -158,7 +158,8 @@ export async function createPixPayment({
   maxAttempts = 2,
   retryDelayMs = 150
 }) {
-  const numAmount = Math.max(0.01, Number(Number(amount).toFixed(2)));
+  const parsedAmount = Number(amount);
+  const numAmount = Number.isFinite(parsedAmount) ? Math.max(0.01, Number(parsedAmount.toFixed(2))) : 0.01;
   const cleanDoc = String(payerDoc || '').replace(/\D/g, '');
   const nameParts = String(payerName || 'Cliente Rit').trim().split(/\s+/);
   const firstName = nameParts[0] || 'Cliente';
@@ -258,9 +259,15 @@ export function isPixSimulationAllowed(env = process.env) {
 }
 
 export async function getPayment(paymentId) {
-  if (!paymentId) throw new Error('ID do pagamento não informado');
+  const cleanPaymentId = String(paymentId || '').trim();
+  if (!cleanPaymentId || !/^[A-Za-z0-9_-]{1,80}$/.test(cleanPaymentId)) {
+    const err = new Error('ID do pagamento inválido ou não informado');
+    err.status = 400;
+    err.statusCode = 400;
+    throw err;
+  }
 
-  const isSimulatedId = String(paymentId).startsWith('mp_sim_');
+  const isSimulatedId = cleanPaymentId.startsWith('mp_sim_');
   if (process.env.NODE_ENV === 'production' && !isPixSimulationAllowed()) {
     if (!isMercadoPagoConfigured()) {
       const err = new Error('Gateway Mercado Pago não configurado em produção.');
@@ -276,7 +283,7 @@ export async function getPayment(paymentId) {
 
   if (!isMercadoPagoConfigured() || isSimulatedId) {
     return {
-      id: paymentId,
+      id: cleanPaymentId,
       status: 'pending',
       status_detail: 'pending_waiting_transfer',
       transaction_amount: 0,
@@ -285,7 +292,7 @@ export async function getPayment(paymentId) {
   }
 
   const token = getMercadoPagoToken();
-  const response = await fetch(`${getMpApiBase()}/v1/payments/${paymentId}`, {
+  const response = await fetch(`${getMpApiBase()}/v1/payments/${encodeURIComponent(cleanPaymentId)}`, {
     headers: {
       'Authorization': `Bearer ${token}`,
       'Accept': 'application/json'

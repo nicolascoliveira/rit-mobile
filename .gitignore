@@ -12,6 +12,11 @@ data/
 .env.*.local
 INSTRUCOES_DEPLOY_VPS.md
 root@*
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+rit-personal-motion/
 
 # Build output / deps
 frontend/dist/

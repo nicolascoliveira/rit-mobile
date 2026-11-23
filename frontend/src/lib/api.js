@@ -427,17 +427,70 @@ export async function createPasskey(options) {
 // these answers with the same session cookie a passkey sign-in sets, so callers treat the user
 // they return exactly alike.
 const post = (path, body) => api(path, { method: 'POST', body: JSON.stringify(body) })
+export async function sendVerificationCode(payload) {
+  return post('/api/auth/verification/send', payload)
+}
 // `name` is whatever was typed in "Name or e-mail": it goes in the original `name` field, which
 // the server matches against the profile's sign-in e-mail when it holds an "@" and against the
 // name otherwise — so the app and a server a version apart still understand each other.
-export async function passwordLogin(name, password) {
-  return (await post('/api/login/password', { name, password })).user
+export async function passwordLogin(name, password, otpOpts = undefined) {
+  const extra = {}
+  if (otpOpts && typeof otpOpts === 'object') {
+    if (otpOpts.requireEmailOtp) extra.requireEmailOtp = true
+    if (otpOpts.deviceId) extra.deviceId = otpOpts.deviceId
+    if (otpOpts.trustedDeviceToken) extra.trustedDeviceToken = otpOpts.trustedDeviceToken
+    if (otpOpts.challengeId) extra.challengeId = otpOpts.challengeId
+    if (otpOpts.otpCode) extra.otpCode = otpOpts.otpCode
+    if (otpOpts.channel) extra.channel = otpOpts.channel
+  }
+  const res = await post('/api/login/password', { name, password, ...extra })
+  if (res?.verificationRequired) return res
+  if (res?.trustedDeviceToken && name) {
+    try {
+      const { setTrustedDeviceToken } = await import('./rit-native.js')
+      setTrustedDeviceToken(name, res.trustedDeviceToken)
+    } catch { /* ignore */ }
+  }
+  return res.user
 }
-// `email` is optional, and sent only when there is one: a server from before the field would
-// otherwise ignore it without a word, which is the same thing.
-export async function passwordRegister(name, password, code, email) {
-  return (await post('/api/register/password', { name, password, code: code || '', ...(email ? { email } : {}) })).user
+// `email` is mandatory for new student accounts.
+export async function passwordRegister(name, password, code, email, otpOpts = undefined) {
+  const extra = {}
+  if (otpOpts && typeof otpOpts === 'object') {
+    if (otpOpts.requireEmailOtp) extra.requireEmailOtp = true
+    if (otpOpts.deviceId) extra.deviceId = otpOpts.deviceId
+    if (otpOpts.challengeId) extra.challengeId = otpOpts.challengeId
+    if (otpOpts.otpCode) extra.otpCode = otpOpts.otpCode
+    if (otpOpts.phone) extra.phone = otpOpts.phone
+  }
+  const res = await post('/api/register/password', {
+    name,
+    password,
+    code: code || '',
+    ...(email ? { email } : {}),
+    ...extra
+  })
+  if (res?.trustedDeviceToken && email) {
+    try {
+      const { setTrustedDeviceToken } = await import('./rit-native.js')
+      setTrustedDeviceToken(email, res.trustedDeviceToken)
+    } catch { /* ignore */ }
+  }
+  return res.user
 }
-export async function passwordResetRedeem(name, code, next) {
-  return (await post('/api/login/password-reset', { name, code, next })).user
+export async function passwordResetRedeem(name, code, next, otpOpts = undefined) {
+  const extra = {}
+  if (otpOpts && typeof otpOpts === 'object') {
+    if (otpOpts.challengeId) extra.challengeId = otpOpts.challengeId
+    if (otpOpts.otpCode) extra.otpCode = otpOpts.otpCode
+    if (otpOpts.deviceId) extra.deviceId = otpOpts.deviceId
+  }
+  const res = await post('/api/login/password-reset', { name, code, next, ...extra })
+  if (res?.trustedDeviceToken && name) {
+    try {
+      const { setTrustedDeviceToken } = await import('./rit-native.js')
+      setTrustedDeviceToken(name, res.trustedDeviceToken)
+    } catch { /* ignore */ }
+  }
+  return res.user
 }

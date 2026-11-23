@@ -32,7 +32,15 @@ vi.mock('./mobile.js', () => ({
   saveRemoteFile: (...args) => h.saveRemoteFile(...args)
 }))
 
-import { extractSessionToken, isRitDefaultServer, RIT_STUDENT_SERVER } from './rit-native.js'
+import {
+  extractSessionToken,
+  isRitDefaultServer,
+  RIT_STUDENT_SERVER,
+  parseRitDeepLink,
+  getOrCreateDeviceId,
+  getTrustedDeviceToken,
+  setTrustedDeviceToken
+} from './rit-native.js'
 import { connectWithPassword, registerWithPassword, resetPasswordAndConnect, previewRemoteInvite } from './remote.js'
 import { remoteAuth, setRemoteAuth } from './api.js'
 
@@ -72,6 +80,46 @@ describe('rit-native token extraction and server check', () => {
     expect(extractSessionToken({}, { 'Set-Cookie': dual2 })).toBe('HOST-TOK.sig456')
     expect(extractSessionToken({}, { get: () => 'gymsid=HTTP-TOK.abc; Path=/; HttpOnly' })).toBe('HTTP-TOK.abc')
     expect(extractSessionToken({}, { 'set-cookie': 'gymsid=; Path=/; Max-Age=0' })).toBeNull()
+  })
+
+  it('parses WhatsApp student invite and tenant deep links for Android App Links and rit:// scheme', () => {
+    expect(parseRitDeepLink('https://app.treinerit.duckdns.org/cadastro?tenant=academia-iron&convite=rit889')).toEqual({
+      tenantId: 'academia-iron',
+      inviteCode: 'RIT889',
+      isSignup: true,
+      hashRoute: null
+    })
+    expect(parseRitDeepLink('https://app.treinerit.com.br/cadastro?tenant=personal-vip&convite=VIP777')).toEqual({
+      tenantId: 'personal-vip',
+      inviteCode: 'VIP777',
+      isSignup: true,
+      hashRoute: null
+    })
+    expect(parseRitDeepLink('rit://cadastro?tenant=studio-fit&convite=FIT100')).toEqual({
+      tenantId: 'studio-fit',
+      inviteCode: 'FIT100',
+      isSignup: true,
+      hashRoute: null
+    })
+    expect(parseRitDeepLink('https://app.treinerit.duckdns.org/?tenant=academia-iron#/plan')).toEqual({
+      tenantId: 'academia-iron',
+      inviteCode: null,
+      isSignup: false,
+      hashRoute: '/plan'
+    })
+    // Routine share (/r) and NFC (/nfc) are delegated to their own hooks
+    expect(parseRitDeepLink('https://app.treinerit.com.br/r#1.d.abc')).toBeNull()
+    expect(parseRitDeepLink('rit://r#1.d.abc')).toBeNull()
+    expect(parseRitDeepLink('https://evil.example.com/cadastro?convite=X')).toBeNull()
+  })
+
+  it('persists deviceId and per-email trustedDeviceToken in localStorage', () => {
+    const devId = getOrCreateDeviceId()
+    expect(devId).toMatch(/^dev_[0-9a-f]{32}$/)
+    expect(getOrCreateDeviceId()).toBe(devId)
+
+    setTrustedDeviceToken('Aluno@TreineRit.com.br', 'td_tok_123')
+    expect(getTrustedDeviceToken('aluno@treinerit.com.br')).toBe('td_tok_123')
   })
 })
 

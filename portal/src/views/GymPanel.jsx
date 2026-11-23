@@ -857,6 +857,7 @@ export default function GymPanel({
         toast('Aluno removido da unidade.');
         if (dossierData?.student?.id === student.id) {
           setDossierOpen(false);
+          setDossierData(null);
         }
         await loadAllGymData(true);
       }
@@ -4995,8 +4996,12 @@ export default function GymPanel({
         onConfirm={async () => {
           if (!confirmState?.onConfirm) return;
           await runSingleFlight('confirm-modal', setConfirmBusy, async () => {
-            await confirmState.onConfirm();
-            setConfirmState(null);
+            try {
+              await confirmState.onConfirm();
+              setConfirmState(null);
+            } catch (err) {
+              toast(err?.message || 'Não foi possível concluir esta operação.');
+            }
           });
         }}
       />

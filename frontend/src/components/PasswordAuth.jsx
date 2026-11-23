@@ -12,7 +12,8 @@ import { useStore, hasData } from '../store/useStore.js'
 import { useUI } from '../store/useUI.js'
 import { t } from '../lib/i18n.js'
 import { dateLocale } from '../lib/i18n-core.js'
-import { api, webauthnOK, passkeyAssertion, passwordLogin, passwordRegister, passwordResetRedeem } from '../lib/api.js'
+import { api, webauthnOK, passkeyAssertion, passwordLogin, passwordRegister, passwordResetRedeem, sendVerificationCode } from '../lib/api.js'
+import { getOrCreateDeviceId, getTrustedDeviceToken } from '../lib/rit-native.js'
 import { askAddDeviceData } from '../sheets.jsx'
 import Icon from './Icon.jsx'
 import { Row, Button } from './ui.jsx'
@@ -57,11 +58,13 @@ export function passwordError(e) {
     case 'name-taken': return t('Another profile already signs in with this name.')
     case 'email-invalid': return t('That is not an e-mail address.')
     case 'email-taken': return t('Another profile already uses this e-mail address.')
+    case 'email-not-found': return 'Nenhuma conta encontrada com este endereço de e-mail.'
     case 'invite': return t('That invite code is not valid.')
     case 'current-required': case 'current-wrong': return t('Your current password is not right.')
     case 'passkey': case 'passkey-required': return t('Your passkey could not be confirmed.')
     case 'last-way-in': return t('This password is the only way into your profile, so it cannot be removed.')
     case 'reset-invalid': return t('That reset code is wrong or has expired. Ask your admin for a new one.')
+    case 'otp-invalid': return 'Código de verificação de 6 dígitos inválido ou expirado.'
     case 'disabled': return t('This account has been disabled.')
     case 'busy': return t('The server is busy. Try again in a moment.')
   }
@@ -89,8 +92,8 @@ const codeStyle = { letterSpacing: '.14em', fontWeight: 600, textAlign: 'center'
 /* Sign in with name (or the profile's sign-in e-mail) and password, or — one tap away — redeem a reset code from the admin, which
    sets a new password and signs in. `onPasskey`, when given, offers the passkey instead. The
    inputs carry the autocomplete names password managers look for, inside a real form. */
-export function PasswordSignInSheet({ close, onPasskey }) {
-  const [mode, setMode] = useState('signin')   // 'signin' | 'reset'
+export function PasswordSignInSheet({ close, onPasskey, requireEmailOtp = false, onSwitchToRegister = null }) {
+  const [mode, setMode] = useState('signin')   // 'signin' | 'forgot' | 'reset'
   const [name, setName] = useState(() => {
     try {
       if (typeof process !== 'undefined' && process.env.NODE_ENV === 'test') return ''
@@ -99,9 +102,14 @@ export function PasswordSignInSheet({ close, onPasskey }) {
   })
   const [pw, setPw] = useState('')
   const [showPw, setShowPw] = useState(false)
+  const [rememberMe, setRememberMe] = useState(true)
   const [code, setCode] = useState('')
   const [next, setNext] = useState('')
   const [again, setAgain] = useState('')
+  const [otpState, setOtpState] = useState(null)
+  const [otpCode, setOtpCode] = useState('')
+  const [forgotOtpState, setForgotOtpState] = useState(null)
+  const [resendingChannel, setResendingChannel] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
   const nameRef = useRef(null)
@@ -113,11 +121,88 @@ export function PasswordSignInSheet({ close, onPasskey }) {
     }, 250)
   }, [])
   const reset = mode === 'reset'
+  const forgot = mode === 'forgot'
+
+  const handleResendOtp = async (channel, purpose = 'login') => {
+    const activeChallenge = purpose === 'reset' ? forgotOtpState : otpState
+    if (busy || resendingChannel || !activeChallenge) return
+    setResendingChannel(channel)
+    setErr(null)
+    try {
+      const res = await sendVerificationCode({
+        purpose,
+        email: name.trim(),
+        ...(purpose === 'login' ? { password: pw, challengeId: activeChallenge.challengeId } : {}),
+        channel
+      })
+      if (res?.challengeId) {
+        if (purpose === 'reset') setForgotOtpState(res)
+        else setOtpState(res)
+        toast(channel === 'whatsapp' ? 'Código reenviado para seu WhatsApp!' : 'Código reenviado para seu e-mail!')
+      }
+    } catch (e) {
+      setErr(passwordError(e))
+    } finally {
+      setResendingChannel('')
+    }
+  }
+
+  const handleRequestForgotCode = async ev => {
+    ev.preventDefault()
+    if (busy) return
+    const n = name.trim()
+    if (!n) { setErr('Informe seu e-mail.'); return }
+    if (!looksLikeEmail(n)) { setErr(t('That is not an e-mail address.')); return }
+    setBusy(true); setErr(null)
+    try {
+      const res = await sendVerificationCode({
+        purpose: 'reset',
+        email: n,
+        channel: 'auto'
+      })
+      if (res?.challengeId) {
+        setForgotOtpState(res)
+        setCode('')
+        setMode('reset')
+      }
+    } catch (e) {
+      setErr(passwordError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const submit = async ev => {
     ev.preventDefault()
     if (busy) return
     const n = name.trim()
-    const bad = !n ? t('Enter your name or e-mail.')
+    if (!reset && !forgot && otpState) {
+      const cleanOtp = otpCode.replace(/\D/g, '')
+      if (cleanOtp.length !== 6) {
+        setErr('Digite o código de verificação de 6 dígitos.')
+        return
+      }
+      setBusy(true); setErr(null)
+      try {
+        const u = await passwordLogin(n, pw, {
+          requireEmailOtp: true,
+          deviceId: getOrCreateDeviceId(),
+          challengeId: otpState.challengeId,
+          otpCode: cleanOtp
+        })
+        if (rememberMe) {
+          try { localStorage.setItem('rit_last_username', n) } catch { /* ignore */ }
+        }
+        await signedIn(u, close)
+      } catch (e) {
+        setErr(passwordError(e))
+      } finally {
+        setBusy(false)
+      }
+      return
+    }
+    const bad = !n ? (requireEmailOtp ? 'Informe seu e-mail.' : t('Enter your name or e-mail.'))
+      : requireEmailOtp && !looksLikeEmail(n) ? t('That is not an e-mail address.')
       : !reset && !pw ? t('Enter your password.')
       : reset && !code.trim() ? t('Enter the reset code.')
       : reset && length(next) < MIN_PASSWORD ? t('Use at least {0} characters.', MIN_PASSWORD)
@@ -127,22 +212,149 @@ export function PasswordSignInSheet({ close, onPasskey }) {
     if (bad) { setErr(bad); return }
     setBusy(true); setErr(null)
     try {
-      const u = reset ? await passwordResetRedeem(n, code.trim(), next) : await passwordLogin(n, pw)
-      try { localStorage.setItem('rit_last_username', n) } catch { /* ignore */ }
-      await signedIn(u, close)
+      const res = reset
+        ? (forgotOtpState?.challengeId
+            ? await passwordResetRedeem(n, code.trim(), next, {
+                challengeId: forgotOtpState.challengeId,
+                otpCode: code.trim(),
+                deviceId: getOrCreateDeviceId()
+              })
+            : await passwordResetRedeem(n, code.trim(), next))
+        : requireEmailOtp
+          ? await passwordLogin(n, pw, {
+              requireEmailOtp: true,
+              deviceId: getOrCreateDeviceId(),
+              trustedDeviceToken: getTrustedDeviceToken(n)
+            })
+          : await passwordLogin(n, pw)
+      if (res?.verificationRequired) {
+        setOtpState(res)
+        setOtpCode('')
+        return
+      }
+      if (rememberMe) {
+        try { localStorage.setItem('rit_last_username', n) } catch { /* ignore */ }
+      } else {
+        try { localStorage.removeItem('rit_last_username') } catch { /* ignore */ }
+      }
+      await signedIn(res, close)
     }
     catch (e) { setErr(passwordError(e)) }
     finally { setBusy(false) }
   }
+
+  if (forgot) {
+    return <>
+      <h3>Esqueceu a Senha?</h3>
+      <div className="muted small" style={{ marginBottom: 14, fontSize: 14, lineHeight: 1.45 }}>
+        Digite seu e-mail cadastrado e enviaremos um código de 6 dígitos no seu WhatsApp e e-mail para criar uma nova senha.
+      </div>
+      <form className="rit-auth-form" onSubmit={handleRequestForgotCode} noValidate>
+        <div className="rit-auth-field">
+          <label className="rit-auth-label">
+            <span>Endereço de e-mail<span className="rit-auth-label-req">*</span></span>
+          </label>
+          <input
+            ref={nameRef}
+            className="input rit-auth-input"
+            type="email"
+            inputMode="email"
+            name="username"
+            autoComplete="username"
+            placeholder="exemplo@gmail.com"
+            maxLength={254}
+            value={name}
+            onChange={e => setName(e.target.value)}
+            {...field}
+          />
+        </div>
+        {err && <div className="small rit-auth-alert" role="alert" style={errStyle}>{err}</div>}
+        <button type="submit" className="rit-auth-pill" disabled={busy}>
+          {busy ? 'Enviando código…' : 'Enviar código'}
+        </button>
+      </form>
+      <div className="rit-auth-footer">
+        <button
+          type="button"
+          className="rit-auth-link-btn"
+          onClick={() => { setErr(null); setMode('signin') }}
+        >
+          Voltar para o Login
+        </button>
+      </div>
+    </>
+  }
+
+  if (!reset && otpState) {
+    return <>
+      <h3>Verifique seu acesso</h3>
+      <div className="muted small" style={{ marginBottom: 14, lineHeight: 1.45, fontSize: 14 }}>
+        Enviamos um código de 6 dígitos para confirmar este aparelho
+        {otpState.maskedPhone ? ` no WhatsApp (${otpState.maskedPhone})` : ''}
+        {otpState.maskedEmail ? `${otpState.maskedPhone ? ' e ' : ' '}no e-mail (${otpState.maskedEmail})` : ''}.
+      </div>
+      <form onSubmit={submit} noValidate>
+        <input
+          className="input"
+          name="otp-code"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          placeholder="000000"
+          maxLength={6}
+          value={otpCode}
+          onChange={e => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+          style={{ ...codeStyle, fontSize: 20, letterSpacing: '.28em' }}
+        />
+        {err && <div className="small" role="alert" style={errStyle}>{err}</div>}
+        <div style={{ height: 12 }} />
+        <Button type="submit" variant="primary" disabled={busy}>
+          {busy ? t('Connecting…') : 'Confirmar código e entrar'}
+        </Button>
+      </form>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
+        {otpState.hasPhone && (
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={busy || Boolean(resendingChannel)}
+            onClick={() => handleResendOtp('whatsapp')}
+          >
+            {resendingChannel === 'whatsapp' ? 'Enviando no WhatsApp…' : '📲 Reenviar código por WhatsApp'}
+          </Button>
+        )}
+        <Button
+          type="button"
+          variant="ghost"
+          disabled={busy || Boolean(resendingChannel)}
+          onClick={() => handleResendOtp('email')}
+        >
+          {resendingChannel === 'email' ? 'Enviando por E-mail…' : '✉️ Reenviar código por E-mail'}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          className="dim"
+          disabled={busy}
+          onClick={() => { setOtpState(null); setOtpCode(''); setErr(null) }}
+        >
+          Voltar e alterar e-mail
+        </Button>
+      </div>
+    </>
+  }
+
   return <>
     <h3>{reset ? t('Reset your password') : t('Sign in with password')}</h3>
     <div className="muted small" style={{ marginBottom: 14 }}>{reset
       ? t('Enter the code your admin gave you and choose a new password. It signs you out everywhere else.')
-      : t('Use your profile name (or the e-mail you added to it) and your password.')}</div>
+      : requireEmailOtp
+        ? 'Acesse com seu e-mail cadastrado e sua senha.'
+        : t('Use your profile name (or the e-mail you added to it) and your password.')}</div>
     <form onSubmit={submit} noValidate>
       {/* One field for both: the server looks an entry with an "@" up as an e-mail first. Not
           type="email", which would refuse a plain name. */}
-      <input ref={nameRef} className="input" name="username" autoComplete="username" placeholder={t('Name or e-mail')} maxLength={254}
+      <input ref={nameRef} className="input" type={requireEmailOtp ? 'email' : 'text'} inputMode={requireEmailOtp ? 'email' : undefined}
+        name="username" autoComplete="username" placeholder={requireEmailOtp ? 'Seu e-mail' : t('Name or e-mail')} maxLength={254}
         value={name} onChange={e => setName(e.target.value)} {...field} />
       <div style={{ height: 10 }} />
       {reset ? <>
@@ -206,6 +418,25 @@ export function PasswordSignInSheet({ close, onPasskey }) {
             <Icon name={showPw ? 'eyeOff' : 'eye'} size={20} />
           </button>
         </div>
+        {requireEmailOtp && (
+          <div className="rit-auth-row-between" style={{ marginTop: 10 }}>
+            <label className="rit-auth-check-label">
+              <input
+                type="checkbox"
+                checked={rememberMe}
+                onChange={e => setRememberMe(e.target.checked)}
+              />
+              <span>Lembrar de mim</span>
+            </label>
+            <button
+              type="button"
+              className="rit-auth-link-btn"
+              onClick={() => { setErr(null); setMode('forgot') }}
+            >
+              Esqueceu a senha?
+            </button>
+          </div>
+        )}
         <div className="dim small" style={{ marginTop: 8, textAlign: 'start', lineHeight: 1.4 }}>
           {t('First time here? Your coach or gym set your initial password (usually {0}). Ask them if you’re unsure.', 'treino2026')}
         </div>
@@ -215,31 +446,109 @@ export function PasswordSignInSheet({ close, onPasskey }) {
       <Button type="submit" variant="primary" disabled={busy}>{reset ? t('Set password & sign in') : t('Sign in')}</Button>
     </form>
     <div style={{ height: 8 }} />
-    <Button type="button" variant="ghost" className="dim" onClick={() => { setErr(null); setMode(reset ? 'signin' : 'reset') }}>
+    <Button type="button" variant="ghost" className="dim" onClick={() => { setErr(null); setForgotOtpState(null); setMode(reset ? 'signin' : 'reset') }}>
       {reset ? t('Sign in with password') : t('Have a reset code from your admin?')}</Button>
     {onPasskey && !reset && webauthnOK() && <>
       <div style={{ height: 8 }} />
       <Button type="button" icon="fingerprint" onClick={() => { close(); onPasskey() }}>{t('Sign in with passkey')}</Button>
     </>}
+    {onSwitchToRegister && !reset && (
+      <div className="rit-auth-footer" style={{ marginTop: 12 }}>
+        Ainda não tem uma conta?{' '}
+        <button type="button" className="rit-auth-link-btn accent" onClick={onSwitchToRegister}>
+          Criar conta
+        </button>
+      </div>
+    )}
   </>
 }
-export const openPasswordSignIn = onPasskey => ui().openSheet(close => <PasswordSignInSheet close={close} onPasskey={onPasskey} />)
+export const openPasswordSignIn = (onPasskey, opts = {}) =>
+  ui().openSheet(close => <PasswordSignInSheet close={close} onPasskey={onPasskey} {...opts} />)
 
 /* The password half of creating a profile. Name and invite code are the caller's state, so
    switching between passkey and password on the sign-up sheet keeps what was typed. */
-export function PasswordRegisterForm({ close, inviteOnly, name, setName, code, setCode, forceShowCode = false, onRegistered = null }) {
-  const [email, setEmail] = useState('')
+export function PasswordRegisterForm({
+  close,
+  inviteOnly,
+  name,
+  setName,
+  code,
+  setCode,
+  initialEmail = '',
+  forceShowCode = false,
+  requireEmailOtp = false,
+  onRegistered = null
+}) {
+  const [email, setEmail] = useState(initialEmail || '')
   const [pw, setPw] = useState('')
   const [again, setAgain] = useState('')
+  const [otpState, setOtpState] = useState(null)
+  const [otpCode, setOtpCode] = useState('')
+  const [resendingChannel, setResendingChannel] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
+  useEffect(() => {
+    if (initialEmail && !email) setEmail(initialEmail)
+  }, [initialEmail]) // eslint-disable-line react-hooks/exhaustive-deps
   const showCodeField = Boolean(inviteOnly || forceShowCode || String(code || '').trim())
+
+  const handleResendOtp = async channel => {
+    if (busy || resendingChannel) return
+    setResendingChannel(channel)
+    setErr(null)
+    try {
+      const res = await sendVerificationCode({
+        purpose: 'register',
+        email: email.trim(),
+        name: name.trim(),
+        password: pw,
+        code: code.trim().toUpperCase(),
+        channel
+      })
+      if (res?.challengeId) {
+        setOtpState(res)
+        toast(channel === 'whatsapp' ? 'Código reenviado para seu WhatsApp!' : 'Código reenviado para seu e-mail!')
+      }
+    } catch (e) {
+      setErr(passwordError(e))
+    } finally {
+      setResendingChannel('')
+    }
+  }
+
   const submit = async ev => {
     ev.preventDefault()
     if (busy) return
     const n = name.trim()
     const mail = email.trim()
+    if (requireEmailOtp && otpState) {
+      const cleanOtp = otpCode.replace(/\D/g, '')
+      if (cleanOtp.length !== 6) {
+        setErr('Digite o código de verificação de 6 dígitos.')
+        return
+      }
+      setBusy(true); setErr(null)
+      try {
+        const u = await passwordRegister(n, pw, code.trim(), mail, {
+          requireEmailOtp: true,
+          deviceId: getOrCreateDeviceId(),
+          challengeId: otpState.challengeId,
+          otpCode: cleanOtp
+        })
+        if (typeof onRegistered === 'function') onRegistered(u)
+        const st = useStore.getState()
+        st.setUser(u); close()
+        if (hasData(useStore.getState().S)) { await st.pushState(); toast(t('Profile created, and this device’s data moved into it')) }
+        else { await st.pullState(); toast(t('Welcome, {0}', u.name)) }
+      } catch (e) {
+        setErr(passwordError(e))
+      } finally {
+        setBusy(false)
+      }
+      return
+    }
     const bad = !n ? t('Enter a name')
+      : requireEmailOtp && !mail ? 'Informe seu endereço de e-mail.'
       : mail && !looksLikeEmail(mail) ? t('That is not an e-mail address.')
       : inviteOnly && !code.trim() ? t('An invite code is required')
       : length(pw) < MIN_PASSWORD ? t('Use at least {0} characters.', MIN_PASSWORD)
@@ -248,6 +557,21 @@ export function PasswordRegisterForm({ close, inviteOnly, name, setName, code, s
     if (bad) { setErr(bad); return }
     setBusy(true); setErr(null)
     try {
+      if (requireEmailOtp) {
+        const res = await sendVerificationCode({
+          purpose: 'register',
+          email: mail,
+          name: n,
+          password: pw,
+          code: code.trim().toUpperCase(),
+          channel: 'auto'
+        })
+        if (res?.verificationRequired && res?.challengeId) {
+          setOtpState(res)
+          setOtpCode('')
+          return
+        }
+      }
       const u = await passwordRegister(n, pw, code.trim(), mail)
       if (typeof onRegistered === 'function') onRegistered(u)
       const st = useStore.getState()
@@ -257,13 +581,74 @@ export function PasswordRegisterForm({ close, inviteOnly, name, setName, code, s
     } catch (e) { setErr(passwordError(e)) }
     finally { setBusy(false) }
   }
+
+  if (requireEmailOtp && otpState) {
+    return <form onSubmit={submit} noValidate>
+      <div className="muted small" style={{ marginBottom: 12, lineHeight: 1.45, fontSize: 14 }}>
+        Enviamos seu código de verificação de 6 dígitos
+        {otpState.maskedPhone ? ` para o WhatsApp (${otpState.maskedPhone})` : ''}
+        {otpState.maskedEmail ? `${otpState.maskedPhone ? ' e ' : ' '}para o e-mail (${otpState.maskedEmail})` : ''}.
+      </div>
+      <input
+        className="input"
+        name="otp-code"
+        inputMode="numeric"
+        autoComplete="one-time-code"
+        placeholder="000000"
+        maxLength={6}
+        value={otpCode}
+        onChange={e => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+        style={{ ...codeStyle, fontSize: 20, letterSpacing: '.28em' }}
+      />
+      {err && <div className="small" role="alert" style={errStyle}>{err}</div>}
+      <div style={{ height: 12 }} />
+      <Button type="submit" variant="primary" disabled={busy}>
+        {busy ? t('Connecting…') : 'Confirmar código e criar conta'}
+      </Button>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
+        {otpState.hasPhone && (
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={busy || Boolean(resendingChannel)}
+            onClick={() => handleResendOtp('whatsapp')}
+          >
+            {resendingChannel === 'whatsapp' ? 'Enviando no WhatsApp…' : '📲 Reenviar código por WhatsApp'}
+          </Button>
+        )}
+        <Button
+          type="button"
+          variant="ghost"
+          disabled={busy || Boolean(resendingChannel)}
+          onClick={() => handleResendOtp('email')}
+        >
+          {resendingChannel === 'email' ? 'Enviando por E-mail…' : '✉️ Reenviar código por E-mail'}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          className="dim"
+          disabled={busy}
+          onClick={() => { setOtpState(null); setOtpCode(''); setErr(null) }}
+        >
+          Voltar e revisar dados
+        </Button>
+      </div>
+    </form>
+  }
+
   return <form onSubmit={submit} noValidate>
     <input className="input" name="username" autoComplete="username" placeholder={t('Your name')} maxLength={40}
       value={name} onChange={e => setName(e.target.value)} {...field} />
     <div style={{ height: 10 }} />
-    <input className="input" type="email" name="email" autoComplete="email" inputMode="email" placeholder={t('E-mail (optional)')} maxLength={254}
+    <input className="input" type="email" name="email" autoComplete="email" inputMode="email"
+      placeholder={requireEmailOtp ? 'Seu e-mail (obrigatório)' : t('E-mail (optional)')} maxLength={254}
       value={email} onChange={e => setEmail(e.target.value)} {...field} />
-    <div className="dim small" style={{ marginTop: 6 }}>{t('Lets you sign in with it instead of your name. Nothing is ever sent to it.')}</div>
+    <div className="dim small" style={{ marginTop: 6 }}>
+      {requireEmailOtp
+        ? 'Usado para entrar na sua conta e receber o código de verificação.'
+        : t('Lets you sign in with it instead of your name. Nothing is ever sent to it.')}
+    </div>
     {showCodeField && <>
       <div style={{ height: 10 }} />
       <input className="input" placeholder={t('Invite code')} maxLength={40} value={code}

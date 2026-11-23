@@ -15,3 +15,8 @@ founder
 docs
 INSTRUCOES_DEPLOY_VPS.md
 root@*
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+rit-personal-motion

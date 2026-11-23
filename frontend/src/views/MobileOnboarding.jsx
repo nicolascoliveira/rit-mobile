@@ -141,69 +141,90 @@ export function ConnectSheet({ close, initialUrl = '', again = false }) {
 }
 
 export default function MobileOnboarding() {
-  const isLightTheme = typeof document !== 'undefined' && document.documentElement.dataset.theme === 'light'
   const lastUser = typeof localStorage !== 'undefined' ? (localStorage.getItem('rit_last_username') || '') : ''
-  const firstName = lastUser ? lastUser.split(' ')[0] : ''
-  const wrap = { display: 'flex', flexDirection: 'column', justifyContent: 'center', minHeight: '78vh', textAlign: 'center' }
-  return (
-    <div className="narrow" style={wrap}>
-      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 4 }}>
-        <img src={isLightTheme ? './rit-logo-light.png' : './rit-logo.png'} alt="Rit" style={{ height: 52, width: 'auto', objectFit: 'contain' }} />
-      </div>
-      <h1 className="t-large" style={{ fontWeight: 700, margin: '10px 0 4px', display: 'none' }}>Rit</h1>
-      <div className="muted" style={{ fontSize: 16, marginBottom: 8 }}>
-        {t('Your workouts. Your weights. Your profile.')}
-      </div>
-      <div className="dim" style={{ fontSize: 14, lineHeight: 1.45, marginBottom: firstName ? 18 : 28 }}>
-        Acesso exclusivo para alunos de personal trainers e academias.
-      </div>
-      {firstName && (
-        <div style={{ marginBottom: 20 }}>
-          <span style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            background: 'color-mix(in srgb, var(--acc) 14%, transparent)',
-            border: '1px solid color-mix(in srgb, var(--acc) 30%, transparent)',
-            color: 'var(--acc-ink, var(--acc))',
-            padding: '6px 14px',
-            borderRadius: 20,
-            fontSize: 14,
-            fontWeight: 600
-          }}>
-            <Icon name="person" size={16} />
-            Olá, {firstName}!
-          </span>
-        </div>
-      )}
-      <Button
-        variant="primary"
-        icon="key"
-        onClick={() => {
-          rememberStudentNativeMode()
-          openMobileSignIn()
-        }}
-      >
-        {t('Sign in with password')}
-      </Button>
-      <div style={{ height: 10 }} />
-      <Button
-        icon="plusCircle"
-        onClick={() => {
-          rememberStudentNativeMode()
-          openMobileRegister()
-        }}
-      >
-        Criar conta com código de convite
-      </Button>
+  const firstName = lastUser ? lastUser.split(' ')[0].split('@')[0] : ''
 
-      <div style={{ marginTop: 26, paddingTop: 22, borderTop: '1px solid var(--sep)' }}>
-        <div className="muted" style={{ fontSize: 14, marginBottom: 10 }}>
-          Personal trainer ou academia?
+  const launchSignIn = () => {
+    rememberStudentNativeMode()
+    openMobileSignIn({
+      onSwitchToRegister: () => {
+        useUI.getState().closeSheet?.()
+        setTimeout(() => launchRegister(), 60)
+      }
+    })
+  }
+
+  const launchRegister = () => {
+    rememberStudentNativeMode()
+    openMobileRegister({
+      onSwitchToSignIn: () => {
+        useUI.getState().closeSheet?.()
+        setTimeout(() => launchSignIn(), 60)
+      }
+    })
+  }
+
+  return (
+    <div className="narrow" style={{ paddingTop: 12, paddingBottom: 16 }}>
+      <div className="rit-auth-shell">
+        <div style={{ paddingTop: 12 }}>
+          <img
+            src="./rit-logo.png"
+            alt="Rit"
+            style={{ height: 36, width: 'auto', maxWidth: 160, objectFit: 'contain', display: 'block', marginBottom: 40 }}
+          />
+
+          <div style={{ textAlign: 'start' }}>
+            {firstName && (
+              <div style={{
+                marginBottom: 10,
+                fontSize: 14,
+                fontWeight: 500,
+                color: 'rgba(245, 246, 247, 0.56)'
+              }}>
+                Olá, {firstName}
+              </div>
+            )}
+            <h1 className="rit-welcome-title">
+              Seu treino no ritmo certo.
+            </h1>
+            <p className="rit-auth-subtitle" style={{ fontSize: 15, marginBottom: 32 }}>
+              Acesso exclusivo para alunos de personal trainers e academias.
+            </p>
+          </div>
         </div>
-        <Button icon="crown" onClick={() => openPortalNativeApp('/login')}>
-          Rit Painel (Personal / Academia)
-        </Button>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <button
+            type="button"
+            className="rit-auth-pill"
+            onClick={launchRegister}
+          >
+            <span>Criar conta com código de convite</span>
+          </button>
+
+          <button
+            type="button"
+            className="rit-auth-pill-secondary"
+            onClick={launchSignIn}
+          >
+            <span>{t('Sign in with password')}</span>
+          </button>
+
+          <div style={{ marginTop: 20, paddingTop: 18, borderTop: '1px solid rgba(255, 255, 255, 0.08)', textAlign: 'center' }}>
+            <div style={{ fontSize: 14, color: 'rgba(245, 246, 247, 0.52)', marginBottom: 12 }}>
+              Personal trainer ou academia?
+            </div>
+            <button
+              type="button"
+              className="rit-auth-pill-secondary"
+              style={{ minHeight: 46, fontSize: 14, color: 'rgba(245, 246, 247, 0.78)' }}
+              onClick={() => openPortalNativeApp('/login')}
+            >
+              <span>Rit Painel (Personal / Academia)</span>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   )

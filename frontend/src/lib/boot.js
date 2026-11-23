@@ -20,7 +20,7 @@ export function hideBoot(e) {
   if (!(e instanceof Event)) {
     try {
       const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-      wait = bootWait(Number(b.querySelector('.db')?.getAnimations?.()[0]?.currentTime), reduced)
+      wait = bootWait(Number(b.querySelector('.rit-r-anim')?.getAnimations?.()[0]?.currentTime), reduced)
     } catch { wait = 0 }
   }
   setTimeout(() => {

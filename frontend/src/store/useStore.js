@@ -2037,15 +2037,21 @@ export const useStore = create((set, get) => {
       const user = await connect(url, code)   // throws on a bad URL/expired code — caller shows it
       return finishMobileRemote(normalizeServerUrl(url), user, ask)
     },
-    async signInMobileWithPassword(url, name, password, ask) {
+    async signInMobileWithPassword(url, name, password, ask, otpOpts) {
       const targetUrl = url || RIT_STUDENT_SERVER
-      const user = await connectWithPassword(targetUrl, name, password)
-      return finishMobileRemote(normalizeServerUrl(targetUrl), user, ask)
+      const res = await connectWithPassword(targetUrl, name, password, otpOpts)
+      if (res?.verificationRequired) return res
+      return finishMobileRemote(normalizeServerUrl(targetUrl), res, ask)
     },
     async registerMobileWithPassword(url, payload, ask) {
       const targetUrl = url || RIT_STUDENT_SERVER
       const user = await registerWithPassword(targetUrl, payload)
       return finishMobileRemote(normalizeServerUrl(targetUrl), user, ask)
+    },
+    async sendMobileVerificationCode(url, payload) {
+      const targetUrl = url || RIT_STUDENT_SERVER
+      const { sendRemoteVerificationCode } = await import('../lib/remote.js')
+      return sendRemoteVerificationCode(targetUrl, payload)
     },
     async resetMobilePassword(url, payload, ask) {
       const targetUrl = url || RIT_STUDENT_SERVER

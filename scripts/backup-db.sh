@@ -22,13 +22,15 @@ echo "[$(date +'%T')] Iniciando rotina de backup de produção da Rit..."
 # 1. Snapshot a quente do banco SQLite principal (rit.db)
 SQLITE_DB="$DATA_DIR/rit.db"
 SQLITE_DEST="$BACKUP_DIR/rit-db-$TIMESTAMP.sqlite"
-API_CONTAINER="$(docker ps --format '{{.Names}}' | grep -E '(^|[-_])api([_-]|$)' | head -n 1 || true)"
+API_CONTAINER="$(docker ps --format '{{.Names}}' | grep -v 'evolution' | grep -E '(^|[-_])api([_-][0-9]+|$)' | head -n 1 || true)"
 
 if [ -f "$SQLITE_DB" ]; then
     echo "[$(date +'%T')] Criando snapshot atômico do SQLite (rit.db)..."
+    umask 077
     if command -v sqlite3 >/dev/null 2>&1; then
-        sqlite3 "$SQLITE_DB" "PRAGMA wal_checkpoint(TRUNCATE);"
-        sqlite3 "$SQLITE_DB" ".backup '$SQLITE_DEST'"
+        sqlite3 "$SQLITE_DB" ".timeout 5000" "PRAGMA wal_checkpoint(PASSIVE);"
+        sqlite3 "$SQLITE_DB" ".timeout 5000" ".backup '${SQLITE_DEST}.tmp'"
+        mv "${SQLITE_DEST}.tmp" "$SQLITE_DEST"
     elif [ -n "$API_CONTAINER" ] && [ "$DATA_DIR" = "$ROOT_DIR/data" ]; then
         docker exec "$API_CONTAINER" node -e "import('node:sqlite').then(async ({ DatabaseSync, backup }) => { const db = new DatabaseSync('/data/rit.db'); await backup(db, '/data/backups/daily_archives/rit-db-${TIMESTAMP}.sqlite'); db.close(); })"
     else
@@ -37,6 +39,8 @@ if [ -f "$SQLITE_DB" ]; then
         [ -f "${SQLITE_DB}-wal" ] && cp "${SQLITE_DB}-wal" "${SQLITE_DEST}-wal" || true
         [ -f "${SQLITE_DB}-shm" ] && cp "${SQLITE_DB}-shm" "${SQLITE_DEST}-shm" || true
     fi
+    [ -f "$DATA_DIR/secret" ] && cp -p "$DATA_DIR/secret" "$BACKUP_DIR/secret-$DATE_TAG.key" && chmod 600 "$BACKUP_DIR/secret-$DATE_TAG.key" || true
+    [ -f "$DATA_DIR/vapid.json" ] && cp -p "$DATA_DIR/vapid.json" "$BACKUP_DIR/vapid-$DATE_TAG.json" && chmod 600 "$BACKUP_DIR/vapid-$DATE_TAG.json" || true
     echo "[$(date +'%T')] Snapshot SQLite concluído: $SQLITE_DEST"
 else
     echo "[$(date +'%T')] Aviso: rit.db não encontrado em $DATA_DIR"
@@ -69,10 +73,10 @@ find "$BACKUP_DIR" -type f -name "rit-db-*" -mtime +14 -delete
 find "$BACKUP_DIR" -type f -name "evolution-pg-*" -mtime +14 -delete
 find "$BACKUP_DIR" -type f -name "uploads-*" -mtime +14 -delete
 
-# 5. Opcional: Envio Offsite para AWS S3 ou Cloudflare R2
+# 5. Opcional: Envio Offsite para AWS S3 ou Cloudflare R2 (sem --delete para impedir wipe acidental)
 if [ -n "${BACKUP_S3_BUCKET:-}" ] && command -v aws >/dev/null 2>&1; then
     echo "[$(date +'%T')] Sincronizando com armazenamento em nuvem S3: $BACKUP_S3_BUCKET..."
-    aws s3 sync "$BACKUP_DIR" "s3://$BACKUP_S3_BUCKET/rit-backups/" --delete
+    aws s3 sync "$BACKUP_DIR" "s3://$BACKUP_S3_BUCKET/rit-backups/"
 fi
 
 echo "[$(date +'%T')] Rotina de backup concluída com sucesso!"

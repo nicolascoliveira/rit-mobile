@@ -1301,9 +1301,11 @@ export function isMediaHashInStudentState(state, hash) {
     }
     for (const e of Array.isArray(w.entries) ? w.entries : []) {
       for (const s of Array.isArray(e?.sets) ? e.sets : []) {
-        const m = s?.media;
-        if (!m || m.local === true) continue;
-        if (m.hash === hash || m.poster?.hash === hash) return true;
+        const mediaList = Array.isArray(s?.media) ? s.media : (s?.media ? [s.media] : []);
+        for (const m of mediaList) {
+          if (!m || typeof m !== 'object' || m.local === true) continue;
+          if (m.hash === hash || m.poster?.hash === hash) return true;
+        }
       }
     }
   }
@@ -1328,34 +1330,36 @@ export function collectStudentFormVideos(state, resolveNameFn = null, limit = 40
       const sets = Array.isArray(entry?.sets) ? entry.sets : [];
       for (let sIdx = 0; sIdx < sets.length; sIdx++) {
         const set = sets[sIdx];
-        const m = set?.media;
-        if (!m || typeof m !== 'object' || m.local === true) continue;
-        if (!VALID_SHA256_RE.test(String(m.hash || ''))) continue;
-        const key = makeVideoReviewKey(w, eIdx, sIdx, m.hash);
-        const review = reviews[key] || reviews[m.hash] || null;
-        items.push({
-          key,
-          hash: m.hash,
-          kind: m.kind || 'video',
-          mime: m.mime || 'video/mp4',
-          dur: m.dur || null,
-          width: m.width || null,
-          height: m.height || null,
-          posterHash: m.poster?.hash || null,
-          workoutId: w.id || null,
-          workoutDate: w.d || null,
-          workoutName: w.name || w.routineName || 'Treino',
-          exerciseId: entry.id || null,
-          exerciseName: (typeof resolveNameFn === 'function' ? resolveNameFn(entry.id) : null) || entry.name || entry.id || 'Exercício',
-          setIndex: sIdx + 1,
-          weightKg: set.w ?? null,
-          reps: set.r ?? null,
-          rpe: set.rpe ?? null,
-          rir: set.rir ?? null,
-          at: m.at || w.end || w.start || null,
-          review
-        });
-        if (items.length >= limit) return items;
+        const mediaList = Array.isArray(set?.media) ? set.media : (set?.media ? [set.media] : []);
+        for (const m of mediaList) {
+          if (!m || typeof m !== 'object' || m.local === true) continue;
+          if (!VALID_SHA256_RE.test(String(m.hash || ''))) continue;
+          const key = makeVideoReviewKey(w, eIdx, sIdx, m.hash);
+          const review = reviews[key] || reviews[m.hash] || null;
+          items.push({
+            key,
+            hash: m.hash,
+            kind: m.kind || 'video',
+            mime: m.mime || 'video/mp4',
+            dur: m.dur || null,
+            width: m.width || null,
+            height: m.height || null,
+            posterHash: m.poster?.hash || null,
+            workoutId: w.id || null,
+            workoutDate: w.d || null,
+            workoutName: w.name || w.routineName || 'Treino',
+            exerciseId: entry.id || null,
+            exerciseName: (typeof resolveNameFn === 'function' ? resolveNameFn(entry.id) : null) || entry.name || entry.id || 'Exercício',
+            setIndex: sIdx + 1,
+            weightKg: set.w ?? null,
+            reps: set.r ?? null,
+            rpe: set.rpe ?? null,
+            rir: set.rir ?? null,
+            at: m.at || w.end || w.start || null,
+            review
+          });
+          if (items.length >= limit) return items;
+        }
       }
     }
     for (let mIdx = 0; mIdx < (Array.isArray(w.media) ? w.media.length : 0); mIdx++) {

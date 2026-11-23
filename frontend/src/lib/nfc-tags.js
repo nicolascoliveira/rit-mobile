@@ -18,9 +18,16 @@
 import { effectiveRoutineIds, effectiveRoutines } from './history.js'
 import { canonicalExId } from './exercises.js'
 
-export const TAG_HOST = 'opengym.ch'
+export const TAG_HOST = 'app.treinerit.com.br'
 export const TAG_PATH = '/nfc'
-export const SCHEME = 'opengym'
+export const SCHEME = 'rit'
+const ALLOWED_TAG_HOSTS = new Set([
+  'app.treinerit.com.br',
+  'treinerit.com.br',
+  'app.treinerit.duckdns.org',
+  'opengym.ch'
+])
+const ALLOWED_SCHEMES = new Set(['rit:', 'opengym:'])
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/
 const cleanId = v => (typeof v === 'string' && ID_RE.test(v) ? v : null)
 
@@ -61,11 +68,11 @@ export function parseTagUrl(raw) {
   const proto = u.protocol.toLowerCase()
   if (proto === 'https:' || proto === 'http:') {
     const host = u.hostname.toLowerCase().replace(/^www\./, '')
-    if (host !== TAG_HOST) return null
+    if (!ALLOWED_TAG_HOSTS.has(host)) return null
     if (u.pathname.replace(/\.html$/, '').replace(/\/+$/, '') !== TAG_PATH) return null
     return fromQuery(u.searchParams)
   }
-  if (proto !== SCHEME + ':') return null
+  if (!ALLOWED_SCHEMES.has(proto)) return null
   // opengym://nfc?…, opengym://checkin?start=1, opengym://start, opengym://exercise/<id>
   const host = (u.hostname || '').toLowerCase()
   const rest = u.pathname.replace(/^\/+/, '').replace(/\/+$/, '')

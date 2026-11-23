@@ -202,6 +202,10 @@ final class ExerciseMediaProxy {
             int code = conn.getResponseCode();
             if (code == 404 || code == 410) return null;
             if (code != 200) throw new IOException("HTTP " + code);
+            String ct = conn.getContentType();
+            if (ct != null && ct.toLowerCase(Locale.ROOT).contains("text/html")) {
+                return null;
+            }
             try (InputStream in = conn.getInputStream()) {
                 return readStreamBounded(in, MAX_FILE_BYTES);
             }

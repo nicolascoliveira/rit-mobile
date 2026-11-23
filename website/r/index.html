@@ -54,8 +54,8 @@
   <p class="rt-err" id="err" hidden></p>
   <ol class="rt-list" id="list" hidden></ol>
   <div class="rt-actions">
-    <a class="btn" id="open" href="opengym://r">Open in openGym</a>
-    <a class="btn ghost" id="get" href="/#download">Get the app</a>
+    <a class="btn" id="open" href="rit://r">Abrir no Rit</a>
+    <a class="btn ghost" id="get" href="/#download">Baixar o App</a>
   </div>
   <section class="rt-web" id="web">
     <h2>Open in the web app</h2>
@@ -85,9 +85,9 @@
   }
   if (!ok) { fail('It looks cut off. Ask your friend to send it again.'); $('web').hidden = true; return }
 
-  $('open').href = 'opengym://r#' + payload
+  $('open').href = 'rit://r#' + payload
   $('demo').href = '/demo/#/r/' + payload
-  var KEY = 'opengym_r_server'
+  var KEY = 'rit_r_server'
   try { $('server').value = localStorage.getItem(KEY) || '' } catch (e) { /* storage off: fine */ }
   $('webform').addEventListener('submit', function (ev) {
     ev.preventDefault()

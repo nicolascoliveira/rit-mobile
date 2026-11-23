@@ -24,31 +24,32 @@
             android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize"
             android:exported="true">
-            <!-- openGym's own NFC stickers (NfcTagsPlugin, lib/nfc-tags.js): a tap opens the app,
-                 closed or not. Only links on our own stickers, nothing else NFC. -->
+            <!-- Rit NFC stickers (NfcTagsPlugin, lib/nfc-tags.js): a tap opens the app,
+                 closed or not. -->
             <intent-filter>
                 <action android:name="android.nfc.action.NDEF_DISCOVERED" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:scheme="https" android:host="opengym.ch" android:pathPrefix="/nfc" />
+                <data android:scheme="https" android:host="app.treinerit.duckdns.org" android:pathPrefix="/nfc" />
+                <data android:scheme="https" android:host="app.treinerit.com.br" android:pathPrefix="/nfc" />
+                <data android:scheme="https" android:host="treinerit.com.br" android:pathPrefix="/nfc" />
             </intent-filter>
-            <!-- A friend's routine link, https://opengym.ch/r#<routine> (components/RoutineShare.jsx):
-                 straight into the app instead of the page. Verified once opengym.ch serves
-                 /.well-known/assetlinks.json for this app; until then Android may ask which app. -->
+            <!-- WhatsApp student invite links (/cadastro?tenant=...&convite=...), workout links (/?tenant=...),
+                 and shared routines (/r#<routine>): verified via /.well-known/assetlinks.json on Rit hosts. -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" android:host="opengym.ch" android:path="/r" />
-                <data android:scheme="https" android:host="opengym.ch" android:path="/r/" />
+                <data android:scheme="https" />
+                <data android:host="app.treinerit.duckdns.org" />
+                <data android:host="app.treinerit.com.br" />
+                <data android:host="treinerit.com.br" />
+                <data android:path="/" />
+                <data android:pathPrefix="/cadastro" />
+                <data android:pathPrefix="/convite" />
+                <data android:pathPrefix="/r" />
+                <data android:pathPrefix="/nfc" />
             </intent-filter>
-            <!-- opengym://nfc?... from opengym.ch/nfc, the page a sticker opens in a browser, and
-                 opengym://r#<routine> from opengym.ch/r. -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="opengym" />
-            </intent-filter>
+            <!-- Custom scheme rit:// (e.g. rit://cadastro?tenant=X&convite=Y, rit://r#<routine>, rit://nfc?...) -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />

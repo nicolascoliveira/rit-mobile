@@ -12,7 +12,7 @@
 import { MOBILE } from './mobile.js'
 import { APK_VARIANTS, APK_VARIANT } from './apk-variant.js'
 
-const REPO = 'DuarteSantos8/openGym'
+const REPO = import.meta.env?.VITE_GITHUB_REPO || 'nicolascoliveira/RIT'
 const LATEST_URL = `https://api.github.com/repos/${REPO}/releases/latest`
 export const RELEASES_PAGE = `https://github.com/${REPO}/releases/latest`
 
@@ -99,8 +99,8 @@ export async function fetchChecksum(hashUrl) {
   let text
   if (MOBILE) {
     const { Filesystem, Directory, Encoding } = await import('@capacitor/filesystem')
-    await Filesystem.downloadFile({ url: hashUrl, path: 'opengym-update.apk.sha256', directory: Directory.Cache })
-    text = (await Filesystem.readFile({ path: 'opengym-update.apk.sha256', directory: Directory.Cache, encoding: Encoding.UTF8 })).data
+    await Filesystem.downloadFile({ url: hashUrl, path: 'rit-update.apk.sha256', directory: Directory.Cache })
+    text = (await Filesystem.readFile({ path: 'rit-update.apk.sha256', directory: Directory.Cache, encoding: Encoding.UTF8 })).data
   } else {
     const res = await fetch(hashUrl)
     if (!res.ok) return null
@@ -119,7 +119,7 @@ export async function sha256(buffer) {
   return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
-const UPDATE_FILE = 'opengym-update.apk'
+const UPDATE_FILE = 'rit-update.apk'
 
 /**
  * Resolves once openGym is the app in front. The package installer is an activity, and Android

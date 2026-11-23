@@ -221,7 +221,7 @@ function probeVideoFile(file, maxSec) {
 function uploadBlobWithProgress(hash, blob, mime, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('PUT', `/api/gym/media/${hash}`, true);
+    xhr.open('PUT', resolvePortalApiUrl(`/api/gym/media/${hash}`), true);
     const token = getStoredToken();
     const tenantOverride = getTenantOverride();
     if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
@@ -355,8 +355,27 @@ export async function prepareAndUploadExerciseMedia(file, caps = DEFAULT_MEDIA_C
   };
 }
 
-/* --- Cache de Object URLs autenticados para preview no Portal --- */
+/* --- Cache LRU de Object URLs autenticados para preview no Portal --- */
+const MAX_MEDIA_URL_CACHE = 30;
 const mediaUrlCache = new Map();
+
+function rememberMediaUrl(cacheKey, promise) {
+  if (mediaUrlCache.has(cacheKey)) {
+    mediaUrlCache.delete(cacheKey);
+  }
+  while (mediaUrlCache.size >= MAX_MEDIA_URL_CACHE) {
+    const oldestKey = mediaUrlCache.keys().next().value;
+    const oldestPromise = mediaUrlCache.get(oldestKey);
+    mediaUrlCache.delete(oldestKey);
+    Promise.resolve(oldestPromise).then(url => {
+      if (url && typeof URL?.revokeObjectURL === 'function') {
+        try { URL.revokeObjectURL(url); } catch { /* ignore */ }
+      }
+    });
+  }
+  mediaUrlCache.set(cacheKey, promise);
+  return promise;
+}
 
 export function fetchGymMediaUrl(hash) {
   if (!hash || !/^[0-9a-f]{64}$/.test(hash)) return Promise.resolve('');
@@ -381,8 +400,7 @@ export function fetchGymMediaUrl(hash) {
     return '';
   });
 
-  mediaUrlCache.set(cacheKey, p);
-  return p;
+  return rememberMediaUrl(cacheKey, p);
 }
 
 export function fetchStudentVideoUrl(studentId, hash) {
@@ -409,8 +427,7 @@ export function fetchStudentVideoUrl(studentId, hash) {
     return '';
   });
 
-  mediaUrlCache.set(cacheKey, p);
-  return p;
+  return rememberMediaUrl(cacheKey, p);
 }
 
 export function extractYouTubeId(rawUrl) {

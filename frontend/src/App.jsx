@@ -35,7 +35,8 @@ import { installChipDrag } from './lib/hchips.js'
 import { syncPushSubscription } from './lib/push.js'
 import { startMobileInbox, disarmMobileInbox } from './lib/mobile-inbox.js'
 import { MOBILE, nativePlatform } from './lib/mobile.js'
-import { shouldAutoOpenPortal } from './lib/rit-native.js'
+import { shouldAutoOpenPortal, parseRitDeepLink, rememberStudentNativeMode } from './lib/rit-native.js'
+import { openMobileRegister } from './components/MobilePasswordAuth.jsx'
 import { isOn } from './lib/modules.js'
 import { useTour, tourState, openTour, readTour, shouldOffer, resumeAt } from './lib/tour.js'
 import { exitWorkoutEdit, startFlow, beginWorkout, bwSheet } from './sheets.jsx'
@@ -230,7 +231,59 @@ function Shell() {
       onUpdates: () => { useStore.getState().pullState().catch(() => {}) }
     })
   }, [user?.id, ready])
-  // Opened from a device-link QR code (#95): once boot knows who is here, the sheet that redeems
+  // Native APK: handle WhatsApp invite/workout deep links (https://app.treinerit.../cadastro?tenant=X&convite=Y or rit://cadastro?...)
+  const pendingDeepLinkRef = useRef(null)
+  const lastHandledDeepLinkRef = useRef('')
+  useEffect(() => {
+    if (!MOBILE) return
+    const applyDeepLink = rawUrl => {
+      const urlStr = String(rawUrl || '').trim()
+      if (!urlStr || lastHandledDeepLinkRef.current === urlStr) return
+      const parsed = parseRitDeepLink(urlStr)
+      if (!parsed) return
+      lastHandledDeepLinkRef.current = urlStr
+      if (parsed.tenantId) {
+        try {
+          window.localStorage?.setItem('rit_tenant_id', parsed.tenantId)
+        } catch { /* ignore */ }
+        initGymBranding(true)
+      }
+      if (useStore.getState().ready) {
+        if (!useStore.getState().user && (parsed.inviteCode || parsed.isSignup)) {
+          rememberStudentNativeMode()
+          openMobileRegister({ initialCode: parsed.inviteCode || '' })
+        } else if (parsed.hashRoute) {
+          navigate(parsed.hashRoute)
+        }
+      } else {
+        pendingDeepLinkRef.current = parsed
+      }
+    }
+    const handles = []
+    let gone = false
+    import('@capacitor/app').then(({ App }) => {
+      Promise.resolve(App.addListener('appUrlOpen', e => { if (e?.url) applyDeepLink(e.url) }))
+        .then(h => { if (gone) h?.remove?.(); else handles.push(h) }).catch(() => {})
+      Promise.resolve(App.getLaunchUrl?.())
+        .then(r => { if (!gone && r?.url) applyDeepLink(r.url) }).catch(() => {})
+    }).catch(() => {})
+    return () => {
+      gone = true
+      handles.splice(0).forEach(h => { try { h?.remove?.() } catch { /* ignore */ } })
+    }
+  }, [navigate])
+
+  useEffect(() => {
+    if (!MOBILE || !ready || !pendingDeepLinkRef.current) return
+    const parsed = pendingDeepLinkRef.current
+    pendingDeepLinkRef.current = null
+    if (!user && (parsed.inviteCode || parsed.isSignup)) {
+      rememberStudentNativeMode()
+      openMobileRegister({ initialCode: parsed.inviteCode || '' })
+    } else if (parsed.hashRoute) {
+      navigate(parsed.hashRoute)
+    }
+  }, [ready, user, navigate])
   // it opens by itself — over the sign-in screen, or over the app for a guest or a signed-in
   // browser. Once per visit; closed, the code stays for the sign-in screen's own button.
   const linkCode = useStore(s => s.linkCode)

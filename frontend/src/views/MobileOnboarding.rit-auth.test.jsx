@@ -17,7 +17,9 @@ vi.mock('../lib/rit-native.js', () => ({
   RIT_STUDENT_SERVER: 'https://app.treinerit.duckdns.org',
   openPortalNativeApp: (...a) => h.openPortalNativeApp(...a),
   rememberStudentNativeMode: (...a) => h.rememberStudentNativeMode(...a),
-  isRitDefaultServer: u => u === 'https://app.treinerit.duckdns.org'
+  isRitDefaultServer: u => u === 'https://app.treinerit.duckdns.org',
+  getOrCreateDeviceId: () => 'dev_test_123456',
+  getTrustedDeviceToken: () => ''
 }))
 
 vi.mock('../lib/remote.js', async () => {
@@ -125,7 +127,11 @@ describe('MobileOnboarding & web-like mobile password auth', () => {
       'https://app.treinerit.duckdns.org',
       'carlos@rit.com',
       'correct-pass-1',
-      expect.any(Function)
+      expect.any(Function),
+      expect.objectContaining({
+        requireEmailOtp: true,
+        deviceId: 'dev_test_123456'
+      })
     )
     expect(close).toHaveBeenCalled()
     expect(useUI.getState().toastMsg).toBe('Welcome back, Carlos')
@@ -146,7 +152,7 @@ describe('MobileOnboarding & web-like mobile password auth', () => {
     expect(close).toHaveBeenCalled()
   })
 
-  it('previews trainer invite code, auto-fills student name, and registers account', async () => {
+  it('previews trainer invite code, enforces mandatory email + 6-digit OTP verification, and registers account', async () => {
     vi.useFakeTimers()
     h.previewRemoteInvite.mockResolvedValueOnce({
       ok: true,
@@ -154,8 +160,16 @@ describe('MobileOnboarding & web-like mobile password auth', () => {
       tenantName: 'Studio Atlas',
       studentName: 'Mariana'
     })
+    const sendMobileVerificationCode = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      verificationRequired: true,
+      challengeId: 'chal_reg_1',
+      maskedEmail: 'm***i@atlas.br',
+      maskedPhone: '+55 (11) *****-9988',
+      hasPhone: true
+    })
     const registerMobileWithPassword = vi.fn().mockResolvedValueOnce({ id: 'u9', name: 'Mariana' })
-    useStore.setState({ registerMobileWithPassword })
+    useStore.setState({ registerMobileWithPassword, sendMobileVerificationCode })
     const close = vi.fn()
 
     await act(async () => root.render(<MobileRegisterSheet close={close} />))
@@ -168,22 +182,97 @@ describe('MobileOnboarding & web-like mobile password auth', () => {
     const nameInput = host.querySelector('input[name="username"]')
     expect(nameInput.value).toBe('Mariana')
 
-    type(host.querySelector('input[name="email"]'), 'mari@atlas.br')
+    // Missing email must be rejected
     type(host.querySelector('input[name="new-password"]'), 'senhasegura123')
     type(host.querySelector('input[name="new-password-again"]'), 'senhasegura123')
-
     await act(async () => { buttonByText('Create profile').click() })
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('e-mail')
+    expect(sendMobileVerificationCode).not.toHaveBeenCalled()
+
+    type(host.querySelector('input[name="email"]'), 'mari@atlas.br')
+    await act(async () => { buttonByText('Create profile').click() })
+    expect(sendMobileVerificationCode).toHaveBeenCalledWith(
+      'https://app.treinerit.duckdns.org',
+      expect.objectContaining({
+        purpose: 'register',
+        email: 'mari@atlas.br',
+        name: 'Mariana',
+        code: 'RIT500'
+      })
+    )
+
+    // Now on the 6-digit OTP confirmation screen
+    const otpInput = host.querySelector('input[name="otp-code"]')
+    expect(otpInput).toBeTruthy()
+    expect(buttonByText('Reenviar código por WhatsApp')).toBeTruthy()
+    expect(buttonByText('Reenviar código por E-mail')).toBeTruthy()
+
+    type(otpInput, '654321')
+    await act(async () => { buttonByText('Confirmar código e ativar conta').click() })
+
     expect(registerMobileWithPassword).toHaveBeenCalledWith(
       'https://app.treinerit.duckdns.org',
       {
         name: 'Mariana',
         password: 'senhasegura123',
         code: 'RIT500',
-        email: 'mari@atlas.br'
+        email: 'mari@atlas.br',
+        challengeId: 'chal_reg_1',
+        otpCode: '654321',
+        deviceId: 'dev_test_123456',
+        requireEmailOtp: true
       },
       expect.any(Function)
     )
     expect(close).toHaveBeenCalled()
     expect(useUI.getState().toastMsg).toBe('Welcome, Mariana')
+  })
+
+  it('supports self-service Forgot Password ("Esqueceu a senha?") via 6-digit OTP code', async () => {
+    const sendMobileVerificationCode = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      verificationRequired: true,
+      purpose: 'reset',
+      challengeId: 'chal_rst_99',
+      maskedEmail: 'c***s@rit.com',
+      maskedPhone: '(11) 9****-1122',
+      hasPhone: true
+    })
+    const resetMobilePassword = vi.fn().mockResolvedValueOnce({ id: 'u1', name: 'Carlos' })
+    useStore.setState({ sendMobileVerificationCode, resetMobilePassword })
+    const close = vi.fn()
+
+    act(() => root.render(<MobilePasswordSignInSheet close={close} />))
+    await act(async () => { buttonByText('Esqueceu a senha?').click() })
+    expect(host.textContent).toContain('Esqueceu a Senha?')
+
+    type(host.querySelector('input[name="username"]'), 'carlos@rit.com')
+    await act(async () => { buttonByText('Enviar código').click() })
+    expect(sendMobileVerificationCode).toHaveBeenCalledWith(
+      'https://app.treinerit.duckdns.org',
+      expect.objectContaining({
+        purpose: 'reset',
+        email: 'carlos@rit.com'
+      })
+    )
+
+    type(host.querySelector('input[name="reset-code"]'), '789012')
+    type(host.querySelector('input[name="new-password"]'), 'novasenha1234')
+    type(host.querySelector('input[name="new-password-again"]'), 'novasenha1234')
+    await act(async () => { buttonByText('Set password & sign in').click() })
+
+    expect(resetMobilePassword).toHaveBeenCalledWith(
+      'https://app.treinerit.duckdns.org',
+      expect.objectContaining({
+        name: 'carlos@rit.com',
+        code: '789012',
+        next: 'novasenha1234',
+        challengeId: 'chal_rst_99',
+        otpCode: '789012',
+        deviceId: 'dev_test_123456'
+      }),
+      expect.any(Function)
+    )
+    expect(close).toHaveBeenCalled()
   })
 })

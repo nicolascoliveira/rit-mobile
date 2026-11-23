@@ -7,7 +7,11 @@ export function isNativePortalApp() {
   if (embeddedFlag) return true;
   if (typeof window === 'undefined') return false;
   if (window.Capacitor?.isNativePlatform?.()) return true;
-  return Boolean(window.location?.pathname?.startsWith('/portal'));
+  const proto = window.location?.protocol || '';
+  const host = window.location?.hostname || '';
+  const path = window.location?.pathname || '';
+  if (proto === 'file:' || proto === 'capacitor:') return true;
+  return Boolean((host === 'localhost' || host === '127.0.0.1') && !window.location?.port && path.startsWith('/portal/'));
 }
 
 export function getPortalApiBase() {

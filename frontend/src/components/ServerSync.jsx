@@ -12,7 +12,7 @@ import { MOBILE, shareExport } from '../lib/mobile.js'
 import { syncMedia } from '../lib/media-sync.js'
 import { DEMO } from '../lib/demo.js'
 import { askAddDeviceData, menuSheet } from '../sheets.jsx'
-import { ConnectSheet, CfAccessSheet } from '../views/MobileOnboarding.jsx'
+import { ConnectSheet } from '../views/MobileOnboarding.jsx'
 import { passwordOn, openPasswordSignIn } from './PasswordAuth.jsx'
 import { MobilePasswordSignInSheet } from './MobilePasswordAuth.jsx'
 import { isRitDefaultServer, RIT_STUDENT_SERVER } from '../lib/rit-native.js'
@@ -85,7 +85,7 @@ export function connectionView(sync, { mobile = MOBILE, online = isOnline() } = 
       }
     case 'error':
       return err.code === 'bad-response'
-        ? { tone: 'bad', icon: 'warning', action: 'retry', line: t('Not an openGym answer (HTTP {0})', err.status), banner: t('Your server’s address answered with something other than openGym (HTTP {0}). Your changes are kept here.', err.status) }
+        ? { tone: 'bad', icon: 'warning', action: 'retry', line: t('Server error (HTTP {0})', err.status), banner: t('Your server answered with an error (HTTP {0}). Your changes are kept here.', err.status) }
         : { tone: 'bad', icon: 'warning', action: 'retry', line: t('Server error (HTTP {0})', err.status), banner: t('Your server answered with an error (HTTP {0}). Your changes are kept here.', err.status) }
     case 'auth':
       if (!mobile) return { tone: 'bad', icon: 'lock', action: 'signin', line: t('The server refuses this browser'), banner: t('Your server no longer accepts this browser. Your changes are kept here.') }
@@ -270,15 +270,13 @@ export function ServerSyncSection({ children }) {
     setBusy(true)
     try { await syncNowWithToast() } finally { setBusy(false) }
   }
-  return <Section title={t('Server & sync')}>
+  return <Section title="Conta e sincronização">
     <Row icon="personCircle" iconTint="var(--acc)" title={user.name || t('Account')}
       subtitle={user.email ? user.email : t('Signed in as {0}', user.name)} />
     <Row icon={view.icon} iconTint={TINT[view.tone]} title={view.line} subtitle={sub} className="sync-status" />
     <Row icon="reset" iconTint="var(--acc)" title={busy ? t('Syncing…') : t('Sync now')} onClick={now} />
-    {MOBILE && <Row icon="key" iconTint="var(--orange)" title={t('Cloudflare Access')} accessory="chevron"
-      onClick={() => ui().openSheet(close => <CfAccessSheet close={close} server={sync.server || ''} />)} />}
     {sync.status === 'auth' && (MOBILE
-      ? <Row icon="qr" iconTint="var(--indigo)" title={t('Pair again')} subtitle={t('Your changes are kept here, and merged into your account once it is paired again.')} accessory="chevron" onClick={pairAgain} />
+      ? <Row icon="key" iconTint="var(--acc)" title="Entrar novamente" subtitle="Sua sessão expirou. Entre novamente para sincronizar seus treinos." accessory="chevron" onClick={pairAgain} />
       : canSignIn() && <Row icon={pwOn() ? 'person' : 'fingerprint'} iconTint="var(--blue)" title={pwOn() ? t('Sign in') : t('Sign in with passkey')} subtitle={t('Your changes are kept here, and merged into your account once you are signed in again.')} accessory="chevron" onClick={signInAgain} />)}
     {/* another account's, kept when this one signed in over a copy that still owed them */}
     <KeptChangesRows />

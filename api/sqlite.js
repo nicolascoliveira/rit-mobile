@@ -303,6 +303,21 @@ export function getSqliteInstance(dirOrTenantDir) {
     );
     CREATE INDEX IF NOT EXISTS idx_mobile_notif_user_id
       ON mobile_notifications(user_id, id);
+
+    CREATE TABLE IF NOT EXISTS auth_verifications (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL,
+      phone TEXT,
+      user_id TEXT,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      purpose TEXT NOT NULL,
+      code_hash TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      expires_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_auth_verifications_email
+      ON auth_verifications(email, purpose, expires_at);
   `);
 
   // Evolução idempotente da tabela invites
@@ -669,6 +684,7 @@ export function getSqliteInstance(dirOrTenantDir) {
       WHERE scope_key = ? AND status = 'in_flight'
     `),
     deleteApiIdempotencyKey: db.prepare('DELETE FROM api_idempotency_keys WHERE scope_key = ?'),
+    pruneExpiredApiIdempotency: db.prepare('DELETE FROM api_idempotency_keys WHERE expires_at < ?'),
     listTenantExerciseOverrides: db.prepare(`
       SELECT exercise_id, media_json, url, note, updated_by, updated_at
       FROM tenant_exercise_overrides
@@ -761,6 +777,38 @@ export function getSqliteInstance(dirOrTenantDir) {
     `),
     deleteUserMobileNotif: db.prepare(`
       DELETE FROM mobile_notifications WHERE user_id = ?
+    `),
+    upsertAuthVerification: db.prepare(`
+      INSERT INTO auth_verifications (
+        id, email, phone, user_id, tenant_id, purpose, code_hash, attempts, expires_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        email = excluded.email,
+        phone = excluded.phone,
+        user_id = excluded.user_id,
+        tenant_id = excluded.tenant_id,
+        purpose = excluded.purpose,
+        code_hash = excluded.code_hash,
+        attempts = excluded.attempts,
+        expires_at = excluded.expires_at,
+        created_at = excluded.created_at
+    `),
+    getAuthVerification: db.prepare(`
+      SELECT id, email, phone, user_id, tenant_id, purpose, code_hash, attempts, expires_at, created_at
+      FROM auth_verifications
+      WHERE id = ?
+    `),
+    incrementAuthVerificationAttempts: db.prepare(`
+      UPDATE auth_verifications
+      SET attempts = attempts + 1
+      WHERE id = ?
+      RETURNING attempts
+    `),
+    deleteAuthVerification: db.prepare(`
+      DELETE FROM auth_verifications WHERE id = ?
+    `),
+    pruneExpiredAuthVerifications: db.prepare(`
+      DELETE FROM auth_verifications WHERE expires_at <= ?
     `)
   };
 
@@ -842,13 +890,18 @@ function migrateLegacyJsonIfPresent(instance) {
   const legacySaasFile = path.join(baseDir, 'saas.json');
   const legacyOutboxFile = path.join(baseDir, 'whatsapp-outbox.json');
 
-  // 1. Migra db.json
+  // 1. Migra db.json somente se o banco SQLite estiver vazio ou se db.json tiver sido editado externamente (hash diferente do último espelho gravado pelo SQLite)
   if (fs.existsSync(legacyDbFile)) {
     try {
       const raw = fs.readFileSync(legacyDbFile, 'utf8');
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        saveCoreDbToSqlite(baseDir, parsed);
+      const rawSha = crypto.createHash('sha256').update(raw).digest('hex');
+      const lastMirrorSha = stmts.getKv.get('db_json_mirror_sha')?.value || '';
+      const hasUsersInSqlite = (stmts.getUserIds.all()?.length || 0) > 0;
+      if (!hasUsersInSqlite || (lastMirrorSha !== 'SQLITE_AHEAD' && rawSha !== lastMirrorSha)) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          saveCoreDbToSqlite(baseDir, parsed);
+        }
       }
       // Mantem db.json intacto para MCP e testes legados
       try { fs.unlinkSync(legacyDbFile + '.bak'); } catch { /* ignore */ }
@@ -1195,10 +1248,16 @@ export function loadCoreDbFromSqlite(dataDir) {
 }
 
 function writeDbMirrorSync(inst, dbObj) {
-  if (!dbObj) return;
+  if (!dbObj) {
+    try { inst.stmts.setKv.run('db_json_mirror_sha', 'SQLITE_AHEAD', Date.now()); } catch { /* ignore */ }
+    return;
+  }
   const mirrorPath = path.join(inst.baseDir, 'db.json');
   try {
-    fs.writeFileSync(mirrorPath, JSON.stringify(dbObj, null, 2), { mode: 0o600 });
+    const raw = JSON.stringify(dbObj, null, 2);
+    fs.writeFileSync(mirrorPath, raw, { mode: 0o600 });
+    const rawSha = crypto.createHash('sha256').update(raw).digest('hex');
+    inst.stmts.setKv.run('db_json_mirror_sha', rawSha, Date.now());
     fs.chmodSync(mirrorPath, 0o600);
   } catch { /* host filesystem may deny chmod */ }
 }
@@ -1865,6 +1924,7 @@ export function acquireApiIdempotencySqlite(dataDir, {
   const inst = getSqliteInstance(dataDir);
   return runInTransaction(inst, () => {
     const now = Date.now();
+    try { inst.stmts.pruneExpiredApiIdempotency.run(now - 7 * 24 * 3600 * 1000); } catch { /* ignore */ }
     const expiresAt = now + ttlMs;
     const gwKey = gatewayIdempotencyKey || crypto.randomUUID();
     const ins = inst.stmts.insertApiIdempotencyIgnore.run(
@@ -1996,6 +2056,75 @@ export function deleteMobileNotificationsSqlite(dataDir, userId) {
   if (!uid) return;
   const inst = getSqliteInstance(dataDir);
   inst.stmts.deleteUserMobileNotif.run(uid);
+}
+
+export function createAuthVerificationSqlite(
+  dataDir,
+  { id, email, phone = null, userId = null, tenantId = 'default', purpose = 'register', codeHash, ttlMs = 10 * 60 * 1000 }
+) {
+  const now = Date.now();
+  const expiresAt = now + Math.max(60_000, Number(ttlMs) || 10 * 60 * 1000);
+  const inst = getSqliteInstance(dataDir);
+  return runInTransaction(inst, () => {
+    inst.stmts.pruneExpiredAuthVerifications.run(now);
+    inst.stmts.upsertAuthVerification.run(
+      String(id),
+      String(email).trim().toLowerCase(),
+      phone ? String(phone).trim() : null,
+      userId ? String(userId).trim() : null,
+      String(tenantId || 'default').trim() || 'default',
+      String(purpose || 'register').trim(),
+      String(codeHash),
+      0,
+      expiresAt,
+      now
+    );
+    return {
+      id: String(id),
+      email: String(email).trim().toLowerCase(),
+      phone: phone ? String(phone).trim() : null,
+      userId: userId ? String(userId).trim() : null,
+      tenantId: String(tenantId || 'default').trim() || 'default',
+      purpose: String(purpose || 'register').trim(),
+      expiresAt,
+      createdAt: now
+    };
+  });
+}
+
+export function getAuthVerificationSqlite(dataDir, id) {
+  const cid = String(id || '').trim();
+  if (!cid) return null;
+  const inst = getSqliteInstance(dataDir);
+  const row = inst.stmts.getAuthVerification.get(cid);
+  if (!row) return null;
+  return {
+    id: String(row.id),
+    email: String(row.email || ''),
+    phone: row.phone ? String(row.phone) : null,
+    userId: row.user_id ? String(row.user_id) : null,
+    tenantId: String(row.tenant_id || 'default'),
+    purpose: String(row.purpose || 'register'),
+    codeHash: String(row.code_hash || ''),
+    attempts: Number(row.attempts || 0),
+    expiresAt: Number(row.expires_at || 0),
+    createdAt: Number(row.created_at || 0)
+  };
+}
+
+export function incrementAuthVerificationAttemptsSqlite(dataDir, id) {
+  const cid = String(id || '').trim();
+  if (!cid) return 0;
+  const inst = getSqliteInstance(dataDir);
+  const row = inst.stmts.incrementAuthVerificationAttempts.get(cid);
+  return Number(row?.attempts || 0);
+}
+
+export function deleteAuthVerificationSqlite(dataDir, id) {
+  const cid = String(id || '').trim();
+  if (!cid) return;
+  const inst = getSqliteInstance(dataDir);
+  inst.stmts.deleteAuthVerification.run(cid);
 }
 
 process.on('exit', () => {

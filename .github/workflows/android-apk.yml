@@ -85,8 +85,10 @@ jobs:
 
       - name: Compilar APK Android e rodar testes JVM
         working-directory: frontend/android
+        env:
+          INPUT_VARIANT: ${{ inputs.variant || 'release' }}
         run: |
-          if [ "${{ inputs.variant || 'release' }}" = "debug" ]; then
+          if [ "$INPUT_VARIANT" = "debug" ]; then
             ./gradlew --no-daemon testSideloadDebugUnitTest assembleSideloadDebug
           else
             ./gradlew --no-daemon testSideloadDebugUnitTest assembleSideloadRelease
@@ -94,6 +96,8 @@ jobs:
 
       - name: Assinar e preparar APK instalável
         env:
+          INPUT_VARIANT: ${{ inputs.variant || 'release' }}
+          INPUT_API_BASE: ${{ inputs.api_base || 'https://painel.treinerit.duckdns.org' }}
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -101,7 +105,7 @@ jobs:
         run: |
           set -euo pipefail
           VER="$(node -p "require('./frontend/package.json').version")"
-          VARIANT="${{ inputs.variant || 'release' }}"
+          VARIANT="$INPUT_VARIANT"
           OUT_DIR="$PWD/out"
           mkdir -p "$OUT_DIR"
 
@@ -116,10 +120,13 @@ jobs:
             BT="$(ls -d "$SDK_DIR"/build-tools/* | sort -V | tail -n 1)"
             SRC_APK="frontend/android/app/build/outputs/apk/sideload/release/app-sideload-release-unsigned.apk"
             ALIGNED_APK="/tmp/rit-aligned.apk"
+            KS_PATH=""
+            trap 'rm -f "$ALIGNED_APK" "$KS_PATH"' EXIT
             "$BT/zipalign" -f -p 4 "$SRC_APK" "$ALIGNED_APK"
 
             if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ]; then
               KS_PATH="/tmp/rit-release.keystore"
+              umask 077
               echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$KS_PATH"
               KS_PASS="$ANDROID_KEYSTORE_PASSWORD"
               KS_ALIAS="$ANDROID_KEY_ALIAS"
@@ -132,6 +139,7 @@ jobs:
               KS_ALIAS="rit-preview"
               KEY_PASS="$KS_PASS"
               rm -f "$KS_PATH"
+              umask 077
               keytool -genkeypair -v -keystore "$KS_PATH" -storepass "$KS_PASS" -alias "$KS_ALIAS" -keypass "$KEY_PASS" \
                 -keyalg RSA -keysize 2048 -validity 10000 \
                 -dname "CN=Rit, OU=Mobile, O=Rit, L=Sao Paulo, ST=SP, C=BR" >/dev/null 2>&1
@@ -151,7 +159,7 @@ jobs:
             echo "- Arquivo: \`$DEST_NAME\`"
             echo "- Tamanho: $(numfmt --to=iec "$(stat -c %s "$OUT_DIR/$DEST_NAME")")"
             echo "- Assinatura: \`$SIGNED_MODE\`"
-            echo "- API do Painel: \`${{ inputs.api_base || 'https://painel.treinerit.duckdns.org' }}\`"
+            printf -- '- API do Painel: `%s`\n' "$INPUT_API_BASE"
             echo "- App do Aluno: \`https://app.treinerit.duckdns.org\`"
             if [ "$SIGNED_MODE" = "preview-keystore" ]; then
               echo ""

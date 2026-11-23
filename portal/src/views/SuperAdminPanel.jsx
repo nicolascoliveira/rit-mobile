@@ -440,6 +440,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
         body: {
           id: editTenant.id,
           name: editTenant.name,
+          accountType: editTenant.accountType || (String(editTenant.planId || '').startsWith('personal') ? 'personal' : 'gym'),
           document: editTenant.document,
           city: editTenant.city,
           phone: editTenant.phone,

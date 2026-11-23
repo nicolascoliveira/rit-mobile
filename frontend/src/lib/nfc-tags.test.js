@@ -20,12 +20,12 @@ describe('tagUrl / parseTagUrl', () => {
     ]) expect(parseTagUrl(tagUrl(tag))).toEqual(tag)
   })
 
-  it('writes short https links on opengym.ch', () => {
-    expect(tagUrl({ kind: 'checkin', start: true })).toBe('https://opengym.ch/nfc?do=start')
-    expect(tagUrl({ kind: 'checkin', start: false, card: 'c1' })).toBe('https://opengym.ch/nfc?do=checkin&card=c1')
-    expect(tagUrl({ kind: 'exercise', id: '0025' })).toBe('https://opengym.ch/nfc?ex=0025')
+  it('writes short https links on app.treinerit.com.br', () => {
+    expect(tagUrl({ kind: 'checkin', start: true })).toBe('https://app.treinerit.com.br/nfc?do=start')
+    expect(tagUrl({ kind: 'checkin', start: false, card: 'c1' })).toBe('https://app.treinerit.com.br/nfc?do=checkin&card=c1')
+    expect(tagUrl({ kind: 'exercise', id: '0025' })).toBe('https://app.treinerit.com.br/nfc?ex=0025')
     // NTAG213 holds 137 bytes of NDEF: even a long custom id stays far below.
-    expect(tagUrl({ kind: 'exercise', id: 'x'.repeat(64) }).length).toBeLessThan(110)
+    expect(tagUrl({ kind: 'exercise', id: 'x'.repeat(64) }).length).toBeLessThan(120)
   })
 
   it('refuses to write what it could not read back', () => {
@@ -33,10 +33,12 @@ describe('tagUrl / parseTagUrl', () => {
     expect(() => tagUrl({ kind: 'exercise', id: '' })).toThrow()
     expect(() => tagUrl({ kind: 'nope' })).toThrow()
     // A card id that is not one is left off, not written.
-    expect(tagUrl({ kind: 'checkin', card: 'a b' })).toBe('https://opengym.ch/nfc?do=checkin')
+    expect(tagUrl({ kind: 'checkin', card: 'a b' })).toBe('https://app.treinerit.com.br/nfc?do=checkin')
   })
 
-  it('reads the opengym:// forms, from opengym.ch/nfc and written by hand', () => {
+  it('reads the rit:// and legacy opengym:// forms', () => {
+    expect(parseTagUrl('rit://nfc?do=start')).toEqual({ kind: 'checkin', start: true, card: null })
+    expect(parseTagUrl('rit://exercise/0025')).toEqual({ kind: 'exercise', id: '0025' })
     expect(parseTagUrl('opengym://nfc?do=start')).toEqual({ kind: 'checkin', start: true, card: null })
     expect(parseTagUrl('opengym://nfc?ex=0032')).toEqual({ kind: 'exercise', id: '0032' })
     expect(parseTagUrl('opengym://checkin')).toEqual({ kind: 'checkin', start: false, card: null })

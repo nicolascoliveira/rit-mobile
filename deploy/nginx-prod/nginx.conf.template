@@ -71,10 +71,11 @@ server {
     ssl_prefer_server_ciphers on;
 
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Frame-Options "DENY" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "same-origin" always;
 
-    client_max_body_size 20m;
+    client_max_body_size 50m;
 
     location / {
         proxy_pass http://portal:${NGINX_PORT};
@@ -103,8 +104,11 @@ server {
     ssl_ciphers HIGH:!aNULL:!MD5;
 
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Frame-Options "DENY" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "same-origin" always;
+
+    client_max_body_size 50m;
 
     location / {
         # Encaminha para o Portal Landing View ou Landing Institucional

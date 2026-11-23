@@ -45,8 +45,23 @@ import {
   acquireApiIdempotencySqlite,
   completeApiIdempotencySqlite,
   markApiIdempotencyRetryableSqlite,
-  getApiIdempotencyRecordSqlite
+  getApiIdempotencyRecordSqlite,
+  createAuthVerificationSqlite,
+  getAuthVerificationSqlite,
+  incrementAuthVerificationAttemptsSqlite,
+  deleteAuthVerificationSqlite
 } from './sqlite.js';
+import {
+  OTP_TTL_MS,
+  MAX_OTP_ATTEMPTS,
+  generateOtpCode,
+  hashOtpCode,
+  verifyOtpCode,
+  maskEmailAddress,
+  maskPhoneNumber,
+  isEmailDeliveryConfigured,
+  dispatchDualChannelVerification
+} from './email.js';
 import { scheduleWebhookFlush } from './webhook-worker.js';
 import { HASH_RE, MediaError } from './media.js';
 import {
@@ -563,8 +578,17 @@ export function createSaasRoutes({
   mediaConfigObj = null,
   mediaBurst = null,
   mediaThrottleFn = null,
-  sendMediaFileFn = null
+  sendMediaFileFn = null,
+  secret = ''
 }) {
+  const resolveAuthSecret = () => {
+    if (secret) return secret;
+    try {
+      const sf = path.join(dataDir || '', 'secret');
+      if (fs.existsSync(sf)) return fs.readFileSync(sf, 'utf8').trim();
+    } catch { /* ignore */ }
+    return 'rit-default-secret';
+  };
   const recentPrescriptionPushByStudent = new Map();
   const replyDomainError = (targetRes, err, fallbackStatus = 400, replyFn = json) => {
     if (err instanceof DomainError || err?.name === 'DomainError') {
@@ -756,6 +780,12 @@ export function createSaasRoutes({
         } catch {
           replayedBody = {};
         }
+        if (routeKey === 'POST:/api/saas/auth/register' && !replayedBody.token && replayedBody.user?.id) {
+          const existingOwner = (db.users || []).find(u => u && u.id === replayedBody.user.id);
+          if (existingOwner) {
+            replayedBody.token = makeSession ? makeSession(existingOwner, 'b') : 'dev-token-' + existingOwner.id;
+          }
+        }
         return json(res, Number(acq.record?.response_status || 200), replayedBody, {
           'Idempotency-Replayed': 'true'
         });
@@ -788,7 +818,12 @@ export function createSaasRoutes({
       if (isTransient) {
         markApiIdempotencyRetryableSqlite(dataDir, scopeKey);
       } else {
-        completeApiIdempotencySqlite(dataDir, scopeKey, captured.statusCode, captured.payload);
+        let toStore = captured.payload;
+        if (toStore && typeof toStore === 'object' && !Array.isArray(toStore)) {
+          const { token: _omitToken, initialPassword: _omitPw, ...restPayload } = toStore;
+          toStore = restPayload;
+        }
+        completeApiIdempotencySqlite(dataDir, scopeKey, captured.statusCode, toStore);
       }
     })();
   };
@@ -4324,14 +4359,274 @@ export function createSaasRoutes({
       const linkedStudent = inv.studentId
         ? db.users.find(u => u.id === inv.studentId && (u.tenantId || 'default') === invTenantId && !u.disabled)
         : null;
+      const rawPhone = linkedStudent?.phone || inv.studentPhone || '';
+      const cleanedPhone = cleanWhatsAppPhone(rawPhone);
       json(res, 200, {
         ok: true,
         code: inv.code,
         tenantId: invTenantId,
         tenantName: tenant?.name || null,
         studentName: linkedStudent?.name || inv.studentName || null,
+        studentEmail: linkedStudent?.email || inv.studentEmail || null,
+        hasPhone: Boolean(cleanedPhone),
+        maskedPhone: cleanedPhone ? maskPhoneNumber(cleanedPhone) : null,
         hasPreEnrolledStudent: Boolean(linkedStudent)
       });
+    },
+
+    'POST /api/auth/verification/send': async (req, res) => {
+      const body = await readBody(req);
+      const purpose = body?.purpose === 'login' ? 'login' : body?.purpose === 'reset' ? 'reset' : 'register';
+      const channel = ['whatsapp', 'email', 'auto'].includes(body?.channel) ? body.channel : 'auto';
+      const email = normalizeEmail(body?.email ?? body?.identifier);
+      if (!email) {
+        return json(res, 400, { error: 'Informe um endereço de e-mail válido.', code: 'email-invalid' });
+      }
+      const secretKey = resolveAuthSecret();
+
+      if (purpose === 'reset') {
+        const user = db.users.find(u => u && u.email === email) || null;
+        if (!user) {
+          return json(res, 404, { error: 'Nenhuma conta encontrada com este endereço de e-mail.', code: 'email-not-found' });
+        }
+        if (user.disabled) {
+          return json(res, 403, { error: 'Esta conta foi desativada.', code: 'disabled' });
+        }
+        const userTenant = user.tenantId || 'default';
+        const tenant = userTenant !== 'default' ? getTenant(dataDir, userTenant) : null;
+        const cleanedPhone = cleanWhatsAppPhone(body?.phone || user.phone || '');
+        const challengeId = crypto.randomBytes(16).toString('base64url');
+        const otpCode = generateOtpCode();
+        const codeHash = hashOtpCode(otpCode, secretKey, challengeId);
+
+        createAuthVerificationSqlite(dataDir, {
+          id: challengeId,
+          email,
+          phone: cleanedPhone || null,
+          userId: user.id,
+          tenantId: userTenant,
+          purpose: 'reset',
+          codeHash,
+          ttlMs: OTP_TTL_MS
+        });
+
+        const delivery = await dispatchDualChannelVerification({
+          dataDir,
+          tenant,
+          tenantId: userTenant,
+          email,
+          phone: cleanedPhone,
+          studentName: user.name || '',
+          code: otpCode,
+          purpose: 'reset',
+          preferredChannel: channel
+        });
+
+        return json(res, 200, {
+          ok: true,
+          verificationRequired: true,
+          purpose: 'reset',
+          challengeId,
+          expiresInSec: Math.round(OTP_TTL_MS / 1000),
+          channelsSent: delivery.channelsSent,
+          maskedEmail: delivery.maskedEmail,
+          maskedPhone: delivery.maskedPhone,
+          hasPhone: delivery.hasPhone,
+          emailConfigured: delivery.emailConfigured,
+          ...(process.env.NODE_ENV !== 'production' ? { devOtpCode: otpCode } : {})
+        });
+      }
+
+      if (purpose === 'register') {
+        const name = String(body?.name || '').trim().slice(0, 40);
+        const code = String(body?.code || '').trim().toUpperCase();
+        const reqTenant = resolveTenantId(req);
+        const nowMs = Date.now();
+        const inv = code
+          ? (db.invites || []).find(i => {
+              if (!i || i.code !== code || i.usedBy || i.revoked) return false;
+              if (i.expiresAt && Date.parse(i.expiresAt) <= nowMs) return false;
+              const invT = i.tenantId && i.tenantId !== 'default' ? i.tenantId : 'default';
+              if (reqTenant !== 'default' && invT !== reqTenant) return false;
+              return true;
+            })
+          : null;
+        const invTenant = inv?.tenantId && inv.tenantId !== 'default' ? inv.tenantId : null;
+        const signupTenant = invTenant || reqTenant;
+        const tenant = signupTenant !== 'default' ? getTenant(dataDir, signupTenant) : null;
+        const inviteRequired = /^(1|true|yes|on)$/i.test(process.env.INVITE_ONLY || '') || Boolean(tenant?.settings?.inviteOnly);
+
+        if ((inviteRequired || Boolean(code)) && !inv) {
+          audit(req, 'auth.register.denied', { ok: false, name: name || email, msg: 'invite-rejected' });
+          return json(res, 403, { error: 'Um código de convite válido do seu professor é obrigatório.', code: 'invite' });
+        }
+
+        const preEnrolled = inv?.studentId
+          ? (db.users.find(u => u.id === inv.studentId && (u.tenantId || 'default') === signupTenant && !u.disabled) || null)
+          : null;
+
+        if (typeof body?.password === 'string' && body.password.length > 0) {
+          const pErr = b2bPasswordError(body.password, name || email);
+          if (pErr) return json(res, 400, pErr);
+        }
+
+        const takenEmail = db.users.some(
+          u => u.id !== preEnrolled?.id && (u.email === email || (u.pw?.h && nameKey(u.name) === email))
+        );
+        if (takenEmail) {
+          return json(res, 409, { error: 'Este endereço de e-mail já está cadastrado em outra conta.', code: 'email-taken' });
+        }
+
+        if (name && !name.includes('@')) {
+          const k = nameKey(name);
+          const takenName = db.users.some(
+            u => u.id !== preEnrolled?.id && (((u.pw?.h || (u.pwReset && u.pwReset.exp > Date.now())) && (u.tenantId || 'default') === signupTenant && nameKey(u.name) === k) || u.email === k)
+          );
+          if (takenName) {
+            return json(res, 409, { error: 'Já existe outro perfil na academia com este nome.', code: 'name-taken' });
+          }
+        }
+
+        const rawPhone = String(body?.phone || preEnrolled?.phone || inv?.studentPhone || '').trim();
+        const cleanedPhone = cleanWhatsAppPhone(rawPhone);
+        const challengeId = crypto.randomBytes(16).toString('base64url');
+        const otpCode = generateOtpCode();
+        const codeHash = hashOtpCode(otpCode, secretKey, challengeId);
+
+        createAuthVerificationSqlite(dataDir, {
+          id: challengeId,
+          email,
+          phone: cleanedPhone || null,
+          userId: preEnrolled?.id || null,
+          tenantId: signupTenant,
+          purpose: 'register',
+          codeHash,
+          ttlMs: OTP_TTL_MS
+        });
+
+        const delivery = await dispatchDualChannelVerification({
+          dataDir,
+          tenant,
+          tenantId: signupTenant,
+          email,
+          phone: cleanedPhone,
+          studentName: name || preEnrolled?.name || inv?.studentName || '',
+          code: otpCode,
+          purpose: 'register',
+          preferredChannel: channel
+        });
+
+        return json(res, 200, {
+          ok: true,
+          verificationRequired: true,
+          purpose: 'register',
+          challengeId,
+          expiresInSec: Math.round(OTP_TTL_MS / 1000),
+          channelsSent: delivery.channelsSent,
+          maskedEmail: delivery.maskedEmail,
+          maskedPhone: delivery.maskedPhone,
+          hasPhone: delivery.hasPhone,
+          emailConfigured: delivery.emailConfigured,
+          ...(process.env.NODE_ENV !== 'production' ? { devOtpCode: otpCode } : {})
+        });
+      }
+
+      // purpose === 'login'
+      const user = db.users.find(u => u && u.pw?.h && u.email === email) || null;
+      let existingChallenge = null;
+      if (body?.challengeId) {
+        const row = getAuthVerificationSqlite(dataDir, body.challengeId);
+        if (row && row.purpose === 'login' && row.email === email && row.expiresAt > Date.now()) {
+          existingChallenge = row;
+        }
+      }
+
+      if (!existingChallenge) {
+        const pw = typeof body?.password === 'string' ? body.password : '';
+        if (!pw) {
+          return json(res, 400, { error: 'E-mail e senha são obrigatórios.', code: 'missing' });
+        }
+        const check = passwordAttempt ? passwordAttempt(req, res, user ? acctKey(user) : 'id:' + email) : null;
+        if (passwordAttempt && !check) return;
+        const matched = user?.pw?.h
+          ? (check ? await check.verify(pw, user.pw.h) : await verifyPassword(pw, user.pw.h))
+          : false;
+        if (!matched) {
+          if (check) check.failed(user, 'bad-password', 'unknown-email');
+          return json(res, 401, { error: 'E-mail ou senha incorretos.', code: 'bad-credentials' });
+        }
+        if (user.disabled) {
+          if (check) check.void();
+          return json(res, 403, { error: 'Esta conta foi desativada.', code: 'disabled' });
+        }
+        if (check) check.ok();
+      } else if (!user || user.disabled) {
+        return json(res, 401, { error: 'E-mail ou senha incorretos.', code: 'bad-credentials' });
+      }
+
+      const userTenant = user.tenantId || 'default';
+      const tenant = userTenant !== 'default' ? getTenant(dataDir, userTenant) : null;
+      const cleanedPhone = cleanWhatsAppPhone(body?.phone || existingChallenge?.phone || user.phone || '');
+      const challengeId = existingChallenge?.id || crypto.randomBytes(16).toString('base64url');
+      const otpCode = generateOtpCode();
+      const codeHash = hashOtpCode(otpCode, secretKey, challengeId);
+
+      createAuthVerificationSqlite(dataDir, {
+        id: challengeId,
+        email,
+        phone: cleanedPhone || null,
+        userId: user.id,
+        tenantId: userTenant,
+        purpose: 'login',
+        codeHash,
+        ttlMs: OTP_TTL_MS
+      });
+
+      const delivery = await dispatchDualChannelVerification({
+        dataDir,
+        tenant,
+        tenantId: userTenant,
+        email,
+        phone: cleanedPhone,
+        studentName: user.name || '',
+        code: otpCode,
+        purpose: 'login',
+        preferredChannel: channel
+      });
+
+      return json(res, 200, {
+        ok: true,
+        verificationRequired: true,
+        purpose: 'login',
+        challengeId,
+        expiresInSec: Math.round(OTP_TTL_MS / 1000),
+        channelsSent: delivery.channelsSent,
+        maskedEmail: delivery.maskedEmail,
+        maskedPhone: delivery.maskedPhone,
+        hasPhone: delivery.hasPhone,
+        emailConfigured: delivery.emailConfigured,
+        ...(process.env.NODE_ENV !== 'production' ? { devOtpCode: otpCode } : {})
+      });
+    },
+
+    'GET /.well-known/assetlinks.json': async (_req, res) => {
+      const envPrints = String(process.env.ANDROID_APP_SHA256_CERT_FINGERPRINTS || '')
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
+      const fingerprints = envPrints.length > 0
+        ? envPrints
+        : ['FA:C6:17:45:DC:09:03:78:6F:B9:ED:E6:2A:96:2B:39:9F:73:48:F0:BB:6F:89:9B:83:32:66:75:91:03:3B:9C'];
+      json(res, 200, [
+        {
+          relation: ['delegate_permission/common.handle_all_urls'],
+          target: {
+            namespace: 'android_app',
+            package_name: 'br.com.treinerit.app',
+            sha256_cert_fingerprints: fingerprints
+          }
+        }
+      ]);
     },
 
     'POST /api/gym/invites': async (req, res) => {
@@ -5304,18 +5599,19 @@ export function createSaasRoutes({
       const ctx = requireGymContext(req, res, { managerOnly: true });
       if (!ctx) return;
       const evoSettings = resolveTenantEvolutionSettings(dataDir, ctx.tenantId);
-      if (!ctx.superUser && !String(evoSettings.evolutionInstance || '').trim()) {
+      const hasOwnUrl = Boolean(String(evoSettings.evolutionUrl || '').trim());
+      const hasOwnInstance = Boolean(String(evoSettings.evolutionInstance || '').trim());
+      if (!ctx.superUser && (!hasOwnUrl || !hasOwnInstance)) {
         return json(res, 403, {
           ok: false,
-          error: 'Esta unidade usa o gateway central da plataforma. Configure uma instância própria para parear por QR Code.'
+          error: 'Esta unidade usa o gateway central da plataforma. Configure URL e instância próprias da Evolution API para parear por QR Code.'
         });
       }
-      const hasOwnUrl = Boolean(String(evoSettings.evolutionUrl || '').trim());
       const qrRes = await fetchEvolutionQrCode({
         url: evoSettings.evolutionUrl,
         apiKey: evoSettings.evolutionApiKey,
         instance: evoSettings.evolutionInstance,
-        allowPlatformFallback: !hasOwnUrl
+        allowPlatformFallback: ctx.superUser && !hasOwnUrl
       });
       if (!qrRes.ok) {
         return json(res, qrRes.status === 400 || qrRes.status === 503 ? qrRes.status : 502, { ok: false, error: qrRes.error });
@@ -5333,18 +5629,19 @@ export function createSaasRoutes({
       const ctx = requireGymContext(req, res, { managerOnly: true });
       if (!ctx) return;
       const evoSettings = resolveTenantEvolutionSettings(dataDir, ctx.tenantId);
-      if (!ctx.superUser && !String(evoSettings.evolutionInstance || '').trim()) {
+      const hasOwnUrl = Boolean(String(evoSettings.evolutionUrl || '').trim());
+      const hasOwnInstance = Boolean(String(evoSettings.evolutionInstance || '').trim());
+      if (!ctx.superUser && (!hasOwnUrl || !hasOwnInstance)) {
         return json(res, 403, {
           ok: false,
           error: 'Esta unidade usa o gateway central da plataforma e não pode desconectar a instância compartilhada.'
         });
       }
-      const hasOwnUrl = Boolean(String(evoSettings.evolutionUrl || '').trim());
       const discRes = await disconnectEvolutionInstance({
         url: evoSettings.evolutionUrl,
         apiKey: evoSettings.evolutionApiKey,
         instance: evoSettings.evolutionInstance,
-        allowPlatformFallback: !hasOwnUrl
+        allowPlatformFallback: ctx.superUser && !hasOwnUrl
       });
       if (!discRes.ok) {
         return json(

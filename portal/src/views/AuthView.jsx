@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Icon from '../components/Icon.jsx';
-import { Button, SelectField, TextField, StatusPill } from '../components/ui.jsx';
+import { Button, StatusPill } from '../components/ui.jsx';
 import { portalApi, toast, getStudentAppUrl } from '../lib/api.js';
 import { isNativePortalApp, openStudentNativeApp } from '../lib/native.js';
 import {
@@ -8,6 +8,34 @@ import {
   IosInstallHintCard,
   OfflineStatusBanner
 } from '../components/InstallPortalPwa.jsx';
+
+function AuthPasswordInput({ id, value, onChange, placeholder, autoComplete, required }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="b2b-auth-input-wrap">
+      <input
+        id={id}
+        className="b2b-auth-input"
+        type={show ? 'text' : 'password'}
+        placeholder={placeholder}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        autoComplete={autoComplete}
+        required={required}
+        style={{ paddingRight: 46 }}
+      />
+      <button
+        type="button"
+        className={`b2b-auth-eye${show ? ' active' : ''}`}
+        onClick={() => setShow(s => !s)}
+        aria-label={show ? 'Ocultar senha' : 'Mostrar senha'}
+        title={show ? 'Ocultar senha' : 'Mostrar senha'}
+      >
+        <Icon name={show ? 'eyeSlash' : 'eye'} size={18} />
+      </button>
+    </div>
+  );
+}
 
 export default function AuthView({
   bootstrap,
@@ -234,50 +262,29 @@ export default function AuthView({
 
   const gyms = bootstrap?.gyms || [];
   const demoAllowed = Boolean(bootstrap?.demoAllowed);
+  const filteredPlans = useMemo(
+    () => availablePlans.filter(p => (p.accountType === 'personal' ? 'personal' : 'gym') === signupType),
+    [availablePlans, signupType]
+  );
 
   return (
     <div className="b2b-auth-screen" style={{ flexDirection: 'column', gap: 16 }}>
       <OfflineStatusBanner />
       <div className={'b2b-auth-wrap' + (demoAllowed ? '' : ' single')}>
-        {/* Coluna 1: Login Oficial por Credenciais */}
-        <div className="card" style={{ margin: 0, padding: 28, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+        {/* Coluna 1: Login / Cadastro / Planos Oficial Rit */}
+        <div className="b2b-auth-card">
           <div>
-            {onBackToLanding && (
-              <div style={{ marginBottom: 16 }}>
+            <div className="b2b-auth-topbar">
+              {onBackToLanding ? (
                 <button
                   type="button"
+                  className="b2b-auth-back"
                   onClick={onBackToLanding}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    fontSize: 13,
-                    fontWeight: 600,
-                    color: 'var(--label-2)',
-                    background: 'none',
-                    border: 'none',
-                    padding: 0,
-                    cursor: 'pointer'
-                  }}
                 >
-                  {isNativePortalApp() ? '← Voltar para o App do Aluno' : '← Voltar para a página inicial'}
+                  <Icon name="arrowLeft" size={18} />
+                  <span>{isNativePortalApp() ? 'App do Aluno' : 'Voltar'}</span>
                 </button>
-              </div>
-            )}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <img
-                  src={theme === 'light' ? '/rit-logo-light.png' : '/rit-logo.png'}
-                  alt="Rit"
-                  style={{ height: 34, width: 'auto', display: 'block' }}
-                />
-                <div style={{ borderLeft: '1px solid var(--sep)', paddingLeft: 12 }}>
-                  <div style={{ fontWeight: 800, fontSize: 14.5, lineHeight: 1.2 }}>
-                    {bootstrap?.platform?.name || 'Rit Cloud'}
-                  </div>
-                  <div className="muted small" style={{ fontSize: 12 }}>Academias & Personal Trainers</div>
-                </div>
-              </div>
+              ) : <div />}
 
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <InstallPortalPwaButton variant="tinted" label="Instalar" />
@@ -286,319 +293,334 @@ export default function AuthView({
                   className="b2b-icon-btn"
                   onClick={onToggleTheme}
                   title={theme === 'dark' ? 'Mudar para tema claro' : 'Mudar para tema escuro'}
+                  aria-label={theme === 'dark' ? 'Mudar para tema claro' : 'Mudar para tema escuro'}
                 >
                   <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={17} />
                 </button>
               </div>
             </div>
 
+            <div className="b2b-auth-brand">
+              <img
+                src={theme === 'light' ? '/rit-logo-light.png' : '/rit-logo.png'}
+                alt="Rit"
+              />
+            </div>
+
             <IosInstallHintCard />
 
             {isInitialSetup ? (
               <>
-                <div style={{
-                  padding: '8px 12px',
-                  borderRadius: 8,
-                  background: 'rgba(59, 130, 246, 0.1)',
-                  border: '1px solid rgba(59, 130, 246, 0.3)',
-                  color: 'var(--blue)',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  marginBottom: 16
-                }}>
-                  🚀 Configuração Inicial de Produção
-                </div>
-                <h1 style={{ margin: '0 0 6px', fontSize: 24, letterSpacing: '-0.02em' }}>Criar Super Administrador</h1>
-                <p className="muted small" style={{ margin: '0 0 22px', lineHeight: 1.45 }}>
-                  Configure o acesso mestre da plataforma Rit. Esta conta terá controle total sobre o faturamento, planos e academias.
+                <h1 className="b2b-auth-title">Criar Super Administrador</h1>
+                <p className="b2b-auth-subtitle">
+                  Configure o acesso mestre da plataforma Rit para controlar planos, faturamento e unidades.
                 </p>
 
                 {setupDisabled ? (
                   <div style={{
                     padding: '14px 16px',
-                    borderRadius: 'var(--r)',
+                    borderRadius: 14,
                     background: 'rgba(239, 68, 68, 0.1)',
-                    border: '1px solid rgba(239, 68, 68, 0.35)',
+                    border: '1px solid rgba(239, 68, 68, 0.3)',
                     fontSize: 14,
                     lineHeight: 1.5,
-                    color: 'var(--label)'
+                    color: 'var(--auth-ink)'
                   }}>
                     <strong>Setup bloqueado em produção.</strong> Defina a variável <code>SETUP_ADMIN_TOKEN</code> (mínimo de 12 caracteres) no servidor e reinicie a API para liberar a criação do Super Administrador.
                   </div>
                 ) : (
-                  <form onSubmit={handleSetupAdmin} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <form className="b2b-auth-form" onSubmit={handleSetupAdmin}>
                     {setupTokenRequired && (
-                      <TextField
-                        label="Token de Instalação (SETUP_ADMIN_TOKEN)"
-                        type="password"
-                        placeholder="Cole o token configurado no servidor"
-                        value={setupToken}
-                        onChange={setSetupToken}
-                        autoComplete="off"
+                      <div className="b2b-auth-field">
+                        <label className="b2b-auth-label" htmlFor="setup-token">Token de Instalação (SETUP_ADMIN_TOKEN)</label>
+                        <AuthPasswordInput
+                          id="setup-token"
+                          placeholder="Cole o token configurado no servidor"
+                          value={setupToken}
+                          onChange={setSetupToken}
+                          autoComplete="off"
+                          required
+                        />
+                      </div>
+                    )}
+                    <div className="b2b-auth-field">
+                      <label className="b2b-auth-label" htmlFor="setup-name">Nome do Administrador</label>
+                      <input
+                        id="setup-name"
+                        className="b2b-auth-input"
+                        placeholder="ex: Diretoria Rit ou seu nome"
+                        value={adminName}
+                        onChange={e => setAdminName(e.target.value)}
+                      />
+                    </div>
+                    <div className="b2b-auth-field">
+                      <label className="b2b-auth-label" htmlFor="setup-email">E-mail Principal</label>
+                      <input
+                        id="setup-email"
+                        className="b2b-auth-input"
+                        type="email"
+                        placeholder="ex: admin@seudominio.com.br"
+                        value={identifier}
+                        onChange={e => setIdentifier(e.target.value)}
+                        autoComplete="username"
                         required
                       />
-                    )}
-                    <TextField
-                      label="Nome do Administrador"
-                      placeholder="ex: Diretoria Rit ou seu nome"
-                      value={adminName}
-                      onChange={setAdminName}
-                    />
-                    <TextField
-                      label="E-mail Principal"
-                      type="email"
-                      placeholder="ex: admin@seudominio.com.br"
-                      value={identifier}
-                      onChange={setIdentifier}
-                      autoComplete="username"
-                      required
-                    />
-                    <TextField
-                      label="Senha Segura (mínimo 10 caracteres)"
-                      type="password"
-                      placeholder="Defina uma senha forte (mín. 10 caracteres)"
-                      value={password}
-                      onChange={setPassword}
-                      autoComplete="new-password"
-                      required
-                    />
-                    <div style={{ marginTop: 6 }}>
-                      <Button
+                    </div>
+                    <div className="b2b-auth-field">
+                      <label className="b2b-auth-label" htmlFor="setup-pw">Senha Segura (mínimo 10 caracteres)</label>
+                      <AuthPasswordInput
+                        id="setup-pw"
+                        placeholder="Defina uma senha forte (mín. 10 caracteres)"
+                        value={password}
+                        onChange={setPassword}
+                        autoComplete="new-password"
+                        required
+                      />
+                    </div>
+                    <div style={{ marginTop: 4 }}>
+                      <button
                         type="submit"
-                        variant="primary"
-                        icon="shield"
-                        block
+                        className="b2b-auth-pill"
                         disabled={loading || !identifier || password.length < 10 || (setupTokenRequired && !setupToken.trim())}
                       >
-                        {loading ? 'Configurando...' : 'Finalizar e Acessar Plataforma'}
-                      </Button>
+                        {loading ? 'Configurando…' : 'Finalizar e Acessar Plataforma'}
+                      </button>
                     </div>
                   </form>
                 )}
               </>
             ) : b2bMode === 'signup' ? (
               <>
-                <h1 style={{ margin: '0 0 6px', fontSize: 24, letterSpacing: '-0.02em' }}>
-                  Criar Conta Grátis (14 dias)
-                </h1>
-                <p className="muted" style={{ margin: '0 0 18px', fontSize: 14, lineHeight: 1.45 }}>
-                  Configure o painel da sua {signupType === 'personal' ? 'consultoria' : 'academia'} agora mesmo — sem cartão de crédito.
+                <h1 className="b2b-auth-title">Crie sua Conta</h1>
+                <p className="b2b-auth-subtitle">
+                  Comece com 14 dias grátis para gerenciar sua {signupType === 'personal' ? 'consultoria' : 'academia'} — sem cartão de crédito.
                 </p>
 
-                        <form onSubmit={handleSignup} style={{ display: 'flex', flexDirection: 'column', gap: 13 }}>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                            <span className="b2b-field-lbl" style={{ fontSize: 14 }}>Tipo de Operação</span>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                              <button
-                                type="button"
-                                onClick={() => handleSelectSignupType('gym')}
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  gap: 7,
-                                  minHeight: 42,
-                                  padding: '8px 10px',
-                                  borderRadius: 10,
-                                  cursor: 'pointer',
-                                  fontSize: 14,
-                                  fontWeight: 700,
-                                  border: signupType === 'gym' ? '1.5px solid var(--acc)' : '1px solid var(--b2b-input-border)',
-                                  background: signupType === 'gym' ? 'color-mix(in srgb, var(--acc) 14%, transparent)' : 'var(--b2b-input-bg)',
-                                  color: signupType === 'gym' ? 'var(--label)' : 'var(--label-2)'
-                                }}
-                              >
-                                <Icon name="building" size={16} />
-                                <span>Academia / Studio</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleSelectSignupType('personal')}
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  gap: 7,
-                                  minHeight: 42,
-                                  padding: '8px 10px',
-                                  borderRadius: 10,
-                                  cursor: 'pointer',
-                                  fontSize: 14,
-                                  fontWeight: 700,
-                                  border: signupType === 'personal' ? '1.5px solid var(--acc)' : '1px solid var(--b2b-input-border)',
-                                  background: signupType === 'personal' ? 'color-mix(in srgb, var(--acc) 14%, transparent)' : 'var(--b2b-input-bg)',
-                                  color: signupType === 'personal' ? 'var(--label)' : 'var(--label-2)'
-                                }}
-                              >
-                                <Icon name="dumbbell" size={16} />
-                                <span>Personal Trainer</span>
-                              </button>
-                            </div>
-                          </div>
+                <form className="b2b-auth-form" onSubmit={handleSignup}>
+                  <div className="b2b-auth-field">
+                    <span className="b2b-auth-label">Tipo de Operação</span>
+                    <div className="b2b-auth-seg" role="tablist" aria-label="Tipo de Operação">
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={signupType === 'personal'}
+                        className={`b2b-auth-seg-btn${signupType === 'personal' ? ' active' : ''}`}
+                        onClick={() => handleSelectSignupType('personal')}
+                      >
+                        <Icon name="dumbbell" size={16} />
+                        <span>Personal Trainer</span>
+                      </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={signupType === 'gym'}
+                        className={`b2b-auth-seg-btn${signupType === 'gym' ? ' active' : ''}`}
+                        onClick={() => handleSelectSignupType('gym')}
+                      >
+                        <Icon name="building" size={16} />
+                        <span>Academia / Studio</span>
+                      </button>
+                    </div>
+                  </div>
 
-                          <SelectField
-                            label="Plano para o teste gratuito (14 dias)"
-                            value={signupPlanId}
-                            onChange={setSignupPlanId}
-                            options={availablePlans
-                              .filter(p => (p.accountType === 'personal' ? 'personal' : 'gym') === signupType)
-                              .map(p => ({
-                                value: p.id,
-                                label: `${p.name} · R$ ${p.priceMonthly}/mês (${p.maxStudents >= 100000 ? 'Alunos ilimitados' : `até ${p.maxStudents} alunos`})`
-                              }))}
-                          />
-
-                          <TextField
-                            label={signupType === 'personal' ? 'Nome da Consultoria ou Marca' : 'Nome da Academia ou Studio'}
-                            placeholder={signupType === 'personal' ? 'ex: Team Ana Silva' : 'ex: Iron Power Academia'}
-                            value={signupGymName}
-                            onChange={setSignupGymName}
-                            required
-                          />
-                          <TextField
-                            label="Seu Nome Completo"
-                            placeholder="ex: João Carlos Souza"
-                            value={signupOwnerName}
-                            onChange={setSignupOwnerName}
-                            autoComplete="name"
-                            required
-                          />
-                          <TextField
-                            label="E-mail de Acesso"
-                            type="email"
-                            placeholder="ex: contato@suaacademia.com.br"
-                            value={signupEmail}
-                            onChange={setSignupEmail}
-                            autoComplete="email"
-                            required
-                          />
-                          <TextField
-                            label="WhatsApp / Telefone (opcional)"
-                            type="tel"
-                            placeholder="ex: (11) 99999-9999"
-                            value={signupPhone}
-                            onChange={setSignupPhone}
-                            autoComplete="tel"
-                          />
-                          <TextField
-                            label="Crie uma Senha (mínimo 10 caracteres)"
-                            type="password"
-                            placeholder="Defina uma senha forte"
-                            value={signupPassword}
-                            onChange={setSignupPassword}
-                            autoComplete="new-password"
-                            required
-                          />
-
-                          <div style={{ marginTop: 4 }}>
-                            <Button
-                              type="submit"
-                              variant="primary"
-                              icon="userPlus"
-                              block
-                              disabled={loading}
-                            >
-                              {loading ? 'Criando sua conta...' : 'Começar 14 dias grátis'}
-                            </Button>
-                          </div>
-                        </form>
-
-                        <div className="muted" style={{ marginTop: 16, textAlign: 'center', fontSize: 14 }}>
-                          Já possui conta na Rit?{' '}
+                  <div className="b2b-auth-field">
+                    <span className="b2b-auth-label">Escolha seu plano</span>
+                    <div className="b2b-plan-grid" role="radiogroup" aria-label="Planos disponíveis">
+                      {filteredPlans.map(p => {
+                        const selected = signupPlanId === p.id;
+                        const unlimited = Number(p.maxStudents) >= 100000;
+                        const recommended = p.id === 'personal-pro' || p.id === 'pro';
+                        return (
                           <button
+                            key={p.id}
                             type="button"
-                            onClick={() => switchB2bMode('login')}
-                            style={{
-                              background: 'none',
-                              border: 'none',
-                              padding: 0,
-                              cursor: 'pointer',
-                              color: 'var(--acc-ink)',
-                              fontWeight: 700,
-                              fontSize: 14
-                            }}
+                            role="radio"
+                            aria-checked={selected}
+                            className={`b2b-plan-card${selected ? ' selected' : ''}`}
+                            onClick={() => setSignupPlanId(p.id)}
                           >
-                            Fazer login →
+                            <div className="b2b-plan-head">
+                              <span className="b2b-plan-name">{p.name}</span>
+                              <span className="b2b-plan-radio" aria-hidden="true">
+                                {selected && <Icon name="check" size={13} />}
+                              </span>
+                            </div>
+                            <div className="b2b-plan-price">
+                              <strong>R$ {p.priceMonthly}</strong>
+                              <span>/mês</span>
+                            </div>
+                            <div className="b2b-plan-meta">
+                              {unlimited ? 'Alunos ilimitados' : `Até ${p.maxStudents} alunos`}
+                            </div>
+                            {recommended && <div className="b2b-plan-tag">Recomendado</div>}
                           </button>
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <h1 style={{ margin: '0 0 6px', fontSize: 24, letterSpacing: '-0.02em' }}>Entrar no Painel</h1>
-                        <p className="muted" style={{ margin: '0 0 22px', fontSize: 14, lineHeight: 1.45 }}>
-                          Acesse o painel de gestão com seu <b>e-mail</b> e <b>senha</b> cadastrados.
-                        </p>
+                        );
+                      })}
+                    </div>
+                    <div className="b2b-auth-helper">14 dias grátis para testar · Cancele quando quiser.</div>
+                  </div>
 
-                        <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                          <TextField
-                            label="E-mail ou Usuário"
-                            placeholder="ex: contato@suaacademia.com.br"
-                            value={identifier}
-                            onChange={setIdentifier}
-                            autoComplete="username"
-                          />
-                          <TextField
-                            label="Senha"
-                            type="password"
-                            placeholder="Digite sua senha"
-                            value={password}
-                            onChange={setPassword}
-                            autoComplete="current-password"
-                          />
-                          <div style={{ marginTop: 6 }}>
-                            <Button
-                              type="submit"
-                              variant="primary"
-                              icon="key"
-                              block
-                              disabled={loading}
-                            >
-                              {loading ? 'Autenticando...' : 'Acessar Painel'}
-                            </Button>
-                          </div>
-                        </form>
+                  <div className="b2b-auth-field">
+                    <label className="b2b-auth-label" htmlFor="signup-gym-name">
+                      {signupType === 'personal' ? 'Nome da Consultoria ou Marca' : 'Nome da Academia ou Studio'}
+                    </label>
+                    <input
+                      id="signup-gym-name"
+                      className="b2b-auth-input"
+                      placeholder={signupType === 'personal' ? 'ex: Team Ana Silva' : 'ex: Iron Power Academia'}
+                      value={signupGymName}
+                      onChange={e => setSignupGymName(e.target.value)}
+                      required
+                    />
+                  </div>
 
-                        <div style={{ marginTop: 16, textAlign: 'center', fontSize: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                          <div className="muted">
-                            Ainda não possui conta?{' '}
-                            <button
-                              type="button"
-                              onClick={() => switchB2bMode('signup')}
-                              style={{
-                                background: 'none',
-                                border: 'none',
-                                padding: 0,
-                                cursor: 'pointer',
-                                color: 'var(--acc-ink)',
-                                fontWeight: 700,
-                                fontSize: 14
-                              }}
-                            >
-                              Criar conta grátis (14 dias) →
-                            </button>
-                          </div>
-                          <div>
-                            <a
-                              href="https://wa.me/5591985561302?text=Ol%C3%A1%2C%20quero%20tirar%20d%C3%BAvidas%20sobre%20a%20plataforma%20Rit!"
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              style={{ color: 'var(--label-2)', fontSize: 14, fontWeight: 600, textDecoration: 'underline' }}
-                            >
-                              Falar com especialista no WhatsApp
-                            </a>
-                          </div>
-                        </div>
-                      </>
-                    )}
+                  <div className="b2b-auth-field">
+                    <label className="b2b-auth-label" htmlFor="signup-owner">Seu Nome Completo</label>
+                    <input
+                      id="signup-owner"
+                      className="b2b-auth-input"
+                      placeholder="ex: João Carlos Souza"
+                      value={signupOwnerName}
+                      onChange={e => setSignupOwnerName(e.target.value)}
+                      autoComplete="name"
+                      required
+                    />
+                  </div>
+
+                  <div className="b2b-auth-field">
+                    <label className="b2b-auth-label" htmlFor="signup-email">Endereço de e-mail</label>
+                    <input
+                      id="signup-email"
+                      className="b2b-auth-input"
+                      type="email"
+                      placeholder="contato@suaacademia.com.br"
+                      value={signupEmail}
+                      onChange={e => setSignupEmail(e.target.value)}
+                      autoComplete="email"
+                      required
+                    />
+                  </div>
+
+                  <div className="b2b-auth-field">
+                    <label className="b2b-auth-label" htmlFor="signup-phone">WhatsApp / Telefone (opcional)</label>
+                    <input
+                      id="signup-phone"
+                      className="b2b-auth-input"
+                      type="tel"
+                      placeholder="(11) 99999-9999"
+                      value={signupPhone}
+                      onChange={e => setSignupPhone(e.target.value)}
+                      autoComplete="tel"
+                    />
+                  </div>
+
+                  <div className="b2b-auth-field">
+                    <label className="b2b-auth-label" htmlFor="signup-password">Crie uma senha (mínimo 10 caracteres)</label>
+                    <AuthPasswordInput
+                      id="signup-password"
+                      placeholder="Defina uma senha forte"
+                      value={signupPassword}
+                      onChange={setSignupPassword}
+                      autoComplete="new-password"
+                      required
+                    />
+                  </div>
+
+                  <div style={{ marginTop: 4 }}>
+                    <button
+                      type="submit"
+                      className="b2b-auth-pill"
+                      disabled={loading}
+                    >
+                      {loading ? 'Criando sua conta…' : 'Começar 14 dias grátis'}
+                    </button>
+                  </div>
+                </form>
+
+                <div style={{ marginTop: 18, textAlign: 'center', fontSize: 14, color: 'var(--auth-muted)' }}>
+                  Já possui conta na Rit?{' '}
+                  <button
+                    type="button"
+                    className="b2b-auth-link"
+                    onClick={() => switchB2bMode('login')}
+                  >
+                    Fazer login
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h1 className="b2b-auth-title">Entrar no Painel</h1>
+                <p className="b2b-auth-subtitle">
+                  Acesse a gestão de alunos, fichas e planos com seu e-mail e senha cadastrados.
+                </p>
+
+                <form className="b2b-auth-form" onSubmit={handleLogin}>
+                  <div className="b2b-auth-field">
+                    <label className="b2b-auth-label" htmlFor="login-id">E-mail ou Usuário</label>
+                    <input
+                      id="login-id"
+                      className="b2b-auth-input"
+                      placeholder="contato@suaacademia.com.br"
+                      value={identifier}
+                      onChange={e => setIdentifier(e.target.value)}
+                      autoComplete="username"
+                    />
+                  </div>
+                  <div className="b2b-auth-field">
+                    <label className="b2b-auth-label" htmlFor="login-pw">Senha</label>
+                    <AuthPasswordInput
+                      id="login-pw"
+                      placeholder="Digite sua senha"
+                      value={password}
+                      onChange={setPassword}
+                      autoComplete="current-password"
+                    />
+                  </div>
+                  <div style={{ marginTop: 4 }}>
+                    <button
+                      type="submit"
+                      className="b2b-auth-pill"
+                      disabled={loading}
+                    >
+                      {loading ? 'Autenticando…' : 'Acessar Painel'}
+                    </button>
+                  </div>
+                </form>
+
+                <div style={{ marginTop: 20, textAlign: 'center', fontSize: 14, display: 'flex', flexDirection: 'column', gap: 10, color: 'var(--auth-muted)' }}>
+                  <div>
+                    Ainda não possui conta?{' '}
+                    <button
+                      type="button"
+                      className="b2b-auth-link"
+                      onClick={() => switchB2bMode('signup')}
+                    >
+                      Criar conta grátis (14 dias)
+                    </button>
+                  </div>
+                  <div>
+                    <a
+                      href="https://wa.me/5591985561302?text=Ol%C3%A1%2C%20quero%20tirar%20d%C3%BAvidas%20sobre%20a%20plataforma%20Rit!"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ color: 'var(--auth-muted)', fontSize: 14, fontWeight: 500, textDecoration: 'underline', textUnderlineOffset: 3 }}
+                    >
+                      Falar com especialista no WhatsApp
+                    </a>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
 
-          <div className="muted" style={{ marginTop: 24, paddingTop: 14, borderTop: 'var(--hair) solid var(--sep)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 14 }}>
-            <span>Rit · Desenvolvido por <b style={{ color: 'var(--label)' }}>Nicolas Oliveira</b></span>
+          <div className="b2b-auth-footer">
+            <span>Rit · Personal Trainers & Academias</span>
             {isNativePortalApp() ? (
               <button
                 type="button"
                 onClick={() => openStudentNativeApp(gyms[0]?.id || '')}
-                style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--acc-ink)', fontWeight: 700, fontSize: 14, display: 'inline-flex', alignItems: 'center', gap: 5 }}
+                style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--acc-ink)', fontWeight: 600, fontSize: 14, display: 'inline-flex', alignItems: 'center', gap: 5 }}
               >
                 Sou aluno <Icon name="chevronRight" size={14} />
               </button>
@@ -607,7 +629,7 @@ export default function AuthView({
                 href={getStudentAppUrl(gyms[0]?.id || '')}
                 target="_blank"
                 rel="noreferrer"
-                style={{ color: 'var(--acc-ink)', textDecoration: 'none', fontWeight: 700, fontSize: 14, display: 'inline-flex', alignItems: 'center', gap: 5 }}
+                style={{ color: 'var(--acc-ink)', textDecoration: 'none', fontWeight: 600, fontSize: 14, display: 'inline-flex', alignItems: 'center', gap: 5 }}
               >
                 Sou aluno <Icon name="externalLink" size={14} />
               </a>
@@ -617,7 +639,7 @@ export default function AuthView({
 
         {/* Coluna 2: Seletor de Unidades Demo (apenas quando SAAS_DEMO=1; nunca exibe Super Admin) */}
         {demoAllowed && (
-          <div className="card" style={{ margin: 0, padding: 28, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div className="b2b-auth-card" style={{ gap: 16 }}>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                 <StatusPill tone="ok" icon="bolt">Ambiente de Demonstração</StatusPill>

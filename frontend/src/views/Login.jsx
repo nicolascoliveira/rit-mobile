@@ -13,6 +13,8 @@ import { passwordOn, PasswordRegisterForm, openPasswordSignIn } from '../compone
 import { openDeviceLinkRedeem } from '../components/Passkeys.jsx'
 import { openLostAccess } from '../components/LostAccess.jsx'
 import { useBranding } from '../lib/branding.js'
+import { MOBILE } from '../lib/mobile.js'
+import { buildAndroidAppIntentUrl } from '../lib/rit-native.js'
 import InstallPwaBanner from '../components/InstallPwaBanner.jsx'
 
 function readInviteCodeFromUrl() {
@@ -45,6 +47,7 @@ function RegisterSheet({ close, initialCode = '' }) {
   const config = useStore(s => s.config)
   const cleanInitialCode = String(initialCode || '').trim().toUpperCase()
   const [name, setName] = useState('')
+  const [inviteEmail, setInviteEmail] = useState('')
   const [code, setCode] = useState(cleanInitialCode)
   const inviteOnly = !!config?.invite_only
   const showCodeField = inviteOnly || Boolean(cleanInitialCode) || Boolean(String(code || '').trim())
@@ -70,6 +73,7 @@ function RegisterSheet({ close, initialCode = '' }) {
       .then(data => {
         if (!active) return
         if (data?.studentName) setName(prev => prev || data.studentName)
+        if (data?.studentEmail) setInviteEmail(prev => prev || data.studentEmail)
       })
       .catch(() => { /* ignore preview errors; server validates on submit */ })
     return () => { active = false }
@@ -98,8 +102,19 @@ function RegisterSheet({ close, initialCode = '' }) {
   if (pwOn && how === 'password') return <>
     <h3>{t('Create your profile')}</h3>
     {choose}
-    <div className="muted small" style={{ marginBottom: 14 }}>{t('Pick a name and a password. You sign in with both.')}</div>
-    <PasswordRegisterForm close={close} inviteOnly={inviteOnly} name={name} setName={setName} code={code} setCode={setCode} forceShowCode={Boolean(cleanInitialCode)} onRegistered={clearInviteFromUrl} />
+    <div className="muted small" style={{ marginBottom: 14 }}>Crie sua conta com seu nome, e-mail e código de convite do professor.</div>
+    <PasswordRegisterForm
+      close={close}
+      inviteOnly={inviteOnly}
+      name={name}
+      setName={setName}
+      code={code}
+      setCode={setCode}
+      initialEmail={inviteEmail}
+      forceShowCode={Boolean(cleanInitialCode)}
+      requireEmailOtp={true}
+      onRegistered={clearInviteFromUrl}
+    />
   </>
   return <>
     <h3>{t('Create your profile')}</h3>
@@ -161,7 +176,7 @@ export default function Login() {
       </div>
     ) : !branding.isCustomTenant ? (
       <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 4 }}>
-        <img src={isLightTheme ? './rit-logo-light.png' : './rit-logo.png'} alt="Rit" style={{ height: 52, width: 'auto', objectFit: 'contain' }} />
+        <img src={DEMO && isLightTheme ? './rit-logo-light.png' : './rit-logo.png'} alt="Rit" style={{ height: 42, width: 'auto', objectFit: 'contain' }} />
       </div>
     ) : (
       <div style={{ fontSize: 54, display: 'flex', justifyContent: 'center', color: 'var(--acc-ink)' }}><Icon name="dumbbell" /></div>
@@ -182,80 +197,118 @@ export default function Login() {
     </div>
   )
 
+  const isAndroidBrowser = !MOBILE && typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent || '')
+  const hasUrlInviteOrTenant = typeof window !== 'undefined' && (
+    Boolean(readInviteCodeFromUrl()) ||
+    /\/cadastro/i.test(window.location.pathname || '') ||
+    /[?&]tenant=/i.test(window.location.search || '')
+  )
+
   return (
-    <div className="narrow" style={wrap}>
-      {head}
-      <div className="muted" style={{ marginBottom: lastUser ? 20 : 34 }}>{subText}</div>
-      {lastUser && (
-        <div style={{ marginBottom: 18 }}>
-          <span style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            background: 'color-mix(in srgb, var(--acc) 12%, transparent)',
-            border: '1px solid color-mix(in srgb, var(--acc) 28%, transparent)',
-            color: 'var(--acc-ink, var(--acc))',
-            padding: '5px 14px',
-            borderRadius: 20,
-            fontSize: '.92rem',
-            fontWeight: 600
-          }}>
-            👋 {t('Olá, {0}!', lastUser.split(' ')[0])}
-          </span>
+    <div className="narrow" style={{ paddingTop: 12, paddingBottom: 18 }}>
+      <div className="rit-auth-shell" style={wrap}>
+        <div>
+          <div style={{ paddingTop: 12, marginBottom: 22 }}>
+            {head}
+          </div>
+          <div className="muted" style={{ marginBottom: lastUser ? 16 : 24, fontSize: 15 }}>{subText}</div>
+          {isAndroidBrowser && hasUrlInviteOrTenant && (
+            <div
+              className="card"
+              style={{
+                marginBottom: 18,
+                padding: 14,
+                border: '1px solid color-mix(in srgb, var(--acc) 35%, transparent)',
+                background: 'color-mix(in srgb, var(--acc) 10%, var(--card))',
+                textAlign: 'center'
+              }}
+            >
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
+                Já tem o aplicativo Rit instalado no celular?
+              </div>
+              <a
+                href={buildAndroidAppIntentUrl()}
+                className="rit-auth-pill"
+                style={{ textDecoration: 'none' }}
+              >
+                📲 Abrir direto no Aplicativo Rit
+              </a>
+            </div>
+          )}
+          {lastUser && (
+            <div style={{ marginBottom: 18 }}>
+              <span style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                background: 'color-mix(in srgb, var(--acc) 12%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--acc) 28%, transparent)',
+                color: 'var(--acc-ink, var(--acc))',
+                padding: '5px 14px',
+                borderRadius: 20,
+                fontSize: '.92rem',
+                fontWeight: 600
+              }}>
+                👋 {t('Olá, {0}!', lastUser.split(' ')[0].split('@')[0])}
+              </span>
+            </div>
+          )}
         </div>
-      )}
-      {webauthnOK() ? <>
-        {pwOn ? (
-          <>
-            <Button variant="primary" icon="key" onClick={() => openPasswordSignIn()}>{t('Sign in with password')}</Button>
+        <div>
+          {webauthnOK() ? <>
+            {pwOn ? (
+              <>
+                <Button variant="primary" icon="key" onClick={() => openPasswordSignIn(undefined, { requireEmailOtp: true })}>{t('Sign in with password')}</Button>
+                <div style={{ height: 10 }} />
+                <Button icon="fingerprint" onClick={signIn} disabled={signingIn}>{t('Sign in with passkey')}</Button>
+                <div style={{ height: 10 }} />
+              </>
+            ) : (
+              <>
+                <Button variant="primary" icon="fingerprint" onClick={signIn} disabled={signingIn}>{t('Sign in with passkey')}</Button>
+                <div style={{ height: 10 }} />
+              </>
+            )}
+            <Button icon="plusCircle" onClick={register}>{t('Create new profile')}</Button>
+            {/* Already signed in on another device: a code from there gives this one a passkey of
+                its own (#95), instead of a new, empty profile. */}
             <div style={{ height: 10 }} />
-            <Button icon="fingerprint" onClick={signIn} disabled={signingIn}>{t('Sign in with passkey')}</Button>
+            <Button variant="ghost" className="dim" icon="qr" onClick={openDeviceLinkRedeem}>{t('Use a code from your other device')}</Button>
+            {/* No device signs you in any more (#584): what to try, and where a recovery code goes. */}
+            <Button variant="ghost" className="dim" onClick={openLostAccess}>{t('Lost access?')}</Button>
+            {canGuest && <div style={{ height: 4 }} />}
+          </> : pwOn ? <>
+            {/* Plain http on a LAN address, or a browser without passkey support: the password is
+                the way in, and the only way to create a profile from here. */}
+            <div className="card small muted" style={{ textAlign: 'start', marginBottom: 14 }}>{t("This browser doesn't support passkeys. Sign in with your name and password instead.")}</div>
+            <Button variant="primary" icon="key" onClick={() => openPasswordSignIn(undefined, { requireEmailOtp: true })}>{t('Sign in with password')}</Button>
             <div style={{ height: 10 }} />
-          </>
-        ) : (
-          <>
-            <Button variant="primary" icon="fingerprint" onClick={signIn} disabled={signingIn}>{t('Sign in with passkey')}</Button>
-            <div style={{ height: 10 }} />
-          </>
-        )}
-        <Button icon="plusCircle" onClick={register}>{t('Create new profile')}</Button>
-        {/* Already signed in on another device: a code from there gives this one a passkey of
-            its own (#95), instead of a new, empty profile. */}
-        <div style={{ height: 10 }} />
-        <Button variant="ghost" className="dim" icon="qr" onClick={openDeviceLinkRedeem}>{t('Use a code from your other device')}</Button>
-        {/* No device signs you in any more (#584): what to try, and where a recovery code goes. */}
-        <Button variant="ghost" className="dim" onClick={openLostAccess}>{t('Lost access?')}</Button>
-        {canGuest && <div style={{ height: 4 }} />}
-      </> : pwOn ? <>
-        {/* Plain http on a LAN address, or a browser without passkey support: the password is
-            the way in, and the only way to create a profile from here. */}
-        <div className="card small muted" style={{ textAlign: 'start', marginBottom: 14 }}>{t("This browser doesn't support passkeys. Sign in with your name and password instead.")}</div>
-        <Button variant="primary" icon="key" onClick={() => openPasswordSignIn()}>{t('Sign in with password')}</Button>
-        <div style={{ height: 10 }} />
-        <Button icon="plusCircle" onClick={register}>{t('Create new profile')}</Button>
-        <Button variant="ghost" className="dim" onClick={openLostAccess}>{t('Lost access?')}</Button>
-        {canGuest && <div style={{ height: 10 }} />}
-      </> : <div className="card small muted" style={{ textAlign: 'start' }}>{canGuest
-        ? t("This browser doesn't do passkeys, but you can still use openGym locally on this device.").replace(/\bopenGym\b/g, 'Rit')
-        // Without passkeys and without the guest entrance there is no way in from this browser,
-        // so say that plainly instead of offering a local profile that cannot be created.
-        : t("This browser doesn't support passkeys, and this instance requires an account. Try a browser or device with passkey support.")}</div>}
-      {canGuest && <Button variant="ghost" className="dim" onClick={() => setGuest(true)}>{t('Continue without account')}</Button>}
-      <InstallPwaBanner />
-      {branding.isCustomTenant && branding.contactPhone && (
-        <div style={{ marginTop: 14 }}>
-          <a
-            href={`https://wa.me/${(() => { const d = String(branding.contactPhone).replace(/\D/g, '').replace(/^00/, ''); return (d.length === 10 || d.length === 11) ? '55' + d : d })()}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn ghost sm dim"
-            style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 6 }}
-          >
-            <span>Dúvidas no acesso? Falar no WhatsApp</span>
-          </a>
+            <Button icon="plusCircle" onClick={register}>{t('Create new profile')}</Button>
+            <Button variant="ghost" className="dim" onClick={openLostAccess}>{t('Lost access?')}</Button>
+            {canGuest && <div style={{ height: 10 }} />}
+          </> : <div className="card small muted" style={{ textAlign: 'start' }}>{canGuest
+            ? t("This browser doesn't do passkeys, but you can still use openGym locally on this device.").replace(/\bopenGym\b/g, 'Rit')
+            // Without passkeys and without the guest entrance there is no way in from this browser,
+            // so say that plainly instead of offering a local profile that cannot be created.
+            : t("This browser doesn't support passkeys, and this instance requires an account. Try a browser or device with passkey support.")}</div>}
+          {canGuest && <Button variant="ghost" className="dim" onClick={() => setGuest(true)}>{t('Continue without account')}</Button>}
+          <InstallPwaBanner />
+          {branding.isCustomTenant && branding.contactPhone && (
+            <div style={{ marginTop: 14 }}>
+              <a
+                href={`https://wa.me/${(() => { const d = String(branding.contactPhone).replace(/\D/g, '').replace(/^00/, ''); return (d.length === 10 || d.length === 11) ? '55' + d : d })()}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn ghost sm dim"
+                style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              >
+                <span>Dúvidas no acesso? Falar no WhatsApp</span>
+              </a>
+            </div>
+          )}
+          <div className="dim small" style={{ marginTop: 18, lineHeight: 1.5 }}>{pwOn ? t('Passkeys use {0}. A password works too, where passkeys do not.', bio()) : t('Passkeys use {0}. No passwords to remember.', bio())}<br />{t('Each profile keeps its own plan, workouts & body weight.')}</div>
         </div>
-      )}
-      <div className="dim small" style={{ marginTop: 22, lineHeight: 1.5 }}>{pwOn ? t('Passkeys use {0}. A password works too, where passkeys do not.', bio()) : t('Passkeys use {0}. No passwords to remember.', bio())}<br />{t('Each profile keeps its own plan, workouts & body weight.')}</div>
+      </div>
     </div>
   )
 }

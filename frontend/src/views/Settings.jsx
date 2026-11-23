@@ -421,10 +421,10 @@ export default function Settings({ page = null, find = null, via = null, entryKe
   const running = () => S.active ? ' ' + t('You have a workout running. It waits on this device until you’re back on this account.') : ''
   const leave = (kind, after) => leaveServer(kind, { exportBackup: doExport, exportBackupZip: doExportZip, done: r => { nav('/login'); if (r.stashed) toast(kept); else if (after) toast(after) } })
   const disconnect = () => confirmSheet({
-    title: t('Disconnect from your server?'),
-    message: t('This phone switches back to local-only and its copy of your account is removed. First it checks that your server has every change. If not, you choose what happens to them.') + running(),
-    confirmText: t('Disconnect'), danger: true,
-    onConfirm: () => leave('disconnect', t('Disconnected. Back to local-only')),
+    title: 'Sair da conta?',
+    message: 'Seus treinos ficam salvos na nuvem da Rit. Você pode entrar novamente quando quiser.' + running(),
+    confirmText: 'Sair da conta', danger: true,
+    onConfirm: () => leave('disconnect', 'Você saiu da sua conta.'),
   })
   const signOutHere = () => confirmSheet({
     title: t('Sign out?'),
@@ -846,7 +846,7 @@ export default function Settings({ page = null, find = null, via = null, entryKe
       <Section>
         {/* The target range of weekly sets for each main muscle (lib/muscle-targets.js). */}
         <Row icon="slider" iconTint="var(--teal)" title={t('Weekly sets per muscle')} subtitle={t('The range each muscle aims for')} accessory="chevron" onClick={muscleTargetsSheet} />
-        <Row icon="clipboard" iconTint="var(--green)" title={t('Load starter plan')} accessory="chevron" onClick={starterPlanSheet} />
+        {!user && <Row icon="clipboard" iconTint="var(--green)" title={t('Load starter plan')} accessory="chevron" onClick={starterPlanSheet} />}
       </Section>
     </>,
 
@@ -1022,13 +1022,6 @@ export default function Settings({ page = null, find = null, via = null, entryKe
           subtitle={t('Three goals a month on Home, sized to how you train.')}>
           <Switch aria-label={t('Monthly challenges')} checked={S.monthlyChallenges !== false} onChange={v => update(s => { s.monthlyChallenges = v })} />
         </Row>}
-        {/* The bar at the top that says the app is offline, kept local, or not synced (#369, #330).
-            Here and not under Server & sync, which a phone kept local never shows. Switching it on
-            also brings back the no-server line its × hid (#454). */}
-        {!DEMO && <Row icon="cloud" iconTint="var(--blue)" title={t('Show connection status')}
-          subtitle={t('Off: the bar at the top is hidden. A dot on Home still warns when syncing is stuck.')}>
-          <Switch checked={S.connStatus !== false} onChange={v => update(s => { s.connStatus = v; if (v) s.connLocal = true })} />
-        </Row>}
       </Section>
     </>,
 
@@ -1072,47 +1065,24 @@ export default function Settings({ page = null, find = null, via = null, entryKe
     </>,
 
     data: () => <>
-      <Section title={t('Back up')}>
-        <Row icon="share" iconTint="var(--blue)" title={t('Export backup (JSON)')} subtitle={hasMedia ? t('Without photos and videos') : undefined} accessory="chevron" onClick={doExport} tour="data-export" />
-        {hasMedia && <Row icon="share" iconTint="var(--blue)" title={t('Export with photos & videos (.zip)')} accessory="chevron" onClick={doExportZip} />}
+      <Section title="Relatórios e exportação">
         <Row icon="note" iconTint="var(--green)" title={t('Performance report (PDF)')} subtitle={t('Charts, totals and every workout of the last days or weeks.')} accessory="chevron" onClick={reportSheet} />
-        {/* One row per set for spreadsheets and other apps (#647); our own importer reads it back. */}
+        {/* One row per set for spreadsheets and other apps (#647). */}
         <Row icon="share" iconTint="var(--green)" title={t('Export as spreadsheet (CSV)')} subtitle={t('Workouts, body weight and measurements')} accessory="chevron" onClick={csvExportSheet} tour="data-csv" />
-        {/* 14 is AUTO_BACKUP_KEEP in lib/mobile.js, written out because the Settings tests mock
-            that module wholesale; mobile.autobackup.test.js pins the two together. */}
-        {MOBILE && <Row icon="folder" iconTint="var(--blue)" title={t('Auto-backup on changes')} tour="data-auto"
-          subtitle={autoBackupSubtitle(android && S.autoBackup ? backupDir : null, 14)}>
-          <Switch checked={!!S.autoBackup} onChange={v => update(s => { s.autoBackup = v })} />
-        </Row>}
-        {/* Android only: the system folder picker (#161). iOS shows Documents in Files already. */}
-        {MOBILE && android && S.autoBackup && <BackupFolderRow />}
       </Section>
-      {/* Apple Health / Health Connect moved to Integrations (1.4.4); the way there stays here. */}
+      {/* Apple Health / Health Connect */}
       {MOBILE && on('health') && <HealthLinkRow android={android} nav={nav} />}
-      <Section title={t('Bring data in')}>
-        <Row icon="download" iconTint="var(--teal)" title={t('Import backup')} accessory="chevron" onClick={() => fileRef.current.click()} tour="data-import" />
-      </Section>
       {hasMedia && <Section><MediaRow /></Section>}
-      <Section>
-        <Row icon="trash" iconTint="var(--red)" title={t('Reset everything')} danger onClick={resetEverything} />
-      </Section>
-      <input ref={fileRef} type="file" accept=".json,.zip,application/json,application/zip" style={{ display: 'none' }} onChange={doImport} />
     </>,
 
     about: () => <>
-      <Section footer="O aplicativo mantém seus treinos e histórico sincronizados automaticamente.">
-        <Row icon="info" iconTint="var(--grey)" title={t('Version')} value={'v' + __APP_VERSION__}
-          subtitle={MOBILE && selfUpdate ? t('{0} APK, animations at {1} px', VARIANT_NAMES[APK_VARIANT], BUILTIN_PX) : undefined} />
-        {MOBILE && selfUpdate && <Row icon="download" iconTint="var(--green)"
-          title={updateInfo?.hasUpdate ? t('Update to Rit v{0}', updateInfo.latestVersion) : t('Check for updates')}
-          subtitle={checking ? t('Checking…') : t('You have v{0}', __APP_VERSION__)}
-          accessory="chevron"
-          onClick={() => (updateInfo?.hasUpdate ? onUpdateRowClick() : checkNow())} />}
+      <Section footer="O aplicativo mantém seus treinos e histórico sincronizados automaticamente na nuvem da Rit.">
+        <Row icon="info" iconTint="var(--grey)" title={t('Version')} value={'v' + __APP_VERSION__} />
       </Section>
       <Section title={t('Tutorials')}>
         <Row icon="lightbulb" iconTint="var(--yellow)" title={t('Show the tour again')} subtitle={t('A one-minute walk around the app')} accessory="chevron"
           onClick={() => (useStore.getState().S.active ? toast(t('Finish your workout first, then the tour is all yours.')) : startTour())} />
-        {TUTORIALS.map(f => {
+        {TUTORIALS.filter(f => f !== 'backup').map(f => {
           const [title, sub] = TUTORIAL_COPY[f]()
           return <Row key={f} icon={TUTORIAL_ICON[f]} iconTint="var(--yellow)" title={title} subtitle={sub} accessory="chevron"
             value={tutorialDone(f) ? t('Done') : null}
@@ -1160,32 +1130,23 @@ export default function Settings({ page = null, find = null, via = null, entryKe
     </>,
 
     account: () => <>
-      {/* The server: which one, which account, how that stands, "Sync now". A paired phone's
-          Admin and Disconnect sit in the same block; a browser's account rows follow in their own. */}
+      {/* Conta Rit sincronizada */}
       {user && !DEMO && <ServerSyncSection>
         {MOBILE && <>
           {user.admin && <Row icon="crown" iconTint="var(--indigo)" title={t('Admin dashboard')} accessory="chevron" onClick={() => nav('/admin')} />}
-          {/* A code to sign in on a computer (#551), behind the same proof as in a browser. */}
-          <DeviceLinkRow state={passkeys.st} />
-          <AccountIdRow id={user.id} />
-          <Row icon="signOut" iconTint="var(--red)" title={t('Disconnect')} danger onClick={disconnect} />
+          {user.admin && <AccountIdRow id={user.id} />}
+          <Row icon="signOut" iconTint="var(--red)" title="Sair da conta" danger onClick={disconnect} />
         </>}
       </ServerSyncSection>}
 
-      {/* account (demo and mobile builds have nothing to sign in to) */}
-      {/* A local-only phone has no account to hand another device a code for (#551). */}
-      {!(MOBILE && user) && <Section title={MOBILE ? t('Your data') : DEMO ? t('Demo') : t('Account')}
-        footer={MOBILE ? t('Signing in on your computer too needs your own server. Connect this phone to it, and Add another device then gives the computer a code.') : null}>
+      {!(MOBILE && user) && <Section title={DEMO ? t('Demo') : t('Account')}>
         {MOBILE ? <>
           <Row icon="key" iconTint="var(--acc)" title={t('Sign in with password')}
             subtitle="Entrar na sua conta Rit e sincronizar seus treinos" accessory="chevron"
             onClick={() => openMobileSignIn()} />
           <Row icon="plusCircle" iconTint="var(--blue)" title={t('Create new profile')}
-            subtitle="Criar conta ou ativar código de convite do personal" accessory="chevron"
+            subtitle="Criar conta com código de convite do personal" accessory="chevron"
             onClick={() => openMobileRegister()} />
-          <Row icon="lock" iconTint="var(--acc)" title={t('All data stays on this phone')} subtitle={t('No account, no cloud. Back it up anytime in Data & backup.')} />
-          <Row icon="cloud" iconTint="var(--indigo)" title={t('Connect to my server')} subtitle={t('Sync this device to your own self-hosted Rit instead.')} accessory="chevron"
-            onClick={connectServer} />
           <KeptChangesRows />
         </> : DEMO ? <>
           <Row icon="info" iconTint="var(--acc)" title={t('You’re in the demo')} subtitle={t('Example data, stored only in this browser. Go wild and change anything you like.')} />
@@ -1199,7 +1160,7 @@ export default function Settings({ page = null, find = null, via = null, entryKe
           {pwOn && <PasswordRow version={credsV} />}
           <Row icon="signOut" iconTint="var(--red)" title={t('Sign out')} danger onClick={signOutHere} />
           <Row icon="shield" iconTint="var(--red)" title={t('Sign out everywhere')} subtitle={t('Ends this profile’s sessions on all your devices.')} danger onClick={signOutEverywhere} />
-          <AccountIdRow id={user.id} />
+          {user.admin && <AccountIdRow id={user.id} />}
         </> : webauthnOK() ? <>
           <Row icon="plusCircle" iconTint="var(--acc)" title={t('Create passkey profile')} subtitle={t('Keeps your data safe and separate per person.')} accessory="chevron" onClick={registerHere} />
           <Row icon="fingerprint" iconTint="var(--blue)" title={t('Sign in with passkey')} accessory="chevron" onClick={passkeySignIn} />
@@ -1270,9 +1231,9 @@ function SettingsRoot({ ctx, preview, open, user, sync, home, go, entryKey, pwa 
   const acct = DEMO ? { title: t('Demo'), sub: t('Example data, only in this browser.') }
     : user ? {
       title: user.name || t('Account'),
-      sub: sync && sync.status && sync.status !== 'ok' ? t('Sync needs a look') : MOBILE ? t('Synced with your server') : t('Account, devices and sync'),
+      sub: sync && sync.status && sync.status !== 'ok' ? t('Sync needs a look') : (user.email || 'Conta Rit sincronizada'),
     }
-      : MOBILE ? { title: t('This phone'), sub: t('All data stays on this phone') }
+      : MOBILE ? { title: 'Entrar na Rit', sub: 'Acesse sua conta para sincronizar treinos' }
         : { title: t('Guest'), sub: t('Your data lives on this device. Sign in to sync.') }
   const initial = user && !DEMO ? String(user.name || '?').trim().charAt(0).toUpperCase() : null
   const nav = useNavigate()

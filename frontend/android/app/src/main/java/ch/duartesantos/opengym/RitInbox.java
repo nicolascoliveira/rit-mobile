@@ -185,8 +185,12 @@ final class RitInbox {
 
             ParsedBatch batch = parsePendingResponse(raw, prevLastId);
             JSONArray delivered = new JSONArray();
+            boolean anyBlocked = false;
             for (Item item : batch.items) {
-                postNotification(ctx, item.id, item.title, item.body);
+                boolean posted = postNotification(ctx, item.id, item.title, item.body, item.url);
+                if (!posted) {
+                    anyBlocked = true;
+                }
                 try {
                     delivered.put(new JSONObject()
                             .put("id", item.id)
@@ -196,7 +200,7 @@ final class RitInbox {
                             .put("url", item.url));
                 } catch (Exception ignored) { /* skip malformed item */ }
             }
-            if (batch.nextLastId > prevLastId) {
+            if (batch.nextLastId > prevLastId && !anyBlocked) {
                 try {
                     cfg.put("lastId", batch.nextLastId);
                     save(ctx, cfg);
@@ -214,6 +218,10 @@ final class RitInbox {
     }
 
     static boolean postNotification(Context ctx, long id, String title, String body) {
+        return postNotification(ctx, id, title, body, "#/");
+    }
+
+    static boolean postNotification(Context ctx, long id, String title, String body, String url) {
         NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm == null || !nm.areNotificationsEnabled()) return false;
         if (Build.VERSION.SDK_INT >= 26 && nm.getNotificationChannel(CHANNEL_ID) == null) {
@@ -225,6 +233,9 @@ final class RitInbox {
         int notifId = notificationIdFor(id);
         Intent open = new Intent(ctx, MainActivity.class);
         open.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
+        if (url != null && !url.isEmpty()) {
+            open.putExtra("rit_url", url);
+        }
         PendingIntent tap = PendingIntent.getActivity(
                 ctx,
                 notifId,

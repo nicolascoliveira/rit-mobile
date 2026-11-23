@@ -826,8 +826,12 @@ test('Fase 3.3 Check-in Semanal e Régua Autônoma de Engajamento com deduplica�
     });
     assert.equal(setRes.status, 200);
 
-    // Simula sexta-feira às 14:00 BRT
-    const fridayAfternoonUtc = Date.parse('2026-11-20T17:00:00Z');
+    // Simula sexta-feira ou domingo às 14:00 BRT relativo à data atual (evita deriva temporal de Date.now())
+    const evalDayUtc = (() => {
+      const d = new Date();
+      d.setUTCHours(17, 0, 0, 0);
+      return d.getTime();
+    })();
     const tenantObj = setRes.data.tenant;
     const pushedInWorker = [];
 
@@ -836,7 +840,8 @@ test('Fase 3.3 Check-in Semanal e Régua Autônoma de Engajamento com deduplica�
       tenant: tenantObj,
       db: env.db,
       sendPushFn: async (uid, payload) => { pushedInWorker.push({ uid, tag: payload.tag }); },
-      nowMs: fridayAfternoonUtc
+      nowMs: evalDayUtc,
+      forceWeekly: true
     });
 
     // Bruno está em excusedOn hoje -> ignorado no autoChurnNudge!
@@ -853,7 +858,8 @@ test('Fase 3.3 Check-in Semanal e Régua Autônoma de Engajamento com deduplica�
       tenant: tenantObj,
       db: env.db,
       sendPushFn: async (uid, payload) => { pushedInWorker.push({ uid, tag: payload.tag }); },
-      nowMs: fridayAfternoonUtc + 60000
+      nowMs: evalDayUtc + 60000,
+      forceWeekly: true
     });
     assert.equal(secondRun.weeklyQueued, 0);
     assert.equal(secondRun.expiryAlertsQueued, 0);

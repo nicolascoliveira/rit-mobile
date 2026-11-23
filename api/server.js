@@ -56,7 +56,17 @@ import {
 import { evictStudentSummary } from './trainer.js';
 import { excusedOn, nudgeFor, nudgeWindowOpen, toneOf } from './nudge.js';
 import { wrappedPushYear, wrappedSummary, wrappedPushOwed, wrappedPush } from './wrapped.js';
-import { notifyWorkoutCompletedIfAny } from './whatsapp.js';
+import { notifyWorkoutCompletedIfAny, cleanWhatsAppPhone } from './whatsapp.js';
+import {
+  OTP_TTL_MS,
+  MAX_OTP_ATTEMPTS,
+  generateOtpCode,
+  hashOtpCode,
+  verifyOtpCode,
+  makeTrustedDeviceToken,
+  verifyTrustedDeviceToken,
+  dispatchDualChannelVerification
+} from './email.js';
 import {
   getSqliteInstance,
   runInTransaction,
@@ -78,6 +88,10 @@ import {
   enqueueMobileNotificationSqlite,
   listMobileNotificationsSqlite,
   deleteMobileNotificationsSqlite,
+  createAuthVerificationSqlite,
+  getAuthVerificationSqlite,
+  incrementAuthVerificationAttemptsSqlite,
+  deleteAuthVerificationSqlite,
   isSqliteUniqueConstraintError
 } from './sqlite.js';
 
@@ -540,13 +554,14 @@ function wrappedTick(user, sum, year) {
   saveDb();
   sendPush(user.id, wrappedPush(sum.wrapped.lang, year));
 }
+const mobileInboxUsers = new Set();
 setInterval(() => {
   // Server time, read through Date.now() so the tests' clock moves it too.
   const wrappedYear = wrappedPushYear(new Date(Date.now()));
   for (const user of db.users) {
     if (user.disabled) continue;            // locked out everywhere, reminders included
     if (user.tenantId && user.saasRole !== 'superadmin' && getTenantAccessState(DATA, user.tenantId).blocked) continue;
-    if (!db.subs.some(s => s.userId === user.id)) continue;
+    if (!db.subs.some(s => s.userId === user.id) && !mobileInboxUsers.has(user.id)) continue;
     // One user's state file is one user's problem: a shape this tick cannot read is logged and
     // skipped, not allowed to take the process — and everyone else's reminders — down with it.
     // PUT /api/data refuses the obvious shapes, but a file already on disk answers to nobody.
@@ -761,6 +776,7 @@ const PASSKEY_ROUTES = new Set([
 // device code in the body is the credential, never a Bearer.
 const SIGN_IN_ROUTES = new Set([
   'POST /api/login/password', 'POST /api/register/password', 'POST /api/login/password-reset',
+  'POST /api/auth/verification/send',
   'POST /api/device-link/options', 'POST /api/device-link/verify',
   'POST /api/saas/auth/login', 'POST /api/saas/auth/demo-login', 'POST /api/saas/demo/seed',
   'POST /api/saas/auth/setup-admin', 'POST /api/saas/auth/register'
@@ -1190,6 +1206,7 @@ THROTTLED['POST /api/saas/auth/login'] = 'password';
 THROTTLED['POST /api/saas/auth/register'] = 'signup';
 THROTTLED['POST /api/saas/auth/demo-login'] = null;
 THROTTLED['POST /api/saas/billing/webhook'] = null;
+THROTTLED['POST /api/auth/verification/send'] = 'password';
 
 // Which address the throttle counts against. Unlike clientIp() above, which only labels a log
 // line, this decides who is refused, so a header is believed only when TRUST_PROXY says the API
@@ -1335,9 +1352,12 @@ function loginTarget(body, reqTenantId = 'default') {
   const candidates = (!k.includes('@') && !onlyEmail && t === 'default')
     ? db.users.filter(u => hasPassword(u) && nameKey(u.name) === k)
     : [];
-  const user = resolve() || (candidates.length > 1 ? candidates[0] : null);
+  const resolved = resolve();
+  const ambiguous = !resolved && candidates.length > 1;
+  const user = resolved || (ambiguous ? candidates[0] : null);
   const missKey = t === 'default' ? 'id:' + k : 'id:' + t + ':' + k;
-  return { k, user, candidates, resolve, email: k.includes('@'), key: user ? acctKey(user) : missKey };
+  const key = ambiguous ? ('amb:' + k) : (user ? acctKey(user) : missKey);
+  return { k, user, candidates, ambiguous, resolve, email: k.includes('@'), key };
 }
 const acctKey = u => 'acct:' + u.id;
 const passkeyCount = u => db.creds.filter(c => c.userId === u.id).length;
@@ -1495,6 +1515,18 @@ function removeAccount(u) {
   db.users = db.users.filter(x => x.id !== u.id);
   db.creds = (db.creds || []).filter(c => c.userId !== u.id);
   db.subs = (db.subs || []).filter(x => x.userId !== u.id);
+  if (Array.isArray(db.invites)) {
+    const nowIso = new Date().toISOString();
+    for (const inv of db.invites) {
+      if (inv && inv.studentId === u.id && !inv.usedBy && !inv.revoked) {
+        inv.revoked = true;
+        inv.revokedAt = nowIso;
+      }
+    }
+  }
+  for (const [k, v] of pairings) if (v.uid === u.id) pairings.delete(k);
+  cancelRestTimer(u.id);
+  mobileInboxUsers.delete(u.id);
   dropDeviceLinks(db, u.id);
   dropWatchLinks(db, u.id);
   dropWatchCodes(watchCodes, u.id);
@@ -1514,23 +1546,144 @@ function removeAccount(u) {
   saveDb();
 }
 
+const MAX_HOMONYM_CANDIDATES = 4;
+const OTP_INVALID_ERR = { error: 'Código de verificação inválido ou expirado.', code: 'otp-invalid' };
+
+async function handleLoginDeviceVerification(req, res, body, user, target) {
+  const enforceOtp = body.requireEmailOtp === true || Boolean(body.challengeId) || Boolean(body.otpCode);
+  if (!enforceOtp) {
+    const trustedDeviceToken = body.deviceId ? makeTrustedDeviceToken(user, body.deviceId, SECRET) : undefined;
+    return { proceed: true, trustedDeviceToken };
+  }
+  const userEmail = normalizeEmail(user.email || target.k);
+  if (!userEmail) {
+    json(res, 400, EMAIL_ERRORS.invalid);
+    return { proceed: false };
+  }
+  if (verifyTrustedDeviceToken(body.trustedDeviceToken, user, body.deviceId, SECRET)) {
+    return {
+      proceed: true,
+      trustedDeviceToken: makeTrustedDeviceToken(user, body.deviceId, SECRET)
+    };
+  }
+  if (body.challengeId || body.otpCode) {
+    const row = getAuthVerificationSqlite(DATA, body.challengeId);
+    const validRow = row &&
+      row.purpose === 'login' &&
+      row.email === userEmail &&
+      row.expiresAt > Date.now() &&
+      row.attempts < MAX_OTP_ATTEMPTS &&
+      verifyOtpCode(body.otpCode, row.codeHash, SECRET, row.id);
+    if (!validRow) {
+      if (row) incrementAuthVerificationAttemptsSqlite(DATA, row.id);
+      audit(req, 'auth.password.fail', { ok: false, user, msg: 'otp-invalid' });
+      json(res, 401, OTP_INVALID_ERR);
+      return { proceed: false };
+    }
+    deleteAuthVerificationSqlite(DATA, row.id);
+    if (!user.emailVerified) {
+      user.emailVerified = true;
+      try { upsertUserSqlite(DATA, user, null); saveDb(); } catch { /* ignore */ }
+    }
+    return {
+      proceed: true,
+      trustedDeviceToken: makeTrustedDeviceToken(user, body.deviceId, SECRET)
+    };
+  }
+
+  const userTenant = user.tenantId || 'default';
+  const tenant = userTenant !== 'default' ? getTenant(DATA, userTenant) : null;
+  const cleanedPhone = cleanWhatsAppPhone(body.phone || user.phone || '');
+  const challengeId = crypto.randomBytes(16).toString('base64url');
+  const otpCode = generateOtpCode();
+  const codeHash = hashOtpCode(otpCode, SECRET, challengeId);
+
+  createAuthVerificationSqlite(DATA, {
+    id: challengeId,
+    email: userEmail,
+    phone: cleanedPhone || null,
+    userId: user.id,
+    tenantId: userTenant,
+    purpose: 'login',
+    codeHash,
+    ttlMs: OTP_TTL_MS
+  });
+
+  const delivery = await dispatchDualChannelVerification({
+    dataDir: DATA,
+    tenant,
+    tenantId: userTenant,
+    email: userEmail,
+    phone: cleanedPhone,
+    studentName: user.name || '',
+    code: otpCode,
+    purpose: 'login',
+    preferredChannel: ['whatsapp', 'email', 'auto'].includes(body.channel) ? body.channel : 'auto'
+  });
+
+  json(res, 200, {
+    verificationRequired: true,
+    purpose: 'login',
+    challengeId,
+    expiresInSec: Math.round(OTP_TTL_MS / 1000),
+    channelsSent: delivery.channelsSent,
+    maskedEmail: delivery.maskedEmail,
+    maskedPhone: delivery.maskedPhone,
+    hasPhone: delivery.hasPhone,
+    emailConfigured: delivery.emailConfigured,
+    ...(process.env.NODE_ENV !== 'production' ? { devOtpCode: otpCode } : {})
+  });
+  return { proceed: false };
+}
+
+function verifyRegistrationOtpChallenge(req, res, body, email) {
+  const enforceOtp = body.requireEmailOtp === true || Boolean(body.challengeId) || Boolean(body.otpCode);
+  if (!enforceOtp) return { ok: true, challengeId: null, phone: cleanWhatsAppPhone(body.phone || '') };
+  if (!email) {
+    json(res, 400, EMAIL_ERRORS.invalid);
+    return { ok: false };
+  }
+  const row = getAuthVerificationSqlite(DATA, body.challengeId);
+  const valid = row &&
+    row.purpose === 'register' &&
+    row.email === email &&
+    row.expiresAt > Date.now() &&
+    row.attempts < MAX_OTP_ATTEMPTS &&
+    verifyOtpCode(body.otpCode, row.codeHash, SECRET, row.id);
+  if (!valid) {
+    if (row) incrementAuthVerificationAttemptsSqlite(DATA, row.id);
+    audit(req, 'auth.register.fail', { ok: false, msg: 'otp-invalid' });
+    json(res, 403, OTP_INVALID_ERR);
+    return { ok: false };
+  }
+  return {
+    ok: true,
+    challengeId: row.id,
+    phone: cleanWhatsAppPhone(body.phone || row.phone || '')
+  };
+}
+
 const passwordRoutes = {
   'POST /api/login/password': async (req, res) => {
     const body = await readBody(req);
     const target = loginTarget(body, resolveTenantId(req));
     const pw = typeof body.password === 'string' ? body.password : '';
     if (!target || !pw) return json(res, 400, { error: 'name and password required', code: 'missing' });
+    if (body.requireEmailOtp === true && (!target.email || !normalizeEmail(target.k))) {
+      return json(res, 400, EMAIL_ERRORS.invalid);
+    }
     const check = passwordAttempt(req, res, target.key);
     if (!check) return;
     let user = target.user;
     let rec = user?.pw;
     let matched = await check.verify(pw, rec?.h);
     // Se houver homônimos em academias diferentes tentando logar sem ?tenant= na URL,
-    // verifica a senha nos demais perfis com o mesmo nome para logar no perfil certo.
+    // verifica até MAX_HOMONYM_CANDIDATES perfis usando check.verify para evitar amplificação de CPU (scrypt DoS).
     if (!matched && Array.isArray(target.candidates) && target.candidates.length > 1) {
-      for (let i = 1; i < target.candidates.length; i++) {
+      const cap = Math.min(target.candidates.length, MAX_HOMONYM_CANDIDATES);
+      for (let i = 1; i < cap; i++) {
         const alt = target.candidates[i];
-        if (alt?.pw?.h && passwordLength(pw) <= MAX_LENGTH && await verifyPassword(pw, alt.pw.h)) {
+        if (alt?.pw?.h && await check.verify(pw, alt.pw.h)) {
           user = alt;
           rec = alt.pw;
           matched = true;
@@ -1571,9 +1724,12 @@ const passwordRoutes = {
       // The same question again: the password may have changed while the new hash was made.
       if (!still()) return json(res, 401, WRONG);
     }
+    const otpStep = await handleLoginDeviceVerification(req, res, body, user, target);
+    if (!otpStep.proceed) return;
     audit(req, 'auth.password.ok', { user });
     const mobileToken = body.mobile === true && !req.headers.origin ? { token: makeSession(user) } : {};
-    json(res, 200, { user: publicUser(user), ...mobileToken }, { 'Set-Cookie': sessionCookie(user) });
+    const tdField = otpStep.trustedDeviceToken ? { trustedDeviceToken: otpStep.trustedDeviceToken } : {};
+    json(res, 200, { user: publicUser(user), ...mobileToken, ...tdField }, { 'Set-Cookie': sessionCookie(user) });
   },
 
   // For browsers that cannot make a passkey at all: plain http on a LAN address, some Firefox
@@ -1605,6 +1761,8 @@ const passwordRoutes = {
     const hasEmail = typeof body.email === 'string' && body.email.trim() !== '';
     const email = hasEmail ? normalizeEmail(body.email) : null;
     if (hasEmail && !email) return json(res, 400, EMAIL_ERRORS.invalid);
+    const otpCheck = verifyRegistrationOtpChallenge(req, res, body, email);
+    if (!otpCheck.ok) return;
     const emailRefused = () => {
       strikeAddress(req, 'email');
       audit(req, 'auth.register.fail', { ok: false, name, msg: 'email-taken' });
@@ -1726,9 +1884,20 @@ const passwordRoutes = {
     }
     if (outcome.kind === 'email-taken') return emailRefused();
 
+    if (otpCheck.challengeId) {
+      deleteAuthVerificationSqlite(DATA, otpCheck.challengeId);
+      outcome.user.emailVerified = true;
+      if (otpCheck.phone && !outcome.user.phone) {
+        outcome.user.phone = otpCheck.phone;
+      }
+      try { upsertUserSqlite(DATA, outcome.user, null); saveDb(); } catch { /* ignore */ }
+    }
+
     audit(req, 'auth.register.ok', { user: outcome.user, msg: outcome.inv ? outcome.inv.code + ' · password' : 'password' });
     const mobileToken = body.mobile === true && !req.headers.origin ? { token: makeSession(outcome.user) } : {};
-    json(res, 200, { user: publicUser(outcome.user), ...mobileToken }, { 'Set-Cookie': sessionCookie(outcome.user) });
+    const tdToken = body.deviceId ? makeTrustedDeviceToken(outcome.user, body.deviceId, SECRET) : null;
+    const tdField = tdToken ? { trustedDeviceToken: tdToken } : {};
+    json(res, 200, { user: publicUser(outcome.user), ...mobileToken, ...tdField }, { 'Set-Cookie': sessionCookie(outcome.user) });
   },
 
   // What Settings shows: whether a password is set, and whether it could be removed.
@@ -1895,17 +2064,40 @@ const passwordRoutes = {
     const body = await readBody(req);
     // The name or the e-mail, in the same fields sign-in takes them (loginTarget).
     const k = nameKey(text(body.identifier ?? body.name ?? body.email).slice(0, 300));
-    const code = text(body.code).slice(0, 64);
+    const code = text(body.otpCode ?? body.code).slice(0, 64);
     if (!k || !code) return json(res, 400, { error: 'name and code required', code: 'missing' });
     // Wrong codes count against the address only. A per-name pause would add nothing against a
     // 60-bit code that lives a day, and would let anyone who knows the name keep the real code
     // refused for that whole day — after the reset has already removed the old password.
     if (addressPaused(req, res, 'password')) return;
-    const find = () => db.users.find(u => u.pwReset && (nameKey(u.name) === k || u.email === k) && resetCodeMatches(code, u.pwReset)) || null;
+    const isOtpChallenge = Boolean(body.challengeId);
+    const find = () => {
+      if (isOtpChallenge) {
+        const email = normalizeEmail(k);
+        if (!email) return null;
+        return db.users.find(u => u.email === email) || null;
+      }
+      return db.users.find(u => u.pwReset && (nameKey(u.name) === k || u.email === k) && resetCodeMatches(code, u.pwReset)) || null;
+    };
     const user = find();
     const invalid = () => json(res, 400, { error: 'that reset code is wrong or has expired', code: 'reset-invalid' });
     const taken = () => json(res, 409, { error: 'another profile already signs in with this name', code: 'name-taken' });
-    if (!user) {
+    if (isOtpChallenge) {
+      const row = getAuthVerificationSqlite(DATA, body.challengeId);
+      const validRow = user &&
+        row &&
+        row.purpose === 'reset' &&
+        row.email === normalizeEmail(k) &&
+        row.expiresAt > Date.now() &&
+        row.attempts < MAX_OTP_ATTEMPTS &&
+        verifyOtpCode(code, row.codeHash, SECRET, row.id);
+      if (!validRow) {
+        if (row) incrementAuthVerificationAttemptsSqlite(DATA, row.id);
+        strikeAddress(req, 'password');
+        audit(req, 'auth.password.reset', { ok: false, ...(user ? { user } : {}), msg: 'reset-invalid' });
+        return invalid();
+      }
+    } else if (!user) {
       strikeAddress(req, 'password');
       audit(req, 'auth.password.reset', { ok: false, msg: 'reset-invalid' });
       return invalid();
@@ -1921,12 +2113,21 @@ const passwordRoutes = {
     const h = await hashPassword(body.next);
     const resetOutcome = runInTransaction(getSqliteInstance(DATA), () => {
       // Single use dentro de BEGIN IMMEDIATE: uma segunda requisição paralela encontra o código já consumido.
-      if (find() !== user) return 'invalid';
+      if (isOtpChallenge) {
+        const row = getAuthVerificationSqlite(DATA, body.challengeId);
+        if (!row || row.purpose !== 'reset' || row.expiresAt <= Date.now() || !verifyOtpCode(code, row.codeHash, SECRET, row.id)) {
+          return 'invalid';
+        }
+        deleteAuthVerificationSqlite(DATA, row.id);
+      } else if (find() !== user) {
+        return 'invalid';
+      }
       if (nameTaken(user.name, user.id, userTenantOf(user))) return 'taken';
       const prevPw = user.pw;
       const prevPwReset = user.pwReset;
       const prevSv = user.sv;
       setPassword(user, h);
+      user.emailVerified = true;
       try {
         upsertUserSqlite(DATA, user, null);
       } catch (err) {
@@ -1944,7 +2145,9 @@ const passwordRoutes = {
     if (resetOutcome === 'taken') return taken();
     audit(req, 'auth.password.reset', { user });
     const mobileToken = body.mobile === true && !req.headers.origin ? { token: makeSession(user) } : {};
-    json(res, 200, { user: publicUser(user), ...mobileToken }, { 'Set-Cookie': sessionCookie(user) });
+    const tdToken = body.deviceId ? makeTrustedDeviceToken(user, body.deviceId, SECRET) : null;
+    const tdField = tdToken ? { trustedDeviceToken: tdToken } : {};
+    json(res, 200, { user: publicUser(user), ...mobileToken, ...tdField }, { 'Set-Cookie': sessionCookie(user) });
   }
 };
 
@@ -3205,6 +3408,7 @@ const routes = {
   'GET /api/notifications/pending': async (req, res) => {
     const user = readSession(req);
     if (!user) return json(res, 401, { error: 'not signed in' });
+    mobileInboxUsers.add(user.id);
     const sp = new URL(req.url || '', 'http://x').searchParams;
     const rawSince = Number(sp.get('since') || 0);
     const sinceId = Number.isInteger(rawSince) && rawSince > 0 ? rawSince : 0;
@@ -3497,6 +3701,7 @@ const routes = {
     mediaBurst: MEDIA_BURST,
     mediaThrottleFn: mediaThrottle,
     sendMediaFileFn: sendMediaFile,
+    secret: SECRET,
     stateOps: (() => {
       const evictCache = uid => { stateCache.delete(uid); stateSummaries.delete(uid); evictStudentSummary(uid); };
       const persistStampedState = (uid, nextState, cur) => {

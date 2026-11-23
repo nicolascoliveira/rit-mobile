@@ -22,7 +22,13 @@ import { t } from './i18n-core.js'
 import { getActiveTenantSlug } from './branding.js'
 
 export const LINK_FMT = 1
-export const LINK_BASE = 'https://opengym.ch/r'
+export const LINK_BASE = 'https://app.treinerit.com.br/r'
+const ALLOWED_ROUTINE_HOSTS = new Set([
+  'app.treinerit.com.br',
+  'treinerit.com.br',
+  'app.treinerit.duckdns.org',
+  'opengym.ch'
+])
 // Past this a link starts breaking in chat apps and SMS: the share falls back to a plan file.
 export const MAX_LINK = 2000
 // What a link may hold at all, before and after inflating: far past any real routine.
@@ -197,11 +203,11 @@ export function routinePayloadFromUrl(raw) {
   if (route) return ok(route[1])
   if (proto === 'https:' || proto === 'http:') {
     const host = u.hostname.toLowerCase().replace(/^www\./, '')
-    if (host !== 'opengym.ch') return null
+    if (!ALLOWED_ROUTINE_HOSTS.has(host)) return null
     if (u.pathname.replace(/\/index\.html$/, '').replace(/\/+$/, '') !== '/r') return null
     return ok(hash)
   }
-  if (proto !== 'opengym:') return null
+  if (proto !== 'rit:' && proto !== 'opengym:') return null
   const host = (u.hostname || '').toLowerCase()
   const rest = u.pathname.replace(/^\/+/, '').replace(/\/+$/, '')
   if (host !== 'r' || rest) return null
