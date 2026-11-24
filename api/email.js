@@ -216,6 +216,7 @@ function sendSmtpTlsMail({ host, port = 465, user, pass, from, to, subject, html
 
     let step = useStartTls ? -2 : 0;
     let buf = '';
+    let authMechs = '';
     const sendLine = line => activeSocket?.write(line + '\r\n');
     const fromAddr = (/<([^>]+)>/.exec(from)?.[1] || from || user).trim();
     const fromDomain = (fromAddr.split('@')[1] || 'treinerit.com.br').replace(/[^a-zA-Z0-9.-]/g, '') || 'treinerit.com.br';
@@ -231,6 +232,9 @@ function sendSmtpTlsMail({ host, port = 465, user, pass, from, to, subject, html
       const lines = buf.split('\r\n');
       buf = lines.pop() || '';
       for (const line of lines) {
+        if (/^250[- ]AUTH[ =]/i.test(line)) {
+          authMechs += ' ' + line.toUpperCase();
+        }
         if (!/^\d{3} /.test(line)) continue;
         const code = Number(line.slice(0, 3));
         if (code >= 400) {
@@ -240,12 +244,14 @@ function sendSmtpTlsMail({ host, port = 465, user, pass, from, to, subject, html
         }
         if (step === -2 && code === 220) {
           step = -1;
+          authMechs = '';
           sendLine(`EHLO ${fromDomain}`);
         } else if (step === -1 && code === 250) {
           step = -0.5;
           sendLine('STARTTLS');
         } else if (step === -0.5 && code === 220) {
           step = 1;
+          authMechs = '';
           const plainSocket = activeSocket;
           plainSocket.removeListener('data', handleData);
           plainSocket.removeListener('error', handleError);
@@ -264,10 +270,17 @@ function sendSmtpTlsMail({ host, port = 465, user, pass, from, to, subject, html
           return;
         } else if (step === 0 && code === 220) {
           step = 1;
+          authMechs = '';
           sendLine(`EHLO ${fromDomain}`);
         } else if (step === 1 && code === 250) {
-          step = 2;
-          sendLine('AUTH LOGIN');
+          if (/\bPLAIN\b/.test(authMechs) || !/\bLOGIN\b/.test(authMechs)) {
+            step = 4;
+            const plainToken = Buffer.from(`\u0000${String(user)}\u0000${String(pass)}`, 'utf8').toString('base64');
+            sendLine(`AUTH PLAIN ${plainToken}`);
+          } else {
+            step = 2;
+            sendLine('AUTH LOGIN');
+          }
         } else if (step === 2 && code === 334) {
           step = 3;
           sendLine(Buffer.from(String(user), 'utf8').toString('base64'));
