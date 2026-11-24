@@ -1626,6 +1626,7 @@ async function handleLoginDeviceVerification(req, res, body, user, target) {
     purpose: 'login',
     challengeId,
     expiresInSec: Math.round(OTP_TTL_MS / 1000),
+    primaryChannel: delivery.primaryChannel,
     channelsSent: delivery.channelsSent,
     maskedEmail: delivery.maskedEmail,
     maskedPhone: delivery.maskedPhone,

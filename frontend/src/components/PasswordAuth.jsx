@@ -50,6 +50,27 @@ export function formatPhoneInput(raw) {
   return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7, 11)}`
 }
 
+export function describeOtpChannel(otpState) {
+  const sent = Array.isArray(otpState?.channelsSent) ? otpState.channelsSent : []
+  const active = otpState?.primaryChannel || sent[0] || (otpState?.maskedEmail ? 'email' : 'whatsapp')
+  if (active === 'whatsapp' && otpState?.maskedPhone) {
+    return {
+      activeChannel: 'whatsapp',
+      destinationText: `para o seu WhatsApp (${otpState.maskedPhone})`
+    }
+  }
+  if (otpState?.maskedEmail) {
+    return {
+      activeChannel: 'email',
+      destinationText: `para o seu e-mail (${otpState.maskedEmail})`
+    }
+  }
+  return {
+    activeChannel: active,
+    destinationText: active === 'whatsapp' ? 'para o seu WhatsApp' : 'para o seu e-mail'
+  }
+}
+
 const ui = () => useUI.getState()
 const toast = m => ui().toast(m)
 const length = s => [...String(s || '')].length
@@ -83,6 +104,8 @@ export function passwordError(e) {
     case 'last-way-in': return t('This password is the only way into your profile, so it cannot be removed.')
     case 'reset-invalid': return t('That reset code is wrong or has expired. Ask your admin for a new one.')
     case 'otp-invalid': return 'Código de verificação de 6 dígitos inválido ou expirado.'
+    case 'whatsapp-unavailable': return 'WhatsApp indisponível no momento. Use o envio por e-mail.'
+    case 'email-unavailable': return 'Não foi possível enviar por e-mail agora. Tente receber pelo WhatsApp.'
     case 'disabled': return t('This account has been disabled.')
     case 'busy': return t('The server is busy. Try again in a moment.')
   }
@@ -265,7 +288,7 @@ export function PasswordSignInSheet({ close, onPasskey, requireEmailOtp = false,
     return <>
       <h3>Esqueceu a Senha?</h3>
       <div className="muted small" style={{ marginBottom: 14, fontSize: 14, lineHeight: 1.45 }}>
-        Digite seu e-mail cadastrado e enviaremos um código de 6 dígitos no seu WhatsApp e e-mail para criar uma nova senha.
+        Digite seu e-mail cadastrado e enviaremos um código de 6 dígitos para o seu e-mail (com opção de envio pelo WhatsApp se preferir).
       </div>
       <form className="rit-auth-form" onSubmit={handleRequestForgotCode} noValidate>
         <div className="rit-auth-field">
@@ -304,12 +327,11 @@ export function PasswordSignInSheet({ close, onPasskey, requireEmailOtp = false,
   }
 
   if (!reset && otpState) {
+    const { activeChannel, destinationText } = describeOtpChannel(otpState)
     return <>
       <h3>Verifique seu acesso</h3>
       <div className="muted small" style={{ marginBottom: 14, lineHeight: 1.45, fontSize: 14 }}>
-        Enviamos um código de 6 dígitos para confirmar este aparelho
-        {otpState.maskedPhone ? ` no WhatsApp (${otpState.maskedPhone})` : ''}
-        {otpState.maskedEmail ? `${otpState.maskedPhone ? ' e ' : ' '}no e-mail (${otpState.maskedEmail})` : ''}.
+        Enviamos um código de 6 dígitos {destinationText} para confirmar este aparelho.
       </div>
       <form onSubmit={submit} noValidate>
         <input
@@ -330,23 +352,38 @@ export function PasswordSignInSheet({ close, onPasskey, requireEmailOtp = false,
         </Button>
       </form>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
-        {otpState.hasPhone && (
+        {activeChannel !== 'whatsapp' && otpState.hasPhone && (
           <Button
             type="button"
             variant="ghost"
             disabled={busy || Boolean(resendingChannel)}
             onClick={() => handleResendOtp('whatsapp')}
           >
-            {resendingChannel === 'whatsapp' ? 'Enviando no WhatsApp…' : '📲 Reenviar código por WhatsApp'}
+            {resendingChannel === 'whatsapp' ? 'Enviando pelo WhatsApp…' : 'Não recebeu? Enviar pelo WhatsApp'}
+          </Button>
+        )}
+        {activeChannel === 'whatsapp' && (
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={busy || Boolean(resendingChannel)}
+            onClick={() => handleResendOtp('email')}
+          >
+            {resendingChannel === 'email' ? 'Enviando por e-mail…' : 'Não recebeu? Enviar por e-mail'}
           </Button>
         )}
         <Button
           type="button"
           variant="ghost"
+          className="dim"
           disabled={busy || Boolean(resendingChannel)}
-          onClick={() => handleResendOtp('email')}
+          onClick={() => handleResendOtp(activeChannel === 'whatsapp' ? 'whatsapp' : 'email')}
         >
-          {resendingChannel === 'email' ? 'Enviando por E-mail…' : '✉️ Reenviar código por E-mail'}
+          {resendingChannel
+            ? 'Reenviando código…'
+            : activeChannel === 'whatsapp'
+              ? 'Reenviar código pelo WhatsApp'
+              : 'Reenviar código por e-mail'}
         </Button>
         <Button
           type="button"
@@ -617,11 +654,10 @@ export function PasswordRegisterForm({
   }
 
   if (requireEmailOtp && otpState) {
+    const { activeChannel, destinationText } = describeOtpChannel(otpState)
     return <form onSubmit={submit} noValidate>
       <div className="muted small" style={{ marginBottom: 12, lineHeight: 1.45, fontSize: 14 }}>
-        Enviamos seu código de verificação de 6 dígitos
-        {otpState.maskedPhone ? ` para o WhatsApp (${otpState.maskedPhone})` : ''}
-        {otpState.maskedEmail ? `${otpState.maskedPhone ? ' e ' : ' '}para o e-mail (${otpState.maskedEmail})` : ''}.
+        Enviamos seu código de verificação de 6 dígitos {destinationText}.
       </div>
       <input
         className="input"
@@ -640,23 +676,38 @@ export function PasswordRegisterForm({
         {busy ? t('Connecting…') : 'Confirmar código e criar conta'}
       </Button>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
-        {otpState.hasPhone && (
+        {activeChannel !== 'whatsapp' && otpState.hasPhone && (
           <Button
             type="button"
             variant="ghost"
             disabled={busy || Boolean(resendingChannel)}
             onClick={() => handleResendOtp('whatsapp')}
           >
-            {resendingChannel === 'whatsapp' ? 'Enviando no WhatsApp…' : '📲 Reenviar código por WhatsApp'}
+            {resendingChannel === 'whatsapp' ? 'Enviando pelo WhatsApp…' : 'Não recebeu? Enviar pelo WhatsApp'}
+          </Button>
+        )}
+        {activeChannel === 'whatsapp' && (
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={busy || Boolean(resendingChannel)}
+            onClick={() => handleResendOtp('email')}
+          >
+            {resendingChannel === 'email' ? 'Enviando por e-mail…' : 'Não recebeu? Enviar por e-mail'}
           </Button>
         )}
         <Button
           type="button"
           variant="ghost"
+          className="dim"
           disabled={busy || Boolean(resendingChannel)}
-          onClick={() => handleResendOtp('email')}
+          onClick={() => handleResendOtp(activeChannel === 'whatsapp' ? 'whatsapp' : 'email')}
         >
-          {resendingChannel === 'email' ? 'Enviando por E-mail…' : '✉️ Reenviar código por E-mail'}
+          {resendingChannel
+            ? 'Reenviando código…'
+            : activeChannel === 'whatsapp'
+              ? 'Reenviar código pelo WhatsApp'
+              : 'Reenviar código por e-mail'}
         </Button>
         <Button
           type="button"

@@ -413,10 +413,11 @@ export async function sendVerificationEmail({
 }
 
 /**
- * Dispara o código de verificação de 6 dígitos de forma inteligente (Dual-Channel: WhatsApp + E-mail).
- * - Se `channel === 'whatsapp'`: envia via WhatsApp (Evolution API).
- * - Se `channel === 'email'`: envia via E-mail (Resend/SMTP) e, se o provedor de e-mail não estiver configurado mas houver WhatsApp, faz fallback automático para o WhatsApp.
- * - Se `channel === 'auto'`: dispara nos canais disponíveis (WhatsApp e/ou E-mail).
+ * Dispara o código de verificação de 6 dígitos em CANAL ÚNICO por tentativa (padrão grandes apps):
+ * - Se `channel === 'auto'` (1ª tentativa): envia PRIMEIRO apenas por E-mail (quando configurado).
+ *   Só faz fallback automático para o WhatsApp se o envio por E-mail não estiver configurado ou falhar.
+ * - Se `channel === 'email'`: envia apenas por E-mail (com fallback para WhatsApp só se E-mail não estiver configurado).
+ * - Se `channel === 'whatsapp'`: envia apenas por WhatsApp (Evolution API), exigindo entrega confirmada (`waRes.ok === true`).
  */
 export async function dispatchDualChannelVerification({
   dataDir,
@@ -441,17 +442,29 @@ export async function dispatchDualChannelVerification({
   const channelsSent = [];
   const errors = [];
 
-  const wantWhatsApp = Boolean(cleanPhone) && (
-    effectiveChannel === 'whatsapp' ||
-    effectiveChannel === 'auto' ||
-    (effectiveChannel === 'email' && !emailConfigured)
-  );
-  const wantEmail = Boolean(email) && (
-    effectiveChannel === 'email' ||
-    (effectiveChannel === 'auto' && emailConfigured)
-  );
+  const trySendEmail = async () => {
+    if (!email || !emailConfigured) return false;
+    const emailRes = await sendVerificationEmail({
+      to: email,
+      code,
+      studentName,
+      tenantName: effectiveTenantName,
+      purpose,
+      env
+    });
+    if (emailRes.ok) {
+      channelsSent.push('email');
+      return true;
+    }
+    if (emailRes.error) errors.push(`email: ${emailRes.error}`);
+    return false;
+  };
 
-  if (wantWhatsApp) {
+  const trySendWhatsApp = async () => {
+    if (!cleanPhone) {
+      errors.push('whatsapp: Telefone não cadastrado');
+      return false;
+    }
     try {
       const waMsg = formatVerificationWhatsAppMessage({
         code,
@@ -468,40 +481,47 @@ export async function dispatchDualChannelVerification({
         message: waMsg,
         tenantSettings: effectiveTenantSettings
       });
-      if (waRes.ok || waRes.queued) {
+      if (waRes.ok) {
         channelsSent.push('whatsapp');
-      } else if (waRes.error) {
-        errors.push(`whatsapp: ${waRes.error}`);
+        return true;
       }
+      if (waRes.error) {
+        errors.push(`whatsapp: ${waRes.error}`);
+      } else {
+        errors.push('whatsapp: WhatsApp indisponível no momento');
+      }
+      return false;
     } catch (err) {
       errors.push(`whatsapp: ${err?.message || 'erro'}`);
+      return false;
     }
-  }
+  };
 
-  if (wantEmail && emailConfigured) {
-    const emailRes = await sendVerificationEmail({
-      to: email,
-      code,
-      studentName,
-      tenantName: effectiveTenantName,
-      purpose,
-      env
-    });
-    if (emailRes.ok) {
-      channelsSent.push('email');
-    } else if (emailRes.error) {
-      errors.push(`email: ${emailRes.error}`);
+  if (effectiveChannel === 'whatsapp') {
+    await trySendWhatsApp();
+  } else if (effectiveChannel === 'email') {
+    const emailOk = await trySendEmail();
+    if (!emailOk && !emailConfigured && cleanPhone) {
+      await trySendWhatsApp();
+    }
+  } else {
+    // 'auto': padrão de mercado — envia APENAS no E-mail primeiro;
+    // só faz fallback automático para o WhatsApp se o e-mail não estiver configurado ou falhar.
+    const emailOk = await trySendEmail();
+    if (!emailOk && cleanPhone) {
+      await trySendWhatsApp();
     }
   }
 
   // Se nenhum provedor externo estiver configurado (ex.: ambiente local de desenvolvimento/teste),
   // marca o canal virtual 'email' como simulado para permitir fluxo completo de UX.
-  if (channelsSent.length === 0 && env?.NODE_ENV !== 'production') {
-    channelsSent.push(cleanPhone ? 'whatsapp' : 'email');
+  if (channelsSent.length === 0 && env?.NODE_ENV !== 'production' && effectiveChannel !== 'whatsapp') {
+    channelsSent.push(cleanPhone && !emailConfigured ? 'whatsapp' : 'email');
   }
 
   return {
     ok: channelsSent.length > 0,
+    primaryChannel: channelsSent[0] || null,
     channelsSent,
     maskedEmail: maskEmailAddress(email),
     maskedPhone: maskPhoneNumber(cleanPhone),

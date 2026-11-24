@@ -4422,12 +4422,20 @@ export function createSaasRoutes({
           preferredChannel: channel
         });
 
+        if (!delivery.ok && channel === 'whatsapp') {
+          return json(res, 503, { error: 'WhatsApp indisponível no momento. Use o envio por e-mail.', code: 'whatsapp-unavailable' });
+        }
+        if (!delivery.ok && channel === 'email') {
+          return json(res, 503, { error: 'Não foi possível enviar por e-mail agora. Tente receber pelo WhatsApp.', code: 'email-unavailable' });
+        }
+
         return json(res, 200, {
           ok: true,
           verificationRequired: true,
           purpose: 'reset',
           challengeId,
           expiresInSec: Math.round(OTP_TTL_MS / 1000),
+          primaryChannel: delivery.primaryChannel,
           channelsSent: delivery.channelsSent,
           maskedEmail: delivery.maskedEmail,
           maskedPhone: delivery.maskedPhone,
@@ -4520,12 +4528,20 @@ export function createSaasRoutes({
           preferredChannel: channel
         });
 
+        if (!delivery.ok && channel === 'whatsapp') {
+          return json(res, 503, { error: 'WhatsApp indisponível no momento. Use o envio por e-mail.', code: 'whatsapp-unavailable' });
+        }
+        if (!delivery.ok && channel === 'email') {
+          return json(res, 503, { error: 'Não foi possível enviar por e-mail agora. Tente receber pelo WhatsApp.', code: 'email-unavailable' });
+        }
+
         return json(res, 200, {
           ok: true,
           verificationRequired: true,
           purpose: 'register',
           challengeId,
           expiresInSec: Math.round(OTP_TTL_MS / 1000),
+          primaryChannel: delivery.primaryChannel,
           channelsSent: delivery.channelsSent,
           maskedEmail: delivery.maskedEmail,
           maskedPhone: delivery.maskedPhone,
@@ -4598,12 +4614,20 @@ export function createSaasRoutes({
         preferredChannel: channel
       });
 
+      if (!delivery.ok && channel === 'whatsapp') {
+        return json(res, 503, { error: 'WhatsApp indisponível no momento. Use o envio por e-mail.', code: 'whatsapp-unavailable' });
+      }
+      if (!delivery.ok && channel === 'email') {
+        return json(res, 503, { error: 'Não foi possível enviar por e-mail agora. Tente receber pelo WhatsApp.', code: 'email-unavailable' });
+      }
+
       return json(res, 200, {
         ok: true,
         verificationRequired: true,
         purpose: 'login',
         challengeId,
         expiresInSec: Math.round(OTP_TTL_MS / 1000),
+        primaryChannel: delivery.primaryChannel,
         channelsSent: delivery.channelsSent,
         maskedEmail: delivery.maskedEmail,
         maskedPhone: delivery.maskedPhone,

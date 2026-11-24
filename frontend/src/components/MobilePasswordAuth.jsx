@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store/useStore.js'
 import { useUI } from '../store/useUI.js'
 import { t } from '../lib/i18n.js'
-import { MIN_PASSWORD, looksLikeEmail, looksLikePhone, formatPhoneInput, passwordError } from './PasswordAuth.jsx'
+import { MIN_PASSWORD, looksLikeEmail, looksLikePhone, formatPhoneInput, passwordError, describeOtpChannel } from './PasswordAuth.jsx'
 import {
   rememberStudentNativeMode,
   RIT_STUDENT_SERVER,
@@ -328,6 +328,7 @@ export function MobilePasswordSignInSheet({
 
   // Screen: 6-Digit OTP Verification on New/Untrusted Device
   if (!reset && !forgot && otpState) {
+    const { activeChannel, destinationText } = describeOtpChannel(otpState)
     return (
       <div className="kb-lift rit-auth-sheet">
         <RitAuthTopBar onBack={() => { setOtpState(null); setOtpCode(''); setErr('') }} />
@@ -335,9 +336,7 @@ export function MobilePasswordSignInSheet({
         <div className="rit-auth-header">
           <h3 className="rit-auth-title">Verifique seu Acesso</h3>
           <p className="rit-auth-subtitle">
-            Enviamos um código de 6 dígitos para confirmar este aparelho
-            {otpState.maskedPhone ? ` no WhatsApp (${otpState.maskedPhone})` : ''}
-            {otpState.maskedEmail ? `${otpState.maskedPhone ? ' e ' : ' '}no e-mail (${otpState.maskedEmail})` : ''}.
+            Enviamos um código de 6 dígitos {destinationText} para confirmar este aparelho.
           </p>
         </div>
         <form className="rit-auth-form" onSubmit={submit} noValidate>
@@ -353,23 +352,37 @@ export function MobilePasswordSignInSheet({
           </button>
         </form>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 14 }}>
-          {otpState.hasPhone && (
+          {activeChannel !== 'whatsapp' && otpState.hasPhone && (
             <button
               type="button"
               className="rit-auth-pill-secondary"
               disabled={busy || Boolean(resendingChannel)}
               onClick={() => handleResendOtp('whatsapp', 'login')}
             >
-              {resendingChannel === 'whatsapp' ? 'Enviando no WhatsApp…' : 'Reenviar código por WhatsApp'}
+              {resendingChannel === 'whatsapp' ? 'Enviando pelo WhatsApp…' : 'Não recebeu? Enviar pelo WhatsApp'}
+            </button>
+          )}
+          {activeChannel === 'whatsapp' && (
+            <button
+              type="button"
+              className="rit-auth-pill-secondary"
+              disabled={busy || Boolean(resendingChannel)}
+              onClick={() => handleResendOtp('email', 'login')}
+            >
+              {resendingChannel === 'email' ? 'Enviando por e-mail…' : 'Não recebeu? Enviar por e-mail'}
             </button>
           )}
           <button
             type="button"
             className="rit-auth-pill-secondary"
             disabled={busy || Boolean(resendingChannel)}
-            onClick={() => handleResendOtp('email', 'login')}
+            onClick={() => handleResendOtp(activeChannel === 'whatsapp' ? 'whatsapp' : 'email', 'login')}
           >
-            {resendingChannel === 'email' ? 'Enviando por E-mail…' : 'Reenviar código por E-mail'}
+            {resendingChannel
+              ? 'Reenviando código…'
+              : activeChannel === 'whatsapp'
+                ? 'Reenviar código pelo WhatsApp'
+                : 'Reenviar código por e-mail'}
           </button>
         </div>
       </div>
@@ -385,7 +398,7 @@ export function MobilePasswordSignInSheet({
         <div className="rit-auth-header">
           <h3 className="rit-auth-title">Esqueceu a Senha?</h3>
           <p className="rit-auth-subtitle">
-            Digite seu e-mail cadastrado e enviaremos um código de verificação de 6 dígitos instantaneamente no seu WhatsApp e e-mail.
+            Digite seu e-mail cadastrado e enviaremos um código de 6 dígitos para o seu e-mail (com opção de envio pelo WhatsApp se preferir).
           </p>
         </div>
         <form className="rit-auth-form" onSubmit={handleRequestForgotCode} noValidate>
@@ -826,6 +839,7 @@ export function MobileRegisterSheet({
 
   // Screen: 6-Digit OTP Verification Step
   if (otpState) {
+    const { activeChannel, destinationText } = describeOtpChannel(otpState)
     return (
       <div className="kb-lift rit-auth-sheet">
         <RitAuthTopBar onBack={() => { setOtpState(null); setOtpCode(''); setErr('') }} />
@@ -833,10 +847,7 @@ export function MobileRegisterSheet({
         <div className="rit-auth-header">
           <h3 className="rit-auth-title">Confirme seu Código</h3>
           <p className="rit-auth-subtitle">
-            Enviamos um código de 6 dígitos para
-            {otpState.maskedPhone ? ` seu WhatsApp (${otpState.maskedPhone})` : ''}
-            {otpState.maskedEmail ? `${otpState.maskedPhone ? ' e ' : ' '}seu e-mail (${otpState.maskedEmail})` : ''}.
-            Digite-o abaixo para ativar sua conta.
+            Enviamos um código de 6 dígitos {destinationText}. Digite-o abaixo para ativar sua conta.
           </p>
         </div>
         <form className="rit-auth-form" onSubmit={submit} noValidate>
@@ -852,23 +863,37 @@ export function MobileRegisterSheet({
           </button>
         </form>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 14 }}>
-          {otpState.hasPhone && (
+          {activeChannel !== 'whatsapp' && otpState.hasPhone && (
             <button
               type="button"
               className="rit-auth-pill-secondary"
               disabled={busy || Boolean(resendingChannel)}
               onClick={() => handleResendOtp('whatsapp')}
             >
-              {resendingChannel === 'whatsapp' ? 'Enviando no WhatsApp…' : 'Reenviar código por WhatsApp'}
+              {resendingChannel === 'whatsapp' ? 'Enviando pelo WhatsApp…' : 'Não recebeu? Enviar pelo WhatsApp'}
+            </button>
+          )}
+          {activeChannel === 'whatsapp' && (
+            <button
+              type="button"
+              className="rit-auth-pill-secondary"
+              disabled={busy || Boolean(resendingChannel)}
+              onClick={() => handleResendOtp('email')}
+            >
+              {resendingChannel === 'email' ? 'Enviando por e-mail…' : 'Não recebeu? Enviar por e-mail'}
             </button>
           )}
           <button
             type="button"
             className="rit-auth-pill-secondary"
             disabled={busy || Boolean(resendingChannel)}
-            onClick={() => handleResendOtp('email')}
+            onClick={() => handleResendOtp(activeChannel === 'whatsapp' ? 'whatsapp' : 'email')}
           >
-            {resendingChannel === 'email' ? 'Enviando por E-mail…' : 'Reenviar código por E-mail'}
+            {resendingChannel
+              ? 'Reenviando código…'
+              : activeChannel === 'whatsapp'
+                ? 'Reenviar código pelo WhatsApp'
+                : 'Reenviar código por e-mail'}
           </button>
         </div>
       </div>

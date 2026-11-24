@@ -213,11 +213,11 @@ describe('MobileOnboarding & web-like mobile password auth', () => {
       })
     )
 
-    // Now on the 6-digit OTP confirmation screen
+    // Now on the 6-digit OTP confirmation screen (Email primary + WhatsApp alternative)
     const otpInput = host.querySelector('input[name="otp-code"]')
     expect(otpInput).toBeTruthy()
-    expect(buttonByText('Reenviar código por WhatsApp')).toBeTruthy()
-    expect(buttonByText('Reenviar código por E-mail')).toBeTruthy()
+    expect(buttonByText('Não recebeu? Enviar pelo WhatsApp')).toBeTruthy()
+    expect(buttonByText('Reenviar código por e-mail')).toBeTruthy()
 
     type(otpInput, '654321')
     await act(async () => { buttonByText('Confirmar código e ativar conta').click() })
