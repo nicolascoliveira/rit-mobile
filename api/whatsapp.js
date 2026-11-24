@@ -13,6 +13,7 @@
  */
 
 import fs from 'node:fs';
+import path from 'node:path';
 import dns from 'node:dns';
 import crypto from 'node:crypto';
 import { Agent as UndiciAgent, fetch as undiciFetch } from 'undici';
@@ -247,6 +248,82 @@ export function cleanWhatsAppPhone(raw) {
 
   // Outros números internacionais
   return digits;
+}
+
+function brazilPhoneVariants(clean) {
+  const digits = String(clean || '').replace(/\D/g, '');
+  if (!digits) return [];
+  const out = [digits];
+  if (digits.startsWith('55') && digits.length === 13 && digits[4] === '9') {
+    out.push(digits.slice(0, 4) + digits.slice(5));
+  } else if (digits.startsWith('55') && digits.length === 12) {
+    out.push(digits.slice(0, 4) + '9' + digits.slice(4));
+  }
+  return out;
+}
+
+/**
+ * Resolve o JID `@lid` salvo pelo Baileys em `<DATA_DIR>/evolution_instances/<id>/lid-mapping-<num>.json`.
+ * Contorna o bug do Evolution API v2.3.x / Baileys 7.0.0-rc.9 onde envios para `@s.whatsapp.net`
+ * retornam Erro 463 (`NackCallerReachoutTimelocked`) enquanto o envio direto para `<lid>@lid` entrega com `DELIVERY_ACK`.
+ */
+export function lookupLocalEvolutionLid(cleanPhone, dataDir = process.env.DATA_DIR || '') {
+  if (!cleanPhone || !dataDir) return null;
+  const instancesRoot = path.join(String(dataDir), 'evolution_instances');
+  let dirs;
+  try {
+    if (!fs.existsSync(instancesRoot)) return null;
+    dirs = fs.readdirSync(instancesRoot, { withFileTypes: true }).filter(d => d.isDirectory());
+  } catch {
+    return null;
+  }
+  if (!dirs.length) return null;
+  const variants = brazilPhoneVariants(cleanPhone);
+  for (const dir of dirs) {
+    for (const v of variants) {
+      const mappingFile = path.join(instancesRoot, dir.name, `lid-mapping-${v}.json`);
+      try {
+        if (!fs.existsSync(mappingFile)) continue;
+        const parsed = JSON.parse(fs.readFileSync(mappingFile, 'utf8'));
+        const lidDigits = String(parsed || '').replace(/\D/g, '');
+        if (lidDigits.length >= 8 && lidDigits.length <= 25) {
+          return `${lidDigits}@lid`;
+        }
+      } catch {
+        // ignora arquivo corrompido ou ilegível
+      }
+    }
+  }
+  return null;
+}
+
+async function resolveEvolutionDeliveryNumber(clean, cfg, { dataDir = process.env.DATA_DIR || '', lookup = dns.promises.lookup } = {}) {
+  if (!cfg?.allowInternalPlatform || !dataDir) return clean;
+  const cachedLid = lookupLocalEvolutionLid(clean, dataDir);
+  if (cachedLid) return cachedLid;
+
+  const instancesRoot = path.join(String(dataDir), 'evolution_instances');
+  try {
+    if (!fs.existsSync(instancesRoot)) return clean;
+  } catch {
+    return clean;
+  }
+
+  // Pré-aquece o mapeamento PN → LID no Baileys para números novos antes do primeiro envio
+  await fetchEvolutionJson(
+    cfg.url,
+    `/chat/whatsappNumbers/${encodeURIComponent(cfg.instance)}`,
+    {
+      method: 'POST',
+      apiKey: cfg.apiKey,
+      body: { numbers: [clean] },
+      timeoutMs: 4000,
+      allowInternalPlatform: cfg.allowInternalPlatform,
+      lookup
+    }
+  ).catch(() => null);
+
+  return lookupLocalEvolutionLid(clean, dataDir) || clean;
 }
 
 function formatKgValuePtBr(value) {
@@ -503,6 +580,7 @@ export async function sendEvolutionTextMessage({
   message,
   config = {},
   tenantSettings = {},
+  dataDir = process.env.DATA_DIR || '',
   allowPlatformFallback = true,
   lookup = dns.promises.lookup
 }) {
@@ -520,13 +598,14 @@ export async function sendEvolutionTextMessage({
     return { ok: false, ...(cfg.status ? { status: cfg.status } : {}), error: cfg.error };
   }
 
+  const targetNumber = await resolveEvolutionDeliveryNumber(clean, cfg, { dataDir, lookup });
   const res = await fetchEvolutionJson(
     cfg.url,
     `/message/sendText/${encodeURIComponent(cfg.instance)}`,
     {
       method: 'POST',
       apiKey: cfg.apiKey,
-      body: { number: clean, text: message },
+      body: { number: targetNumber, text: message },
       timeoutMs: 8000,
       allowInternalPlatform: cfg.allowInternalPlatform,
       lookup,
@@ -550,6 +629,7 @@ export async function sendEvolutionDocumentMessage({
   caption = '',
   config = {},
   tenantSettings = {},
+  dataDir = process.env.DATA_DIR || '',
   allowPlatformFallback = true,
   lookup = dns.promises.lookup
 }) {
@@ -569,6 +649,7 @@ export async function sendEvolutionDocumentMessage({
     return { ok: false, ...(cfg.status ? { status: cfg.status } : {}), error: cfg.error };
   }
 
+  const targetNumber = await resolveEvolutionDeliveryNumber(clean, cfg, { dataDir, lookup });
   const res = await fetchEvolutionJson(
     cfg.url,
     `/message/sendMedia/${encodeURIComponent(cfg.instance)}`,
@@ -576,7 +657,7 @@ export async function sendEvolutionDocumentMessage({
       method: 'POST',
       apiKey: cfg.apiKey,
       body: {
-        number: clean,
+        number: targetNumber,
         mediatype: 'document',
         mimetype,
         caption: String(caption || ''),
@@ -784,7 +865,7 @@ export async function fetchEvolutionInstances({
   };
 }
 
-async function sendOutboxItemViaEvolution({ phone, message, document = null, config = {}, tenantSettings = {} }) {
+async function sendOutboxItemViaEvolution({ phone, message, document = null, config = {}, tenantSettings = {}, dataDir = process.env.DATA_DIR || '' }) {
   if (document?.mediaBase64) {
     return sendEvolutionDocumentMessage({
       phone,
@@ -793,10 +874,11 @@ async function sendOutboxItemViaEvolution({ phone, message, document = null, con
       mimetype: document.mimetype || 'application/pdf',
       caption: message || '',
       config,
-      tenantSettings
+      tenantSettings,
+      dataDir
     });
   }
-  return sendEvolutionTextMessage({ phone, message, config, tenantSettings });
+  return sendEvolutionTextMessage({ phone, message, config, tenantSettings, dataDir });
 }
 
 function compactSentPayload(payload) {
@@ -899,7 +981,8 @@ export async function dispatchWhatsAppWithRetry({
         message,
         document: safeDoc,
         config,
-        tenantSettings: effectiveSettings
+        tenantSettings: effectiveSettings,
+        dataDir
       });
     } catch (err) {
       result = { ok: false, error: err?.message || 'Falha de envio Evolution API' };
