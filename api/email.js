@@ -192,35 +192,41 @@ function buildVerificationEmailHtml({ code, studentName = 'Aluno(a)', tenantName
 }
 
 /**
- * Envia e-mail via SMTP TLS direto (porta 465) usando `node:tls` (compatível com Gmail App Password, Titan, Hostinger, Zoho).
+ * Envia e-mail via SMTP TLS direto (porta 465) ou STARTTLS (porta 587/25) usando `node:net` e `node:tls`
+ * (compatível com OCI Email Delivery, Mailcow, Gmail App Password, Titan, Hostinger, Zoho e Amazon SES).
  */
-function sendSmtpTlsMail({ host, port = 465, user, pass, from, to, subject, html, textBody, timeoutMs = 10000 }) {
+function sendSmtpTlsMail({ host, port = 465, user, pass, from, to, subject, html, textBody, timeoutMs = 12000 }) {
   return new Promise((resolve) => {
     let settled = false;
+    const numericPort = Number(port) || 465;
+    const useStartTls = numericPort === 587 || numericPort === 25;
+    let activeSocket = null;
+
     const finish = res => {
       if (settled) return;
       settled = true;
+      clearTimeout(timer);
       resolve(res);
     };
 
-    const socket = tls.connect({ host, port: Number(port) || 465, servername: host, rejectUnauthorized: true });
     const timer = setTimeout(() => {
-      try { socket.destroy(); } catch { /* ignore */ }
+      try { activeSocket?.destroy(); } catch { /* ignore */ }
       finish({ ok: false, provider: 'smtp', error: 'Tempo esgotado ao conectar ao servidor SMTP' });
     }, timeoutMs);
 
-    let step = 0;
+    let step = useStartTls ? -2 : 0;
     let buf = '';
-    const sendLine = line => socket.write(line + '\r\n');
+    const sendLine = line => activeSocket?.write(line + '\r\n');
     const fromAddr = (/<([^>]+)>/.exec(from)?.[1] || from || user).trim();
+    const fromDomain = (fromAddr.split('@')[1] || 'treinerit.com.br').replace(/[^a-zA-Z0-9.-]/g, '') || 'treinerit.com.br';
     const toAddr = String(to).trim();
+    const dotStuff = s => String(s || '').replace(/\r?\n/g, '\r\n').replace(/(^|\r\n)\./g, '$1..');
 
-    socket.on('error', err => {
-      clearTimeout(timer);
+    const handleError = err => {
       finish({ ok: false, provider: 'smtp', error: err?.message || 'Erro de conexão SMTP' });
-    });
+    };
 
-    socket.on('data', chunk => {
+    const handleData = chunk => {
       buf += chunk.toString('utf8');
       const lines = buf.split('\r\n');
       buf = lines.pop() || '';
@@ -228,14 +234,37 @@ function sendSmtpTlsMail({ host, port = 465, user, pass, from, to, subject, html
         if (!/^\d{3} /.test(line)) continue;
         const code = Number(line.slice(0, 3));
         if (code >= 400) {
-          clearTimeout(timer);
-          try { sendLine('QUIT'); socket.end(); } catch { /* ignore */ }
+          try { sendLine('QUIT'); activeSocket?.end(); } catch { /* ignore */ }
           finish({ ok: false, provider: 'smtp', error: `SMTP ${line}` });
           return;
         }
-        if (step === 0 && code === 220) {
+        if (step === -2 && code === 220) {
+          step = -1;
+          sendLine(`EHLO ${fromDomain}`);
+        } else if (step === -1 && code === 250) {
+          step = -0.5;
+          sendLine('STARTTLS');
+        } else if (step === -0.5 && code === 220) {
           step = 1;
-          sendLine(`EHLO rit.app`);
+          const plainSocket = activeSocket;
+          plainSocket.removeListener('data', handleData);
+          plainSocket.removeListener('error', handleError);
+          buf = '';
+          const tlsSocket = tls.connect({
+            socket: plainSocket,
+            servername: host,
+            rejectUnauthorized: true
+          });
+          activeSocket = tlsSocket;
+          tlsSocket.on('error', handleError);
+          tlsSocket.on('data', handleData);
+          tlsSocket.once('secureConnect', () => {
+            sendLine(`EHLO ${fromDomain}`);
+          });
+          return;
+        } else if (step === 0 && code === 220) {
+          step = 1;
+          sendLine(`EHLO ${fromDomain}`);
         } else if (step === 1 && code === 250) {
           step = 2;
           sendLine('AUTH LOGIN');
@@ -257,9 +286,12 @@ function sendSmtpTlsMail({ host, port = 465, user, pass, from, to, subject, html
         } else if (step === 7 && code === 354) {
           step = 8;
           const boundary = 'rit_mime_' + crypto.randomBytes(8).toString('hex');
+          const msgId = `<${crypto.randomBytes(12).toString('hex')}@${fromDomain}>`;
           const msg = [
             `From: ${from || user}`,
             `To: <${toAddr}>`,
+            `Date: ${new Date().toUTCString()}`,
+            `Message-ID: ${msgId}`,
             `Subject: =?UTF-8?B?${Buffer.from(subject, 'utf8').toString('base64')}?=`,
             `MIME-Version: 1.0`,
             `Content-Type: multipart/alternative; boundary="${boundary}"`,
@@ -268,24 +300,30 @@ function sendSmtpTlsMail({ host, port = 465, user, pass, from, to, subject, html
             `Content-Type: text/plain; charset=UTF-8`,
             `Content-Transfer-Encoding: 8bit`,
             ``,
-            textBody,
+            dotStuff(textBody),
             `--${boundary}`,
             `Content-Type: text/html; charset=UTF-8`,
             `Content-Transfer-Encoding: 8bit`,
             ``,
-            html,
+            dotStuff(html),
             `--${boundary}--`,
             `.`
           ].join('\r\n');
           sendLine(msg);
         } else if (step === 8 && code === 250) {
           step = 9;
-          clearTimeout(timer);
-          try { sendLine('QUIT'); socket.end(); } catch { /* ignore */ }
+          try { sendLine('QUIT'); activeSocket?.end(); } catch { /* ignore */ }
           finish({ ok: true, provider: 'smtp' });
         }
       }
-    });
+    };
+
+    activeSocket = useStartTls
+      ? net.connect({ host, port: numericPort })
+      : tls.connect({ host, port: numericPort, servername: host, rejectUnauthorized: true });
+
+    activeSocket.on('error', handleError);
+    activeSocket.on('data', handleData);
   });
 }
 
@@ -311,7 +349,7 @@ export async function sendVerificationEmail({
   const html = buildVerificationEmailHtml({ code, studentName, tenantName: gym, purpose });
 
   const resendKey = String(env?.RESEND_API_KEY || '').trim();
-  const fromAddress = String(env?.EMAIL_FROM || env?.SMTP_FROM || `${gym} <nao-responda@treinerit.com.br>`).trim();
+  const fromAddress = String(env?.EMAIL_FROM || env?.SMTP_FROM || `${gym} <noreply@treinerit.com.br>`).trim();
 
   if (resendKey && !/^(test|mock|changeme|placeholder)$/i.test(resendKey)) {
     try {
