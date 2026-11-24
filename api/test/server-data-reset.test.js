@@ -12,6 +12,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { boundPort } from './helpers.mjs';
+import { readUserStateSqlite, closeAllSqliteInstances } from '../sqlite.js';
 
 const API = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SECRET = crypto.randomBytes(32).toString('hex');
@@ -36,7 +37,11 @@ async function startServer(t) {
   const h = { log: '', dataDir };
   child.stdout.on('data', d => h.log += d);
   child.stderr.on('data', d => h.log += d);
-  t.after(() => { child.kill('SIGKILL'); fs.rmSync(dataDir, { recursive: true, force: true }); });
+  t.after(() => {
+    try { child.kill('SIGKILL'); } catch {}
+    closeAllSqliteInstances();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
   h.port = await boundPort(child, () => h.log);
   h.api = `http://127.0.0.1:${h.port}`;
   return h;
@@ -48,7 +53,7 @@ test('PUT /api/data keeps the reset stamp when a write lacks it or carries an ol
     const r = await fetch(`${h.api}/api/data`, { method: 'PUT', headers: headers(), body: JSON.stringify(body) });
     return { status: r.status, body: await r.json() };
   };
-  const onDisk = () => JSON.parse(fs.readFileSync(path.join(h.dataDir, `state-${UID}.json`), 'utf8'));
+  const onDisk = () => readUserStateSqlite(h.dataDir, UID);
   const ids = { workouts: ['w-old'] };
 
   // the reset
@@ -80,7 +85,7 @@ test('PUT /api/data: a profile never reset gets no stamp', async t => {
   const h = await startServer(t);
   const r = await fetch(`${h.api}/api/data`, { method: 'PUT', headers: headers(), body: JSON.stringify({ state: { _ts: 1, workouts: [], routines: [] } }) });
   assert.equal(r.status, 200);
-  const doc = JSON.parse(fs.readFileSync(path.join(h.dataDir, `state-${UID}.json`), 'utf8'));
+  const doc = readUserStateSqlite(h.dataDir, UID);
   assert.equal('resetAt' in doc, false);
   assert.equal('resetIds' in doc, false);
 });

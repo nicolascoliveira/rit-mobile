@@ -322,9 +322,22 @@ function timingSafeHexEqual(receivedHex, expectedHex) {
 
 function extractPaymentIdFromRawBody(rawText) {
   if (!rawText) return '';
+  try {
+    const parsed = JSON.parse(rawText);
+    if (parsed?.data?.id !== undefined && parsed?.data?.id !== null) {
+      return String(parsed.data.id);
+    }
+  } catch { /* fallback para extração tolerante via regex */ }
   const dataObjMatch = /"data"\s*:\s*\{[^}]*"id"\s*:\s*(?:"([^"]+)"|([0-9]+))/.exec(rawText);
   if (dataObjMatch) return dataObjMatch[1] || dataObjMatch[2] || '';
   return '';
+}
+
+function isWebhookTimestampFresh(rawTs, nowMs = Date.now(), maxSkewMs = 10 * 60_000) {
+  const num = Number(rawTs);
+  if (!Number.isFinite(num) || num <= 0) return false;
+  const tsMs = num < 1e12 ? num * 1000 : num;
+  return Math.abs(nowMs - tsMs) <= maxSkewMs;
 }
 
 /**
@@ -381,8 +394,11 @@ export function verifyWebhookSignature({ headers = {}, query = {}, rawBody = '',
       })
   );
 
+  const enforceTimestampWindow = env?.NODE_ENV === 'production';
+
   // Modo raw payload com timestamp (`t=...,v1=...`, padrão HMAC sobre `${ts}.${rawBody}`)
   if (parts.t && parts.v1 && !parts.ts) {
+    if (enforceTimestampWindow && !isWebhookTimestampFresh(parts.t)) return false;
     const signedPayload = Buffer.concat([Buffer.from(`${parts.t}.`, 'utf8'), rawBuf]);
     const expectedRaw = crypto.createHmac('sha256', secret).update(signedPayload).digest('hex');
     return timingSafeHexEqual(parts.v1, expectedRaw);
@@ -391,6 +407,7 @@ export function verifyWebhookSignature({ headers = {}, query = {}, rawBody = '',
   const ts = parts.ts;
   const hash = parts.v1;
   if (!ts || !hash) return false;
+  if (enforceTimestampWindow && !isWebhookTimestampFresh(ts)) return false;
 
   const dataId = queryDataId || rawExtractedId || String(bodyDataId || '').trim();
   const manifest = `id:${dataId};request-id:${xRequestId};ts:${ts};`;

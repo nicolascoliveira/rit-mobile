@@ -261,11 +261,11 @@ export default function Home() {
                 <span style={{ fontWeight: 700, fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {branding.gymName}
                 </span>
-                <span style={{ fontSize: 10, background: 'var(--surface-3)', color: 'var(--acc-ink)', padding: '1px 5px', borderRadius: 4, fontWeight: 700 }}>
+                <span style={{ fontSize: 14, background: 'var(--surface-3)', color: 'var(--acc-ink)', padding: '2px 7px', borderRadius: 6, fontWeight: 700 }}>
                   Rit
                 </span>
               </div>
-              <div className="muted small" style={{ fontSize: 11.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <div className="muted small" style={{ fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {branding.slogan || (branding.accountType === 'personal' ? 'Consultoria & Treinos' : 'App Oficial da Academia')}
               </div>
             </div>
@@ -299,7 +299,7 @@ export default function Home() {
           <div
             className="muted small"
             style={{
-              fontSize: 11.5,
+              fontSize: 14,
               paddingTop: 6,
               borderTop: 'var(--hair) solid var(--sep)',
               whiteSpace: 'nowrap',
@@ -348,7 +348,7 @@ export default function Home() {
           <button
             type="button"
             className="iconbtn"
-            style={{ width: 32, height: 32, flexShrink: 0 }}
+            style={{ width: 36, height: 36, flexShrink: 0 }}
             onClick={dismissPrescriptionNotice}
             aria-label="Dispensar aviso"
           >
@@ -404,7 +404,7 @@ export default function Home() {
           <button
             type="button"
             className="iconbtn"
-            style={{ width: 32, height: 32, flexShrink: 0 }}
+            style={{ width: 36, height: 36, flexShrink: 0 }}
             onClick={dismissVideoReviewNotice}
             aria-label="Dispensar parecer técnico"
           >
@@ -442,7 +442,7 @@ export default function Home() {
           <button
             type="button"
             className="iconbtn"
-            style={{ width: 32, height: 32, flexShrink: 0 }}
+            style={{ width: 36, height: 36, flexShrink: 0 }}
             onClick={dismissPushPrompt}
             aria-label="Fechar aviso"
           >
@@ -471,9 +471,9 @@ export default function Home() {
         <div style={{ marginTop: 10 }}><Button size="sm" variant="tinted" onClick={() => nav('/plan')}>{t('Set up in Plan')}</Button></div>
       </div>) : <>
         <div className="row between" style={{ marginBottom: 8 }}>
-          <button className="iconbtn" style={{ width: 30, height: 30, fontSize: 'var(--fs-subhead)' }} onClick={() => setWeekOffset(w => w - 1)} aria-label={t('Previous week')}><Icon name="chevronLeft" /></button>
+          <button className="iconbtn" style={{ width: 36, height: 36, fontSize: 'var(--fs-subhead)' }} onClick={() => setWeekOffset(w => w - 1)} aria-label={t('Previous week')}><Icon name="chevronLeft" /></button>
           <div className="small muted" style={{ fontWeight: 500 }}>{wkLabel}</div>
-          <button className="iconbtn" style={{ width: 30, height: 30, fontSize: 'var(--fs-subhead)' }} onClick={() => setWeekOffset(w => w + 1)} aria-label={t('Next week')}><Icon name="chevronRight" /></button>
+          <button className="iconbtn" style={{ width: 36, height: 36, fontSize: 'var(--fs-subhead)' }} onClick={() => setWeekOffset(w => w + 1)} aria-label={t('Next week')}><Icon name="chevronRight" /></button>
         </div>
         <div className="week">{strip}</div>
       </>}
@@ -500,7 +500,7 @@ export default function Home() {
               : doneToday ? (doneToday.name ? t('{0} (done)', doneToday.name) : t('Workout done'))
               : routine ? todayName : t('Rest day')}{todayOvr && routine && !doneToday ? ' · ' + t('rescheduled') : ''}</div>
             {(routine?.prescribedBy?.name || routine?.prescribedBy?.trainerName) && !S.active && !doneToday && (
-              <div className="ss muted" style={{ fontSize: '11px', marginTop: 1, color: 'var(--acc-ink)' }}>
+              <div className="ss muted" style={{ fontSize: '14px', marginTop: 1, color: 'var(--acc-ink)' }}>
                 Prescrito pelo Prof. {routine.prescribedBy.name || routine.prescribedBy.trainerName}
               </div>
             )}
@@ -518,7 +518,12 @@ export default function Home() {
           and your other routines) is only reachable on a day with nothing planned. The one other
           way in, "Choose a different workout" on the weigh-in sheet, does not exist when the
           weigh-in is switched off. This is that door, and it starts nothing on its own. */}
-      {!S.active && <div style={{ display: 'flex', justifyContent: 'center', marginTop: 4 }}>
+      {!S.active && <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
+        {branding.isCustomTenant && S.routines.length > 0 && !todayRoutines.length && !doneToday && (
+          <Button size="sm" variant="tinted" icon="dumbbell" onClick={() => nav('/plan')}>
+            {t('Ver minhas fichas ({0})', S.routines.length)}
+          </Button>
+        )}
         <Button size="sm" variant="ghost" className="dim" icon="swap" onClick={() => nav('/workout')}>
           {t('Choose a different workout')}
         </Button>
@@ -551,11 +556,39 @@ export default function Home() {
     )}
 
     {!S.routines.length && !S.active && (
-      <div className="card">
-        <CardHead icon="calendar" title={t('Welcome!')} sub={t('Set up your weekly routine to get going, or grab a ready-made starter plan.')} />
-        <Button variant="primary" icon="clipboard" onClick={starterPlanSheet}>{t('Load starter plan')}</Button>
-        <div style={{ height: 8 }} /><Button onClick={() => nav('/plan')}>{t('Build my own plan')}</Button>
-      </div>
+      branding.isCustomTenant ? (
+        <div className="card">
+          <CardHead
+            icon="clipboard"
+            title={t('Aguardando sua ficha de treino')}
+            sub={t('A equipe da {0} está preparando seu plano de treino personalizado.', branding.gymName || 'Rit')}
+          />
+          {branding.contactPhone && (
+            <>
+              <Button
+                variant="primary"
+                icon="whatsapp"
+                onClick={() => {
+                  const digits = String(branding.contactPhone).replace(/\D/g, '').replace(/^(?!55)/, '55');
+                  window.open(`https://wa.me/${digits}`, '_blank', 'noopener,noreferrer');
+                }}
+              >
+                {t('Falar com a academia no WhatsApp')}
+              </Button>
+              <div style={{ height: 8 }} />
+            </>
+          )}
+          <Button variant={branding.contactPhone ? 'ghost' : 'primary'} onClick={() => nav('/workout')}>
+            {t('Iniciar treino livre')}
+          </Button>
+        </div>
+      ) : (
+        <div className="card">
+          <CardHead icon="calendar" title={t('Welcome!')} sub={t('Set up your weekly routine to get going, or grab a ready-made starter plan.')} />
+          <Button variant="primary" icon="clipboard" onClick={starterPlanSheet}>{t('Load starter plan')}</Button>
+          <div style={{ height: 8 }} /><Button onClick={() => nav('/plan')}>{t('Build my own plan')}</Button>
+        </div>
+      )
     )}
 
     {on('body') && S.showWeightCard !== false && <div className="card">

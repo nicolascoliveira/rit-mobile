@@ -90,6 +90,17 @@ export function clearUser(uid) {
   invalidateCohort();
 }
 
+export function tenantOfUser(uid) {
+  if (!uid || !fs.existsSync(DATA)) return 'default';
+  try {
+    const inst = getSqliteInstance(DATA);
+    const row = inst.db.prepare('SELECT tenant_id FROM users WHERE id = ?').get(String(uid));
+    return row?.tenant_id ? String(row.tenant_id) : 'default';
+  } catch {
+    return 'default';
+  }
+}
+
 /** Every profile with a state record (SQLite `user_states` or legacy file) — the population a cohort is drawn from. */
 export function listUserIds() {
   if (!fs.existsSync(DATA)) return [];

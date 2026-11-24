@@ -46,11 +46,13 @@ import {
   completeApiIdempotencySqlite,
   markApiIdempotencyRetryableSqlite,
   getApiIdempotencyRecordSqlite,
+  checkOtpSendQuotaSqlite,
   createAuthVerificationSqlite,
   getAuthVerificationSqlite,
   incrementAuthVerificationAttemptsSqlite,
   deleteAuthVerificationSqlite
 } from './sqlite.js';
+import { createWindow } from './rate-limit.js';
 import {
   OTP_TTL_MS,
   MAX_OTP_ATTEMPTS,
@@ -590,6 +592,13 @@ export function createSaasRoutes({
     return 'rit-default-secret';
   };
   const recentPrescriptionPushByStudent = new Map();
+  const manualWaBurst = createWindow({ max: 30, windowMs: 10 * 60_000 });
+  const manualWaTestBurst = createWindow({ max: 10, windowMs: 10 * 60_000 });
+  const shouldEchoDevOtp = () => (
+    process.env.NODE_ENV !== 'production' &&
+    !process.env.MERCADO_PAGO_ACCESS_TOKEN &&
+    process.env.ALLOW_DEV_OTP_ECHO !== '0'
+  );
   const replyDomainError = (targetRes, err, fallbackStatus = 400, replyFn = json) => {
     if (err instanceof DomainError || err?.name === 'DomainError') {
       return replyFn(targetRes, err.httpStatus || fallbackStatus, {
@@ -911,7 +920,7 @@ export function createSaasRoutes({
 
     let gen;
     do {
-      gen = crypto.randomBytes(4).toString('hex').toUpperCase();
+      gen = crypto.randomBytes(8).toString('hex').toUpperCase();
     } while (db.invites.some(i => i.code === gen));
 
     const created = {
@@ -1320,6 +1329,15 @@ export function createSaasRoutes({
 
         const phone = String(body?.phone || '').trim().slice(0, 40);
         const city = String(body?.city || '').trim().slice(0, 80);
+        if (body?.termsAccepted === false) {
+          return replyJson(res, 400, {
+            error: 'É necessário aceitar os Termos de Uso e a Política de Privacidade (LGPD) para criar a conta.',
+            code: 'terms-required'
+          });
+        }
+        const termsAcceptedAt = typeof body?.termsAcceptedAt === 'string' && body.termsAcceptedAt.trim()
+          ? body.termsAcceptedAt.trim().slice(0, 40)
+          : null;
 
         // Pre-check rápido antes de gastar CPU com scrypt
         if (db.users.some(u => normalizeEmail(u.email || '') === email)) {
@@ -1376,6 +1394,7 @@ export function createSaasRoutes({
               role: 'trainer',
               owner: true,
               phone,
+              ...(termsAcceptedAt ? { termsAcceptedAt } : {}),
               createdAt: nowIso,
               pw: { h: pwHash, set: nowIso },
               sv: 1
@@ -1558,6 +1577,110 @@ export function createSaasRoutes({
         ...(loginAccess?.blocked ? { accessBlocked: true, blockReason: loginAccess.reason } : {}),
         plans: listSaasPlans(dataDir)
       }, sessionCookie ? { 'Set-Cookie': sessionCookie(target) } : undefined);
+    },
+
+    'POST /api/saas/auth/password-reset': async (req, res) => {
+      const body = await readBody(req);
+      const email = normalizeEmail(body?.email || body?.identifier || '');
+      const challengeId = String(body?.challengeId || '').trim();
+      const otpCode = String(body?.otpCode || body?.code || '').trim();
+      const password = String(body?.password ?? body?.next ?? '');
+
+      if (!email || !challengeId || !otpCode) {
+        return json(res, 400, {
+          error: 'Informe e-mail, código de verificação e a nova senha.',
+          code: 'missing'
+        });
+      }
+
+      const user = db.users.find(u => u && normalizeEmail(u.email || '') === email) || null;
+      if (!user) {
+        return json(res, 400, { error: 'Código de verificação inválido ou expirado.', code: 'reset-invalid' });
+      }
+      if (isSuperAdmin(user)) {
+        return json(res, 403, {
+          error: 'Contas de Super Administrador exigem redefinição via console seguro do servidor.',
+          code: 'superadmin-reset-blocked'
+        });
+      }
+      if (user.disabled) {
+        return json(res, 403, { error: 'Esta conta foi desativada.', code: 'disabled' });
+      }
+      if (isStudentAccount(user)) {
+        return json(res, 403, {
+          error: 'Use o aplicativo do aluno para redefinir sua senha de treino.',
+          code: 'student-account',
+          tenantId: user.tenantId || ''
+        });
+      }
+
+      const pwErr = b2bPasswordError(password, user.name || email);
+      if (pwErr) {
+        return json(res, 400, pwErr);
+      }
+
+      const secretKey = resolveAuthSecret();
+      const preRow = getAuthVerificationSqlite(dataDir, challengeId);
+      const preValid = preRow &&
+        preRow.purpose === 'reset' &&
+        preRow.email === email &&
+        preRow.expiresAt > Date.now() &&
+        preRow.attempts < MAX_OTP_ATTEMPTS &&
+        verifyOtpCode(otpCode, preRow.codeHash, secretKey, preRow.id);
+
+      if (!preValid) {
+        if (preRow) incrementAuthVerificationAttemptsSqlite(dataDir, preRow.id);
+        audit(req, 'saas.password.reset', { ok: false, user, msg: 'reset-invalid' });
+        return json(res, 400, { error: 'Código de verificação inválido ou expirado.', code: 'reset-invalid' });
+      }
+
+      const newHash = await hashPassword(password);
+      const nowIso = new Date().toISOString();
+
+      const txResult = runInTransaction(getSqliteInstance(dataDir), () => {
+        const row = getAuthVerificationSqlite(dataDir, challengeId);
+        if (
+          !row ||
+          row.purpose !== 'reset' ||
+          row.email !== email ||
+          row.expiresAt <= Date.now() ||
+          row.attempts >= MAX_OTP_ATTEMPTS ||
+          !verifyOtpCode(otpCode, row.codeHash, secretKey, row.id)
+        ) {
+          return { ok: false };
+        }
+        deleteAuthVerificationSqlite(dataDir, row.id);
+        user.pw = { h: newHash, set: nowIso };
+        delete user.pwReset;
+        user.sv = (Number(user.sv) || 0) + 1;
+        user.emailVerified = true;
+        if (hasSqliteDir) upsertUserSqlite(dataDir, user, null);
+        saveDb();
+        return { ok: true };
+      });
+
+      if (!txResult.ok) {
+        audit(req, 'saas.password.reset', { ok: false, user, msg: 'reset-invalid' });
+        return json(res, 400, { error: 'Código de verificação inválido ou expirado.', code: 'reset-invalid' });
+      }
+
+      audit(req, 'saas.password.reset', { user });
+      const token = makeSession ? makeSession(user, 'b') : 'dev-token-' + user.id;
+      const tenant = user.tenantId ? getTenant(dataDir, user.tenantId) : null;
+      const safeTenant = sanitizeTenantForRole(tenant, isGymManagerOrOwner(user));
+      const access = user.tenantId ? getTenantAccessState(dataDir, user.tenantId) : null;
+      const canAccessBillingOnly = isGymManagerOrOwner(user) || user.saasRole === 'manager';
+      const billingOnly = Boolean(access?.blocked && access.billingOnly && canAccessBillingOnly);
+
+      json(res, 200, {
+        ok: true,
+        token,
+        user: saasPublicUser(user, isAdmin),
+        tenant: safeTenant,
+        billingOnly,
+        plans: listSaasPlans(dataDir),
+        message: 'Senha redefinida com sucesso!'
+      }, sessionCookie ? { 'Set-Cookie': sessionCookie(user) } : undefined);
     },
 
     'POST /api/saas/auth/demo-login': async (req, res) => {
@@ -4392,9 +4515,24 @@ export function createSaasRoutes({
         if (user.disabled) {
           return json(res, 403, { error: 'Esta conta foi desativada.', code: 'disabled' });
         }
+        if (isSuperAdmin(user)) {
+          return json(res, 403, {
+            error: 'Contas de Super Administrador exigem redefinição via console seguro do servidor.',
+            code: 'superadmin-reset-blocked'
+          });
+        }
         const userTenant = user.tenantId || 'default';
         const tenant = userTenant !== 'default' ? getTenant(dataDir, userTenant) : null;
-        const cleanedPhone = cleanWhatsAppPhone(body?.phone || user.phone || '');
+        const cleanedPhone = cleanWhatsAppPhone(user.phone || '');
+        const quota = checkOtpSendQuotaSqlite(dataDir, { email, phone: cleanedPhone, purpose: 'reset' });
+        if (!quota.ok) {
+          return json(
+            res,
+            429,
+            { error: 'Muitas solicitações de código. Aguarde alguns minutos.', code: 'otp-rate-limited', retryAfter: quota.retryAfterSec },
+            { 'Retry-After': String(quota.retryAfterSec) }
+          );
+        }
         const challengeId = crypto.randomBytes(16).toString('base64url');
         const otpCode = generateOtpCode();
         const codeHash = hashOtpCode(otpCode, secretKey, challengeId);
@@ -4441,7 +4579,7 @@ export function createSaasRoutes({
           maskedPhone: delivery.maskedPhone,
           hasPhone: delivery.hasPhone,
           emailConfigured: delivery.emailConfigured,
-          ...(process.env.NODE_ENV !== 'production' ? { devOtpCode: otpCode } : {})
+          ...(shouldEchoDevOtp() ? { devOtpCode: otpCode } : {})
         });
       }
 
@@ -4501,6 +4639,15 @@ export function createSaasRoutes({
         if ((body?.requirePhone === true || hasBodyPhone) && !cleanedPhone) {
           return json(res, 400, { error: 'Informe um número de telefone (WhatsApp) válido com DDD.', code: 'phone-invalid' });
         }
+        const quota = checkOtpSendQuotaSqlite(dataDir, { email, phone: cleanedPhone, purpose: 'register' });
+        if (!quota.ok) {
+          return json(
+            res,
+            429,
+            { error: 'Muitas solicitações de código. Aguarde alguns minutos.', code: 'otp-rate-limited', retryAfter: quota.retryAfterSec },
+            { 'Retry-After': String(quota.retryAfterSec) }
+          );
+        }
         const challengeId = crypto.randomBytes(16).toString('base64url');
         const otpCode = generateOtpCode();
         const codeHash = hashOtpCode(otpCode, secretKey, challengeId);
@@ -4547,7 +4694,7 @@ export function createSaasRoutes({
           maskedPhone: delivery.maskedPhone,
           hasPhone: delivery.hasPhone,
           emailConfigured: delivery.emailConfigured,
-          ...(process.env.NODE_ENV !== 'production' ? { devOtpCode: otpCode } : {})
+          ...(shouldEchoDevOtp() ? { devOtpCode: otpCode } : {})
         });
       }
 
@@ -4586,7 +4733,16 @@ export function createSaasRoutes({
 
       const userTenant = user.tenantId || 'default';
       const tenant = userTenant !== 'default' ? getTenant(dataDir, userTenant) : null;
-      const cleanedPhone = cleanWhatsAppPhone(body?.phone || existingChallenge?.phone || user.phone || '');
+      const cleanedPhone = cleanWhatsAppPhone(existingChallenge?.phone || user.phone || '');
+      const quota = checkOtpSendQuotaSqlite(dataDir, { email, phone: cleanedPhone, purpose: 'login' });
+      if (!quota.ok) {
+        return json(
+          res,
+          429,
+          { error: 'Muitas solicitações de código. Aguarde alguns minutos.', code: 'otp-rate-limited', retryAfter: quota.retryAfterSec },
+          { 'Retry-After': String(quota.retryAfterSec) }
+        );
+      }
       const challengeId = existingChallenge?.id || crypto.randomBytes(16).toString('base64url');
       const otpCode = generateOtpCode();
       const codeHash = hashOtpCode(otpCode, secretKey, challengeId);
@@ -4633,7 +4789,7 @@ export function createSaasRoutes({
         maskedPhone: delivery.maskedPhone,
         hasPhone: delivery.hasPhone,
         emailConfigured: delivery.emailConfigured,
-        ...(process.env.NODE_ENV !== 'production' ? { devOtpCode: otpCode } : {})
+        ...(shouldEchoDevOtp() ? { devOtpCode: otpCode } : {})
       });
     },
 
@@ -4787,6 +4943,15 @@ export function createSaasRoutes({
     'POST /api/gym/whatsapp/send': async (req, res) => {
       const ctx = requireGymContext(req, res);
       if (!ctx) return;
+      const wait = manualWaBurst.take(`send:${ctx.tenantId}`);
+      if (wait) {
+        return json(
+          res,
+          429,
+          { error: 'Limite temporário de envios manuais atingido. Aguarde alguns minutos.', code: 'rate-limited', retryAfter: wait },
+          { 'Retry-After': String(wait) }
+        );
+      }
       const body = await readBody(req);
       const targetPhone = body?.phone;
       const rawMsg = String(body?.message || '').trim();
@@ -4797,18 +4962,47 @@ export function createSaasRoutes({
       if (!rawMsg) {
         return json(res, 400, { error: 'Mensagem não pode estar vazia' });
       }
+      if (rawMsg.length > 2000) {
+        return json(res, 400, { error: 'Mensagem excede o limite de 2.000 caracteres.' });
+      }
 
       const clean = cleanWhatsAppPhone(targetPhone);
       if (!clean) {
         return json(res, 400, { error: 'Número de WhatsApp inválido (ex: 11999998888)' });
       }
 
+      const matchedTenantUser = db.users.find(
+        u => u && (u.tenantId || 'default') === ctx.tenantId && !u.disabled && cleanWhatsAppPhone(u.phone || '') === clean
+      );
+      const allowedOwnPhones = [
+        cleanWhatsAppPhone(ctx.user?.phone || ''),
+        cleanWhatsAppPhone(ctx.tenant?.phone || ''),
+        cleanWhatsAppPhone(ctx.tenant?.branding?.contactPhone || ''),
+        cleanWhatsAppPhone(ctx.tenant?.settings?.contactPhone || '')
+      ].filter(Boolean);
+      const isAllowedRecipient = Boolean(matchedTenantUser) || allowedOwnPhones.includes(clean);
+      if (!isAllowedRecipient) {
+        audit(req, 'gym.whatsapp.send.denied', { ok: false, user: ctx.user, tenantId: ctx.tenantId, msg: clean });
+        return json(res, 403, {
+          error: 'Só é permitido enviar mensagens pelo painel para alunos ou membros cadastrados nesta academia.',
+          code: 'recipient-not-enrolled'
+        });
+      }
+
       const evoSettings = resolveTenantEvolutionSettings(dataDir, ctx.tenantId);
+      const hasOwnEvolution = Boolean(String(evoSettings.evolutionUrl || '').trim() && String(evoSettings.evolutionInstance || '').trim());
+      if (ctx.tenant?.status === 'trial' && !hasOwnEvolution && !ctx.superUser) {
+        return json(res, 403, {
+          error: 'Contas em período de teste precisam conectar seu próprio WhatsApp ou ativar a assinatura para disparos manuais.',
+          code: 'trial-whatsapp-restricted'
+        });
+      }
+
       const result = await dispatchWhatsAppWithRetry({
         dataDir,
         tenantId: ctx.tenantId,
         kind: body?.kind || 'manual',
-        recipientName: body?.studentName || 'Aluno',
+        recipientName: matchedTenantUser?.name || body?.studentName || 'Aluno',
         phone: clean,
         message: rawMsg,
         tenantSettings: { ...(ctx.tenant?.settings || {}), ...evoSettings }
@@ -5552,6 +5746,15 @@ export function createSaasRoutes({
     'POST /api/gym/whatsapp/test': async (req, res) => {
       const ctx = requireGymContext(req, res, { managerOnly: true });
       if (!ctx) return;
+      const wait = manualWaTestBurst.take(`test:${ctx.tenantId}`);
+      if (wait) {
+        return json(
+          res,
+          429,
+          { error: 'Limite temporário de mensagens de teste atingido. Aguarde alguns minutos.', code: 'rate-limited', retryAfter: wait },
+          { 'Retry-After': String(wait) }
+        );
+      }
       const body = await readBody(req);
       const targetPhone = body?.phone || ctx.tenant?.phone || ctx.tenant?.branding?.contactPhone || ctx.user?.phone;
       if (!targetPhone) {

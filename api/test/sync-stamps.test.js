@@ -13,6 +13,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { boundPort } from './helpers.mjs';
 import { stampPut } from '../sync-stamps.js';
+import { readUserStateSqlite, closeAllSqliteInstances } from '../sqlite.js';
 
 const clone = v => JSON.parse(JSON.stringify(v));
 const NOW = 1_800_000_000_000;
@@ -407,7 +408,7 @@ test('PUT /api/data: an older app\'s two changes of one setting in a row both la
   assert.equal(now.rev, r.body.rev);                 // nothing set back, so nothing to read again
   assert.equal('_unstamped' in now.state, false);
   assert.equal('_prior' in now.state, false);
-  const onDisk = JSON.parse(fs.readFileSync(path.join(dataDir, 'state-u1.json'), 'utf8'));
+  const onDisk = readUserStateSqlite(dataDir, 'u1');
   assert.ok(onDisk._unstamped?.ed?.restSec > 0);
   assert.equal(onDisk._prior?.restSec?.length, 2);   // 100, then 120
 });

@@ -33,7 +33,15 @@ async function startServer(t, dataDir) {
     cwd: API, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, PORT: '0', DATA_DIR: dataDir, ORIGIN: 'http://localhost:8080', RP_ID: 'localhost' }
   });
-  t.after(() => { child.kill('SIGKILL'); fs.chmodSync(dataDir, 0o700); fs.rmSync(dataDir, { recursive: true, force: true }); });
+  t.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      const done = new Promise(r => child.once('exit', r));
+      child.kill('SIGKILL');
+      await done;
+    }
+    try { fs.chmodSync(dataDir, 0o700); } catch { /* already writable */ }
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
   let log = '';
   // The boot line, not a health poll: the poll is what is under test here.
   const port = await new Promise((resolve, reject) => {
@@ -53,6 +61,10 @@ test('a writable data directory answers 200, and says so', async t => {
 });
 
 test('a data directory the server cannot write to is 503, not healthy', async t => {
+  if (process.platform === 'win32') {
+    t.skip('POSIX chmod 0o500 does not block directory writes on Windows NTFS');
+    return;
+  }
   if (typeof process.getuid === 'function' && process.getuid() === 0) {
     t.skip('running as root: a mode that denies writes does not deny them to root');
     return;

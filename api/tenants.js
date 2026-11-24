@@ -721,6 +721,27 @@ export function loadTenantBranding(tenantDir) {
   return { ...DEFAULT_BRANDING };
 }
 
+function sanitizeBrandingLogoUrl(rawVal) {
+  const val = String(rawVal ?? '').trim().slice(0, 160000);
+  if (!val) return '';
+  if (/^data:image\/(png|jpe?g|webp|gif);base64,[a-z0-9+/=\s]+$/i.test(val)) {
+    return val;
+  }
+  try {
+    const parsed = new URL(val);
+    if (parsed.protocol === 'https:') return val;
+    if (parsed.protocol === 'http:' && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')) {
+      return val;
+    }
+  } catch {
+    // URL relativa segura (ex.: /landing/...)
+    if (/^\/[a-z0-9._~:/?#[\]@!$&'()*+,;=%-]+$/i.test(val) && !val.startsWith('//')) {
+      return val;
+    }
+  }
+  return '';
+}
+
 /**
  * Salva a personalização visual da academia no SQLite (atomically com a linha do tenant).
  */
@@ -731,7 +752,7 @@ export function saveTenantBranding(tenantDir, branding) {
     if (branding && branding[k] !== undefined) {
       const rawVal = String(branding[k] ?? '').trim();
       if (k === 'logoUrl') {
-        allowed[k] = rawVal.startsWith('blob:') ? '' : rawVal.slice(0, 160000);
+        allowed[k] = sanitizeBrandingLogoUrl(rawVal);
       } else {
         allowed[k] = rawVal.slice(0, 300);
       }

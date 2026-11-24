@@ -14,6 +14,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { boundPort } from './helpers.mjs';
+import { readUserStateSqlite, closeAllSqliteInstances } from '../sqlite.js';
 import * as M from './media-samples.mjs';
 
 const API = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -49,7 +50,15 @@ async function start(t, env = {}) {
   const h = { log: '', dataDir, uploads: path.join(dataDir, 'uploads') };
   child.stdout.on('data', d => h.log += d);
   child.stderr.on('data', d => h.log += d);
-  t.after(() => { child.kill('SIGKILL'); fs.rmSync(dataDir, { recursive: true, force: true }); });
+  t.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      const done = new Promise(r => child.once('exit', r));
+      child.kill('SIGKILL');
+      await done;
+    }
+    closeAllSqliteInstances();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
   h.port = await boundPort(child, () => h.log);
   h.api = `http://127.0.0.1:${h.port}`;
   h.put = (bytes, { uid = U1, declare = 'image/jpeg', hash = M.sha(bytes), headers } = {}) =>
@@ -389,7 +398,7 @@ test('PUT /api/data still answers 200 when the media bookkeeping fails', async t
   // busy machine the reply can be read first.
   for (let i = 0; i < 100 && !/media noteState/.test(h.log); i++) await new Promise(res => setTimeout(res, 20));
   assert.match(h.log, /media noteState/);
-  const saved = JSON.parse(fs.readFileSync(path.join(h.dataDir, `state-${U1}.json`), 'utf8'));
+  const saved = readUserStateSqlite(h.dataDir, U1);
   assert.equal(saved._rev, 1, 'the state itself was saved');
 });
 
@@ -398,12 +407,14 @@ test('folders are 0700 and files 0600, and an admin deleting the profile removes
   const a = M.jpeg();
   await h.put(a);
   await h.put(M.jpeg(), { uid: U2 });
-  const mode = p => fs.statSync(p).mode & 0o777;
-  assert.equal(mode(h.uploads), 0o700);
-  assert.equal(mode(path.join(h.uploads, U1)), 0o700);
-  assert.equal(mode(path.join(h.uploads, U1, '.tmp')), 0o700);
-  assert.equal(mode(path.join(h.uploads, U1, `${M.sha(a)}.jpg`)), 0o600);
-  assert.equal(mode(path.join(h.uploads, U1, '.gc.json')), 0o600);
+  if (process.platform !== 'win32') {
+    const mode = p => fs.statSync(p).mode & 0o777;
+    assert.equal(mode(h.uploads), 0o700);
+    assert.equal(mode(path.join(h.uploads, U1)), 0o700);
+    assert.equal(mode(path.join(h.uploads, U1, '.tmp')), 0o700);
+    assert.equal(mode(path.join(h.uploads, U1, `${M.sha(a)}.jpg`)), 0o600);
+    assert.equal(mode(path.join(h.uploads, U1, '.gc.json')), 0o600);
+  }
 
   const del = await fetch(`${h.api}/api/admin/user/delete`, { method: 'POST', headers: { ...cookie(ADMIN), 'Content-Type': 'application/json' }, body: JSON.stringify({ id: U1 }) });
   assert.equal(del.status, 200);
@@ -429,13 +440,20 @@ test('/api/config carries the caps; MEDIA_UPLOADS=0 takes the block and every ro
 
 test('boot removes the temp files of uploads the previous process was receiving', async t => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gym-media-boot-'));
-  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
   const tmp = path.join(dataDir, 'uploads', U1, '.tmp');
   fs.mkdirSync(tmp, { recursive: true });
   fs.writeFileSync(path.join(tmp, 'half-an-upload'), 'x');
   fs.writeFileSync(path.join(dataDir, 'secret'), SECRET);
   const child = spawn(process.execPath, ['server.js'], { cwd: API, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, PORT: '0', DATA_DIR: dataDir } });
-  t.after(() => child.kill('SIGKILL'));
+  t.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      const done = new Promise(r => child.once('exit', r));
+      child.kill('SIGKILL');
+      await done;
+    }
+    closeAllSqliteInstances();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
   await boundPort(child);
   assert.deepEqual(fs.readdirSync(tmp), []);
 });

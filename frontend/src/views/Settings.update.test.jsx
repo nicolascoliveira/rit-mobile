@@ -122,45 +122,21 @@ describe('Settings — in-app update check', () => {
     expect(checkRow()).toBeUndefined()
   })
 
-  it('mobile build on Android: checks once and shows the row, tapping it asks before downloading', async () => {
+  it('mobile build on Android: runs background check once without rendering sideload APK rows', async () => {
     mocks.MOBILE = true
     mocks.android = true
     await mount()
     expect(mocks.checkForUpdate).toHaveBeenCalledTimes(1)
-    expect(updateRow()).toBeTruthy()
-    act(() => { updateRow().click() })
-    expect(mocks.confirmSheet).toHaveBeenCalledTimes(1)
-    expect(mocks.confirmSheet.mock.calls[0][0].title).toBe('Update to 9.9.9?')
-  })
-
-  it('Android without a newer release: a "Check for updates" row stays, and tapping it checks again', async () => {
-    mocks.MOBILE = true
-    mocks.android = true
-    mocks.checkForUpdate.mockResolvedValueOnce({ hasUpdate: false, latestVersion: 'test', apkUrl: null, hashUrl: null })
-    await mount()
-    expect(mocks.checkForUpdate).toHaveBeenCalledTimes(1)
     expect(updateRow()).toBeUndefined()
-    expect(checkRow()).toBeTruthy()
-    await act(async () => { checkRow().click(); await Promise.resolve() })
-    expect(mocks.checkForUpdate).toHaveBeenCalledTimes(2)
-    await act(async () => { await Promise.resolve() })
-    expect(updateRow()).toBeTruthy()   // the second (default) answer had 9.9.9 — the row now offers it
-  })
-
-  it('Android when gitlab.com is unreachable: stays quiet, keeps the row', async () => {
-    mocks.MOBILE = true
-    mocks.android = true
-    mocks.checkForUpdate.mockRejectedValueOnce(new Error('offline'))
-    await mount()
-    expect(updateRow()).toBeUndefined()
-    expect(checkRow()).toBeTruthy()
+    expect(checkRow()).toBeUndefined()
+    expect(mocks.forget).not.toHaveBeenCalled()   // 9.9.9 is waiting: its APK may be the one in the cache
   })
 
   it('Android: a downloaded APK left in the cache is deleted once nothing newer is out, and kept while one is', async () => {
     mocks.MOBILE = true
     mocks.android = true
     await mount()
-    expect(mocks.forget).not.toHaveBeenCalled()   // 9.9.9 is waiting: its APK may be the one in the cache
+    expect(mocks.forget).not.toHaveBeenCalled()
     act(() => root.unmount())
     root = createRoot(host)
     mocks.checkForUpdate.mockResolvedValueOnce({ hasUpdate: false, latestVersion: 'test', apkUrl: null, hashUrl: null })
@@ -170,24 +146,18 @@ describe('Settings — in-app update check', () => {
 })
 
 const versionRow = () => [...host.querySelectorAll('.lrow')].find(r => r.textContent.includes('Version'))
-describe('Settings → About: which APK this is', () => {
-  it('the sideloaded APK names its kind and the animation size built in', async () => {
-    mocks.MOBILE = true
-    mocks.android = true
-    await mount()
-    expect(versionRow().textContent).toContain('Standard APK, animations at 180 px')
-  })
-
-  it('not on the web, iOS or the Google Play build', async () => {
+describe('Settings → About: version row', () => {
+  it('keeps the Version row clean across web, Android and Play builds', async () => {
     await mount()
     expect(versionRow().textContent).not.toContain('APK,')
-    for (const [android, channel] of [[false, 'sideload'], [true, 'play']]) {
+    for (const [android, channel] of [[true, 'sideload'], [false, 'sideload'], [true, 'play']]) {
       act(() => root.unmount())
       root = createRoot(host)
       mocks.MOBILE = true
       mocks.android = android
       mocks.channel = channel
       await mount()
+      expect(versionRow().textContent).toMatch(/^Versionv(\d|test)/)
       expect(versionRow().textContent).not.toContain('APK,')
     }
   })

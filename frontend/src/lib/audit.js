@@ -115,7 +115,11 @@ const REASONS = {
   'email': 'e-mail addresses already in use',
   // What a `media.throttled` pause was for.
   'upload': 'photo and video uploads',
-  'sweep': 'clearing unused photos and videos'
+  'sweep': 'clearing unused photos and videos',
+  // Password reset & tenant onboarding / status checks added for RIT B2B.
+  'otp-invalid': 'wrong or expired verification code',
+  'superadmin-reset-blocked': 'superadmin accounts cannot be reset by e-mail',
+  'tenant-suspended': 'the gym subscription is currently suspended'
 }
 export const auditReason = msg => REASONS[msg] || (msg ? String(msg) : '')
 

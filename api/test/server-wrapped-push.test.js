@@ -34,8 +34,21 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
 const plain = log => log.replace(/\x1b\[[0-9;]*m/g, '');
 const firings = (log, uid) => (plain(log).match(new RegExp(`wrapped push firing ${uid} 2026`, 'g')) || []).length;
 
-function seed() {
+const kidsByDir = new Map();
+function seed(t) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gym-wrapped-'));
+  kidsByDir.set(dataDir, []);
+  if (t) {
+    t.after(async () => {
+      for (const c of kidsByDir.get(dataDir) || []) {
+        if (c.exitCode === null && c.signalCode === null) {
+          await new Promise(r => { c.once('exit', r); c.kill('SIGKILL'); });
+        }
+      }
+      kidsByDir.delete(dataDir);
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    });
+  }
   fs.writeFileSync(path.join(dataDir, 'secret'), SECRET, { mode: 0o600 });
   const users = Object.entries(PEOPLE).map(([id, p]) => ({ id, name: id, created, ...(p.user || {}) }));
   const subs = Object.entries(PEOPLE).filter(([, p]) => !p.nosub).map(([id]) => sub(id));
@@ -48,23 +61,27 @@ async function start(t, dataDir) {
     cwd: API, stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     env: { ...process.env, TZ: 'UTC', PORT: '0', DATA_DIR: dataDir, ORIGIN: 'http://localhost:8080', RP_ID: 'localhost', REMINDER_TICK_MS: '100' },
   });
+  const list = kidsByDir.get(dataDir);
+  if (list) list.push(child);
   const h = { child, log: '' };
   child.stdout.on('data', d => h.log += d);
   child.stderr.on('data', d => h.log += d);
-  t.after(() => child.kill('SIGKILL'));
   await boundPort(child, () => h.log);
   h.at = now => new Promise(resolve => {
     const done = m => { if (m && m.now === now) { child.off('message', done); resolve(); } };
     child.on('message', done);
     child.send({ now });
   });
-  h.stop = () => new Promise(resolve => { child.once('exit', resolve); child.kill('SIGKILL'); });
+  h.stop = () => new Promise(resolve => {
+    if (child.exitCode !== null || child.signalCode !== null) return resolve();
+    child.once('exit', resolve);
+    child.kill('SIGKILL');
+  });
   return h;
 }
 
 test('Dec 1 from 18:00: one push per user and year, only to whoever is owed one, and never again', async t => {
-  const dataDir = seed();
-  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  const dataDir = seed(t);
   let h = await start(t, dataDir);
 
   // The afternoon before: nothing.
@@ -99,8 +116,7 @@ test('Dec 1 from 18:00: one push per user and year, only to whoever is owed one,
 });
 
 test('switched on again before the evening, the opted-out user is owed one after all', async t => {
-  const dataDir = seed();
-  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  const dataDir = seed(t);
   const h = await start(t, dataDir);
   await h.at(at('2026-12-01T19:00:00Z'));
   const deadline = Date.now() + 15000;

@@ -11,6 +11,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { boundPort } from './helpers.mjs';
+import { readUserStateSqlite, closeAllSqliteInstances } from '../sqlite.js';
 
 const API = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SECRET = crypto.randomBytes(32).toString('hex');
@@ -37,7 +38,11 @@ async function startServer(t) {
   const h = { api: '', log: '', dataDir };
   child.stdout.on('data', d => h.log += d);
   child.stderr.on('data', d => h.log += d);
-  t.after(() => { child.kill('SIGKILL'); fs.rmSync(dataDir, { recursive: true, force: true }); });
+  t.after(() => {
+    try { child.kill('SIGKILL'); } catch {}
+    closeAllSqliteInstances();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
   // The boot line carries the port the listener bound, so it is both the address and the
   // readiness signal — see boundPort in helpers.mjs for why the test does not pick one.
   h.port = await boundPort(child, () => h.log);
@@ -107,7 +112,7 @@ test('a body over the 5 MiB cap is a 413 that every client gets to read, and not
   let r = await status(h, 'PUT', '/api/data', authed, big);
   assert.equal(r.status, 413);
   assert.equal(r.body.error, 'body too large');
-  assert.equal(fs.existsSync(path.join(h.dataDir, `state-${UID}.json`)), false, 'nothing was written');
+  assert.equal(readUserStateSqlite(h.dataDir, UID), null, 'nothing was written');
   const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
   t.after(() => agent.destroy());
   for (let i = 0; i < 3; i++) {
@@ -129,7 +134,7 @@ test('a body over the 5 MiB cap is a 413 that every client gets to read, and not
 test('PUT /api/data: an array is not a document, and null entries never reach the disk', async t => {
   const h = await startServer(t);
   const put = body => status(h, 'PUT', '/api/data', authed, JSON.stringify(body));
-  const onDisk = () => JSON.parse(fs.readFileSync(path.join(h.dataDir, `state-${UID}.json`), 'utf8'));
+  const onDisk = () => readUserStateSqlite(h.dataDir, UID);
 
   let r = await put({ state: { _ts: 100, workouts: [{ id: 'w1', d: '2026-09-01' }], routines: [], unit: 'kg' }, baseRev: 0 });
   assert.equal(r.status, 200);
@@ -173,7 +178,7 @@ test('PUT /api/data: an array is not a document, and null entries never reach th
 
 test('PUT /api/data: a document nested too deep to store is a 400, not a 500, and nothing is written', async t => {
   const h = await startServer(t);
-  const onDisk = () => JSON.parse(fs.readFileSync(path.join(h.dataDir, `state-${UID}.json`), 'utf8'));
+  const onDisk = () => readUserStateSqlite(h.dataDir, UID);
   let r = await status(h, 'PUT', '/api/data', authed, JSON.stringify({ state: { workouts: [], routines: [], unit: 'kg' }, baseRev: 0 }));
   assert.equal(r.status, 200);
   // JSON.parse takes this (it is not recursive in V8); JSON.stringify on the way to the disk is.

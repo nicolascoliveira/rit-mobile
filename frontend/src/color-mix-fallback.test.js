@@ -83,13 +83,14 @@ const TARGETS = { safari: v(15), chrome: v(100), firefox: v(100), edge: v(100) }
 describe('color-mix() has a fallback for Safari before 16.2', () => {
   const files = cssFiles(SRC)
   it('finds the CSS', () => {
-    expect(files.map(f => relative(SRC, f))).toEqual(expect.arrayContaining(['index.css', 'coach.css', 'admin.css', 'views/FocusView.css']))
+    expect(files.map(f => relative(SRC, f).replace(/\\/g, '/'))).toEqual(expect.arrayContaining(['index.css', 'coach.css', 'admin.css', 'views/FocusView.css']))
   })
   for (const file of files) {
     const css = readFileSync(file, 'utf8')
     if (!css.includes('color-mix(')) continue
-    it(`${relative(SRC, file)}: in the source`, () => { expect(missingFallbacks(css)).toEqual([]) })
-    it(`${relative(SRC, file)}: after the minifier`, () => {
+    const rel = relative(SRC, file).replace(/\\/g, '/')
+    it(`${rel}: in the source`, () => { expect(missingFallbacks(css)).toEqual([]) })
+    it(`${rel}: after the minifier`, () => {
       const min = transform({ filename: file, code: Buffer.from(css), minify: true, targets: TARGETS }).code.toString()
       expect(missingFallbacks(min)).toEqual([])
     })

@@ -23,16 +23,17 @@ const COPIES = [
 
 export function checkCopy(dir) {
   const problems = []
+  const label = dir.replace(/\\/g, '/')
   const html = join(dir, 'index.html')
-  if (!existsSync(html)) return [`${dir}: no index.html`]
+  if (!existsSync(html)) return [`${label}: no index.html`]
   const text = readFileSync(html, 'utf8')
   if (!/<meta\s+name="opengym-flavor"\s+content="mobile"/.test(text))
-    problems.push(`${dir}/index.html is not the mobile build (no opengym-flavor meta) — another build ran into dist/?`)
+    problems.push(`${label}/index.html is not the mobile build (no opengym-flavor meta) — another build ran into dist/?`)
   for (const [, ref] of text.matchAll(/(?:src|href)="\.?\/?(assets\/[^"]+\.(?:js|css))"/g))
-    if (!existsSync(join(dir, ref))) problems.push(`${dir}/index.html loads ${ref}, which is missing`)
+    if (!existsSync(join(dir, ref))) problems.push(`${label}/index.html loads ${ref}, which is missing`)
   const sw = join(dir, 'sw.js')
   if (existsSync(sw) && readFileSync(sw, 'utf8').includes('__BUILD__'))
-    problems.push(`${dir}/sw.js is not stamped (__BUILD__ left in it)`)
+    problems.push(`${label}/sw.js is not stamped (__BUILD__ left in it)`)
   return problems
 }
 

@@ -89,12 +89,12 @@ const guestWeb = {
 }
 
 describe('the root', () => {
-  it('is an account card and one row per page, in the four groups, with value previews', () => {
+  it('is an account card and one row per visible page, in the four groups, with value previews', () => {
     mount()
     expect(host.querySelector('.sp-acct .lrow-t').textContent).toBe('Guest')
     expect(host.querySelector('.sp-acct .lrow-s').textContent).toBe('Your data lives on this device. Sign in to sync.')
-    // a guest in a browser has no reminders (no push server) and no Coach page (the server's Coach)
-    expect(titles()).toEqual(['Guest', 'Install app', 'Modules', 'Workout', 'Timer alerts', 'Plan & schedule', 'Units & language', 'Equipment', 'Look & Home', 'Integrations', 'Data & backup', 'About & updates'])
+    // B2B student Settings hides Modules and Integrations, and a guest has no reminders or Coach.
+    expect(titles()).toEqual(['Guest', 'Install app', 'Workout', 'Timer alerts', 'Plan & schedule', 'Units & language', 'Equipment', 'Look & Home', 'Data & backup', 'About & updates'])
     expect(rowTitled('Workout').querySelector('.lrow-v').textContent).toBe('1:30 rest · Cards')
     expect(rowTitled('Timer alerts').querySelector('.lrow-v').textContent).toBe('Sound · Vibrate')
     expect(rowTitled('Plan & schedule').querySelector('.lrow-v').textContent).toMatch(/^Fixed Week · Mon/)
@@ -114,7 +114,7 @@ describe('the root', () => {
     expect(rule).toMatch(/line-clamp:3/)
     expect(rule).toMatch(/min-width:min-content/)
     // P10 (redesign 1.4.5): on every phone width the preview is the row's subtitle, under the title
-    const phone = css.match(/@media \(max-width:430px\)\{\n  \.lrow\.sp-root-row:has\(\.lrow-v\)\{([^}]*)\}/)?.[1] || ''
+    const phone = css.match(/@media \(max-width:430px\)\{\r?\n  \.lrow\.sp-root-row:has\(\.lrow-v\)\{([^}]*)\}/)?.[1] || ''
     expect(phone).toMatch(/display:grid/)
     expect(css).toMatch(/\.lrow\.sp-root-row \.lrow-v\{grid-column:2;grid-row:2;[^}]*text-align:start/)
     // the sub-page title takes a second line rather than an ellipsis ("Alertas do temporizador")
@@ -132,7 +132,7 @@ describe('the root', () => {
     expect(rowTitled('Workout').querySelector('.lrow-v').textContent).toBe('No rest timer · Cards')
   })
 
-  it('signed in, Reminders is there and the card names the account; on the phone app the Coach too', () => {
+  it('signed in, Reminders is there and the card names the account; on the phone app Reminders too', () => {
     mocks.user = { id: 'u1', name: 'Dana' }
     mount()
     expect(titles()).toContain('Reminders')
@@ -143,17 +143,16 @@ describe('the root', () => {
     mocks.MOBILE = true
     mount()
     expect(titles()).toContain('Reminders')
-    expect(titles()).toContain('AI Coach')
-    expect(host.querySelector('.sp-acct .lrow-t').textContent).toBe('This phone')
+    expect(titles()).not.toContain('AI Coach')
+    expect(host.querySelector('.sp-acct .lrow-t').textContent).toBe('Entrar na Rit')
   })
 
-  it('a row opens its page; the Coach row opens the phone Coach setup; the card opens Account', () => {
+  it('a row opens its page; the card opens Account', () => {
     mocks.MOBILE = true
     mount()
     act(() => rowTitled('Timer alerts').click())
-    act(() => rowTitled('AI Coach').click())
     act(() => host.querySelector('.sp-acct').click())
-    expect(mocks.navs).toEqual([['/settings/alerts'], ['/coach/setup'], ['/settings/account']])
+    expect(mocks.navs).toEqual([['/settings/alerts'], ['/settings/account']])
   })
 
   it('in a hosted app, an admin gets the Coach row too, straight to the Coach card of the admin dashboard', () => {
@@ -242,8 +241,9 @@ describe('the search lands on a row', () => {
     expect(searchSettings('home screen', { ...web, desktopWeb: false }, tr).map(h => h.title)).toEqual(['Install app'])
     expect(searchSettings('install', { ...web, androidWeb: true, desktopWeb: false }, tr).map(h => h.title)).toEqual(['Install app'])
     expect(searchSettings('install', web, tr).map(h => h.title)).toEqual(['Install app'])
-    expect(searchSettings('backup folder', { ...guestWeb, mobile: true, android: true, autoBackup: true }, tr).map(h => h.title)).toEqual(['Backup folder'])
-    expect(searchSettings('backup folder', { ...guestWeb, mobile: true, android: true }, tr)).toEqual([])
+    expect(searchSettings('backup folder', { ...guestWeb, mobile: true, android: true, autoBackup: true }, tr)).toEqual([])
+    expect(searchSettings('csv', guestWeb, tr).map(h => h.title)).toEqual(['Export as spreadsheet (CSV)'])
+    expect(searchSettings('pdf', guestWeb, tr).map(h => h.title)).toEqual(['Performance report (PDF)'])
   })
 
   // Checked in Chrome, signed in on the web: "gym" offered the Gym reminder page, a phone-only
@@ -307,10 +307,9 @@ describe('the pages', () => {
   it('each search entry is a row on its page (guest in a browser)', () => {
     const byPage = {}
     for (const e of SEARCH) if (pageVisible(PAGES[e.page].parent || e.page, guestWeb) && (!e.when || e.when(guestWeb))) (byPage[e.page] ||= []).push(e.title)
-    expect(Object.keys(byPage).sort()).toEqual(['about', 'advanced', 'alerts', 'data', 'equipment', 'integrations', 'look', 'modules', 'plan', 'themes', 'units', 'workout'])
+    expect(Object.keys(byPage).sort()).toEqual(['about', 'advanced', 'alerts', 'data', 'equipment', 'look', 'plan', 'themes', 'units', 'workout'])
     for (const [page, want] of Object.entries(byPage)) {
       mount(page)
-      // A row, or a button with the same words (the "Works with" chips on Integrations).
       const have = [...titles(), ...[...host.querySelectorAll('.btn')].map(b => b.textContent.trim())]
       for (const title of want) expect(have, `${page}: ${title}`).toContain(title)
     }
@@ -458,9 +457,9 @@ describe('searchSettings', () => {
     expect(searchSettings('nudge', { ...guestWeb, user: { id: 'u' }, pushOK: true }, tr)).toEqual([])   // the reminder is off
     expect(searchSettings('nudge', { ...guestWeb, user: { id: 'u' }, pushOK: true, reminderOn: true }, tr).map(h => h.title)).toEqual(['Nudge me when I skip a planned workout'])
     expect(searchSettings('nudge', { ...guestWeb, mobile: true, reminderOn: true }, tr).map(h => h.title)).toEqual(['Nudge me when I skip a planned workout'])
-    // the AI Coach module's own row on Settings → Modules is the one hit a web guest gets
-    expect(searchSettings('coach', guestWeb, tr).filter(h => h.page !== 'modules')).toEqual([])
-    expect(searchSettings('coach', { ...guestWeb, mobile: true }, tr)[0].page).toBe('coach')
+    // Coach and Modules pages are intentionally hidden in B2B student Settings.
+    expect(searchSettings('coach', guestWeb, tr)).toEqual([])
+    expect(searchSettings('coach', { ...guestWeb, mobile: true }, tr)).toEqual([])
     expect(searchSettings('vibrate silent', { ...guestWeb, mobile: true, android: true }, tr).map(h => h.title)).toEqual(['Vibrate on silent too'])
     expect(searchSettings('   ', guestWeb, tr)).toEqual([])
   })
@@ -496,7 +495,7 @@ describe('searchSettings', () => {
       expect(titles).not.toContain('Superset buttons in the exercise header')
     } finally { await setLang('en') }
     expect(searchSettings('tone', { ...guestWeb, user: { id: 'u' }, pushOK: true, reminderOn: true, nudge: true }, s => s).map(h => h.title)).toContain('Nudge tone')
-    expect(searchSettings('json', guestWeb, s => s).map(h => h.title)).toContain('Export backup (JSON)')
+    expect(searchSettings('csv', guestWeb, s => s).map(h => h.title)).toContain('Export as spreadsheet (CSV)')
   })
 })
 

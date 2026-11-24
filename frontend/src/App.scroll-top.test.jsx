@@ -28,7 +28,7 @@ const appear = async find => {
   for (let i = 0; i < 500 && !get(); i++) await act(async () => { await new Promise(r => setTimeout(r, 10)) })
   return get()
 }
-const start = async (hash, S = JSON.parse(JSON.stringify(DEF))) => {
+const start = async (hash, S = { ...JSON.parse(JSON.stringify(DEF)), lang: 'en', langAuto: false }) => {
   useStore.setState({ S })
   window.location.hash = hash
   await act(async () => { root.render(<App />) })
@@ -90,7 +90,7 @@ describe('on a long page', () => {
 })
 
 it('never shows inside a workout', async () => {
-  const S = JSON.parse(JSON.stringify(DEF))
+  const S = { ...JSON.parse(JSON.stringify(DEF)), lang: 'en', langAuto: false }
   S.sound = false
   S.active = { id: 'test', name: 'Test', start: Date.now(), cur: 0, entries: [
     { id: '1001', target: { mode: 'reps' }, sets: [{ w: 10, r: 5, done: false }] },

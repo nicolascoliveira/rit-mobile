@@ -244,25 +244,33 @@ describe('the redirects nginx sends', () => {
 // script nginx's entrypoint runs before it renders the template. Run here with sh, as it is there.
 describe('the web container refuses a BASE_PATH it cannot serve', () => {
   const WEB = join(dirname(fileURLToPath(import.meta.url)), '../../../web')
+  const shBin = (() => {
+    for (const cand of ['sh', 'C:\\Program Files\\Git\\bin\\sh.exe', 'C:\\Program Files (x86)\\Git\\bin\\sh.exe']) {
+      const probe = spawnSync(cand, ['-c', 'true'], { encoding: 'utf8' })
+      if (!probe.error && probe.status === 0) return cand
+    }
+    return null
+  })()
   const check = value => {
     const env = { PATH: process.env.PATH }
     if (value !== undefined) env.BASE_PATH = value
-    return spawnSync('sh', [join(WEB, '05-check-base-path.sh')], { env, encoding: 'utf8' })
+    return spawnSync(shBin || 'sh', [join(WEB, '05-check-base-path.sh')], { env, encoding: 'utf8' })
   }
 
-  it.each([[undefined], [''], ['/gym'], ['/a/b'], ['/g+ym']])('starts with BASE_PATH=%s', value => {
+  it.skipIf(!shBin).each([[undefined], [''], ['/gym'], ['/a/b'], ['/g+ym']])('starts with BASE_PATH=%s', value => {
     const r = check(value)
     expect(r.status).toBe(0)
     expect(r.stderr).toBe('')
   })
 
-  it.each([['/gym/', 'ends with "/"'], ['/', 'ends with "/"'], ['gym', 'does not start with "/"'], ['gym/', 'ends with "/"']])(
+  it.skipIf(!shBin).each([['/gym/', 'ends with "/"'], ['/', 'ends with "/"'], ['gym', 'does not start with "/"'], ['gym/', 'ends with "/"']])(
     'refuses BASE_PATH=%s, and says why', (value, why) => {
       const r = check(value)
       expect(r.status).toBe(1)
       expect(r.stderr).toContain(`BASE_PATH="${value}" ${why}`)
       expect(r.stderr).toContain('BASE_PATH=/gym')
-    })
+    }
+  )
 
   it('is installed where the entrypoint runs it, and executable', () => {
     // Not executable, the entrypoint skips it with a log line and nginx starts anyway. Its 05
@@ -278,7 +286,7 @@ describe('the web container refuses a BASE_PATH it cannot serve', () => {
     // master both stay there. The listen port stays 80: compose, the probes and the healthcheck
     // all address NGINX_PORT. The base image's EXPOSE 8080 is only metadata.
     const dockerfile = readFileSync(join(WEB, 'Dockerfile'), 'utf8')
-    expect(dockerfile).toMatch(/^FROM --platform=\$BUILDPLATFORM node:22(\.\d+\.\d+)?-alpine AS build$/m)
+    expect(dockerfile).toMatch(/^FROM --platform=\$BUILDPLATFORM node:(?:22|24|26)(\.\d+\.\d+)?-alpine AS build$/m)
     expect(dockerfile).toMatch(/^FROM nginxinc\/nginx-unprivileged:(\d+\.\d+\.\d+-)?alpine$/m)
     const users = [...dockerfile.matchAll(/^USER \S+$/gm)].map(m => m[0])
     expect(users.at(-1)).toBe('USER 101')

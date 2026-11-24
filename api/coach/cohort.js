@@ -14,7 +14,7 @@
  * forty JSON blobs on every open of the sheet.
  */
 import * as cfgStore from './config.js';
-import { readState, listUserIds, isSharing } from './jobs.js';
+import { readState, listUserIds, isSharing, tenantOfUser } from './jobs.js';
 import { libraryHas, libraryName } from './core/library.js';
 
 export const MIN_PEOPLE = 3;
@@ -66,27 +66,32 @@ function participant(S) {
   return { sessionsPerWeek: round1(recent / WEEKS_FREQUENCY), best };
 }
 
-let cache = null;   // { at, rows: Map<uid, participant> }
+let cache = null;   // { at, byTenant: Map<tenantId, Map<uid, participant>> }
 export function invalidate() { cache = null; }
 
-function rows() {
-  if (cache && Date.now() - cache.at < CACHE_MS) return cache.rows;
-  const out = new Map();
-  for (const uid of listUserIds()) {
-    if (!isSharing(uid)) continue;
-    const S = readState(uid);
-    if (!S) continue;
-    const p = participant(S);
-    if (p) out.set(uid, p);
+function rows(tenantId = 'default') {
+  const scope = String(tenantId || 'default').trim() || 'default';
+  if (!cache || Date.now() - cache.at >= CACHE_MS) {
+    const byTenant = new Map();
+    for (const uid of listUserIds()) {
+      if (!isSharing(uid)) continue;
+      const S = readState(uid);
+      if (!S) continue;
+      const p = participant(S);
+      if (!p) continue;
+      const tid = tenantOfUser(uid);
+      if (!byTenant.has(tid)) byTenant.set(tid, new Map());
+      byTenant.get(tid).set(uid, p);
+    }
+    cache = { at: Date.now(), byTenant };
   }
-  cache = { at: Date.now(), rows: out };
-  return out;
+  return cache.byTenant.get(scope) || new Map();
 }
 
 /** Everything the sheet shows, in the requester's unit. */
 export function computeCohort(uid) {
   if (!isSharing(uid)) return { ok: false, enabled: true, sharing: false };
-  const all = rows();
+  const all = rows(tenantOfUser(uid));
   const people = all.size;
   if (people < MIN_PEOPLE) return { ok: false, enabled: true, sharing: true, people, minPeople: MIN_PEOPLE };
 
@@ -130,7 +135,7 @@ export function computeCohort(uid) {
 export function cohortForPayload(uid) {
   try {
     if (!cfgStore.load().community || !isSharing(uid)) return null;
-    const all = rows();
+    const all = rows(tenantOfUser(uid));
     if (all.size < MIN_PEOPLE) return null;
     const me = all.get(uid) || null;
     const byEx = new Map();

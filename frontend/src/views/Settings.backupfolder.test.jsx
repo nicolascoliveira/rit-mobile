@@ -86,38 +86,22 @@ afterEach(() => {
 const mount = async () => { await act(async () => { root.render(<Settings page="data" />) }) }
 const shown = () => !!host.querySelector('.backup-folder-row')
 
-describe('the backup folder rows', () => {
-  it('show on Android with auto-backup on', async () => {
+describe('B2B Data & backup page and autoBackupSubtitle helper', () => {
+  it('shows Relatórios e exportação (PDF and CSV) without local backup folder clutter', async () => {
     mocks.S.autoBackup = true
     await mount()
-    expect(shown()).toBe(true)
-  })
-  it('not with auto-backup off', async () => {
-    mocks.S.autoBackup = false
-    await mount()
     expect(shown()).toBe(false)
+    expect(host.textContent).toContain('Relatórios e exportação')
+    expect(host.textContent).toContain('Performance report (PDF)')
+    expect(host.textContent).toContain('Export as spreadsheet (CSV)')
   })
-  it('not on iOS', async () => {
-    mocks.S.autoBackup = true
-    mocks.android = false
-    await mount()
-    expect(shown()).toBe(false)
-  })
-})
 
-// Android QA: the Auto-backup row still said Documents/openGym after another folder was chosen.
-describe('the Auto-backup row', () => {
-  const subtitle = () => [...host.querySelectorAll('.lrow')].find(r => r.textContent.includes('Auto-backup on changes'))?.querySelector('.lrow-s')?.textContent
-  it('names the chosen folder', async () => {
-    mocks.S.autoBackup = true
-    mocks.folder = { uri: 'content://tree/Sync', label: 'SyncFolder' }
-    await mount()
-    expect(subtitle()).toContain('“SyncFolder”')
-    expect(subtitle()).not.toContain('Documents/openGym')
-  })
-  it('names Documents/openGym with no folder chosen', async () => {
-    mocks.S.autoBackup = true
-    await mount()
-    expect(subtitle()).toContain('Documents/openGym')
+  it('autoBackupSubtitle names the chosen folder or Documents/Rit', async () => {
+    const { autoBackupSubtitle } = await import('../components/BackupFolderRow.jsx')
+    const custom = autoBackupSubtitle({ uri: 'content://tree/Sync', label: 'SyncFolder' }, 14)
+    expect(custom).toContain('“SyncFolder”')
+    expect(custom).not.toContain('Documents/Rit')
+    const def = autoBackupSubtitle({}, 14)
+    expect(def).toContain('Documents/Rit')
   })
 })

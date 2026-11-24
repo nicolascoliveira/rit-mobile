@@ -15,6 +15,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { boundPort } from './helpers.mjs';
+import { readUserStateSqlite, closeAllSqliteInstances } from '../sqlite.js';
 
 const API = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SECRET = crypto.randomBytes(32).toString('hex');
@@ -31,18 +32,30 @@ const USERS = [
   { id: 'u_test_2', name: 'Two', created: new Date().toISOString() }
 ];
 
+const kidsByDir = new Map();
 async function startServer(t, subs = []) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gym-reminder-'));
+  kidsByDir.set(dataDir, []);
   fs.writeFileSync(path.join(dataDir, 'secret'), SECRET, { mode: 0o600 });
   fs.writeFileSync(path.join(dataDir, 'db.json'), JSON.stringify({ users: USERS, creds: [], subs, invites: [] }));
   const child = spawn(process.execPath, ['server.js'], {
     cwd: API, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, PORT: '0', DATA_DIR: dataDir, ORIGIN: 'http://localhost:8080', RP_ID: 'localhost', REMINDER_TICK_MS: '300' }
   });
+  kidsByDir.get(dataDir).push(child);
   const h = { api: '', dataDir, child, log: '' };
   child.stdout.on('data', d => h.log += d);
   child.stderr.on('data', d => h.log += d);
-  t.after(() => { child.kill('SIGKILL'); fs.rmSync(dataDir, { recursive: true, force: true }); });
+  t.after(async () => {
+    for (const c of kidsByDir.get(dataDir) || []) {
+      if (c.exitCode === null && c.signalCode === null) {
+        await new Promise(r => { c.once('exit', r); c.kill('SIGKILL'); });
+      }
+    }
+    kidsByDir.delete(dataDir);
+    closeAllSqliteInstances();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
   // The boot line carries the port the listener bound, so it is both the address and the
   // readiness signal — see boundPort in helpers.mjs for why the test does not pick one.
   h.port = await boundPort(child, () => h.log);
@@ -68,14 +81,14 @@ test('PUT /api/data refuses a state whose workouts or routines is not an array',
   assert.equal((await put({ _ts: 2, workouts: [], routines: [] })).status, 200);
   assert.equal((await put({ _ts: 3, unit: 'kg' })).status, 200);
   assert.equal((await put({ _ts: 4, workouts: null, routines: null })).status, 200);
-  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8'))._ts, 4);
+  assert.equal(readUserStateSqlite(h.dataDir, 'u_test_1')._ts, 4);
 });
 
 test('a non-array workouts on disk is logged and skipped by the reminder tick; the next user still fires', async t => {
   const keys = { p256dh: 'p', auth: 'a' };
   // localhost resolves to a loopback address, which PUSH_AGENT refuses — the send that follows the
   // reminder fails locally and quietly, with no socket leaving this machine
-  const subs = USERS.map(u => ({ userId: u.id, endpoint: 'https://localhost/x', keys, created: new Date().toISOString() }));
+  const subs = USERS.map(u => ({ userId: u.id, endpoint: `https://localhost/${u.id}`, keys, created: new Date().toISOString() }));
   const h = await startServer(t, subs);
 
   const routines = [{ id: 'r1', name: 'Full body', emoji: '💪', ex: [] }];
@@ -205,7 +218,9 @@ test('a disabled profile gets no reminder', async t => {
   const h = await startServer(t, [sub]);
   const db = JSON.parse(fs.readFileSync(path.join(h.dataDir, 'db.json'), 'utf8'));
   assert.equal(db.users[0].id, 'u_test_1');
-  h.child.kill('SIGKILL');
+  if (h.child.exitCode === null && h.child.signalCode === null) {
+    await new Promise(r => { h.child.once('exit', r); h.child.kill('SIGKILL'); });
+  }
   db.users[0].disabled = true;
   fs.writeFileSync(path.join(h.dataDir, 'db.json'), JSON.stringify(db));
   fs.writeFileSync(path.join(h.dataDir, 'state-u_test_1.json'), goodState(late.hhmm));
@@ -213,10 +228,10 @@ test('a disabled profile gets no reminder', async t => {
     cwd: API, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, PORT: '0', DATA_DIR: h.dataDir, ORIGIN: 'http://localhost:8080', RP_ID: 'localhost', REMINDER_TICK_MS: '300' }
   });
+  kidsByDir.get(h.dataDir)?.push(child);
   let log = '';
   child.stdout.on('data', d => log += d);
   child.stderr.on('data', d => log += d);
-  t.after(() => child.kill('SIGKILL'));
   await boundPort(child, () => log);
   await wait(1500);
   assert.equal(firings(log), 0, log);

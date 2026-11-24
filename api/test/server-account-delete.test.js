@@ -15,6 +15,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { hashPassword } from '../password.js';
 import { boundPort } from './helpers.mjs';
+import { loadCoreDbFromSqlite, readUserStateSqlite, writeUserStateSqlite, closeAllSqliteInstances } from '../sqlite.js';
 
 const API = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SECRET = crypto.randomBytes(32).toString('hex');
@@ -53,14 +54,19 @@ async function startServer(t, { users: which = ['admin', 'user'], env = {} } = {
   const h = { api: '', log: '', dataDir };
   child.stdout.on('data', d => h.log += d);
   child.stderr.on('data', d => h.log += d);
-  t.after(() => { child.kill('SIGKILL'); fs.rmSync(dataDir, { recursive: true, force: true }); });
+  t.after(() => {
+    try { child.kill('SIGKILL'); } catch {}
+    closeAllSqliteInstances();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
   h.port = await boundPort(child, () => h.log);
   h.api = `http://127.0.0.1:${h.port}`;
   h.del = async (uid, body) => {
     const r = await fetch(`${h.api}/api/account/delete`, { method: 'POST', headers: as(uid), body: JSON.stringify(body) });
     return { status: r.status, body: await r.json(), cookie: r.headers.get('set-cookie') || '' };
   };
-  h.db = () => JSON.parse(fs.readFileSync(path.join(h.dataDir, 'db.json'), 'utf8'));
+  h.db = () => loadCoreDbFromSqlite(h.dataDir);
+  h.hasState = uid => Boolean(readUserStateSqlite(h.dataDir, uid));
   h.audit = () => fs.readFileSync(path.join(h.dataDir, 'audit.log'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
   h.stackFrames = () => h.log.split('\n').filter(l => /^\s+at /.test(l)).length;
   return h;
@@ -77,8 +83,8 @@ test('removes the account and everything attached to it, and ends the session', 
   assert.deepEqual(db.users.map(u => u.id), [ADMIN], 'the user is gone');
   assert.deepEqual(db.creds.map(c => c.userId), [ADMIN], 'their passkeys are gone');
   assert.deepEqual(db.subs.map(s => s.userId), [ADMIN], 'their push subscriptions are gone');
-  assert.equal(fs.existsSync(path.join(h.dataDir, `state-${USER}.json`)), false, 'their history is gone');
-  assert.equal(fs.existsSync(path.join(h.dataDir, `state-${ADMIN}.json`)), true, 'nobody else’s is touched');
+  assert.equal(h.hasState(USER), false, 'their history is gone');
+  assert.equal(h.hasState(ADMIN), true, 'nobody else’s is touched');
   assert.equal(db.invites[0].usedBy, USER, 'the code they joined with stays burned');
 
   const me = await fetch(`${h.api}/api/me`, { headers: as(USER) });
@@ -147,7 +153,7 @@ test('the only profile on the instance can delete itself, admin or not', async t
   const h = await startServer(t, { users: ['admin'] });
   assert.equal((await h.del(ADMIN, { name: 'Adminna', current: GOOD })).status, 200);
   assert.deepEqual(h.db().users, []);
-  assert.equal(fs.existsSync(path.join(h.dataDir, `state-${ADMIN}.json`)), false);
+  assert.equal(h.hasState(ADMIN), false);
 });
 
 test('a paired phone: the pairing is the proof without a password, the password with one', async t => {
@@ -222,7 +228,7 @@ test('needs proof that the owner is here: missing or wrong, nothing is removed',
   assert.equal(bogus.body.code, 'passkey');
 
   assert.equal(h.db().users.length, 3, 'nothing was removed');
-  assert.equal(fs.existsSync(path.join(h.dataDir, `state-${USER}.json`)), true);
+  assert.equal(h.hasState(USER), true);
   const fails = h.audit().filter(r => r.ev === 'auth.proof.fail');
   assert.ok(fails.length >= 2 && fails.every(r => r.act === 'account-delete'), 'logged as a refused proof for the delete');
   assert.ok(!h.audit().some(r => r.ev === 'auth.account.delete'));

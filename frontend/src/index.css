@@ -47,6 +47,7 @@
   --blue:#0a84ff; --green:#30d158; --red:#ff453a; --orange:#ff9f0a;
   --yellow:#ffd60a; --teal:#40c8e0; --indigo:#5e5ce6; --pink:#ff375f;
   --purple:#bf5af2; --mint:#63e6e2; --brown:#ac8e68; --grey:#8e8e93;
+  --lime:#D0FF00;
 
   /* accent (per-account, synced) — Rit Official Landing Volt Lime (#D0FF00) */
   --acc:  #D0FF00;
@@ -70,9 +71,9 @@
      and the views is one of these; what stays in px is a glyph (an icon's size) or a display
      figure inside a fixed box (the timer, a tile's number). Size, leading and tracking move as a
      set: tighter as the type grows, a hair looser as it shrinks (APPLE §15). */
-  --fs-caption2:.6875rem;  /* 11: tab labels, badges */
-  --fs-caption:.75rem;     /* 12: meta, axis text, small labels */
-  --fs-footnote:.8125rem;  /* 13: subtitles, the small line over a title */
+  --fs-caption2:.875rem;   /* 14: tab labels, badges (WebCraft >= 14px floor) */
+  --fs-caption:.875rem;    /* 14: meta, axis text, small labels (WebCraft >= 14px floor) */
+  --fs-footnote:.875rem;   /* 14: subtitles, the small line over a title (WebCraft >= 14px floor) */
   --fs-subhead:.9375rem;   /* 15: secondary lines, values */
   --fs-callout:1rem;       /* 16: titles in dense lists, inputs */
   --fs-body:1.0625rem;     /* 17: body and row titles */
@@ -136,12 +137,13 @@
   --blue:#007aff; --green:#34c759; --red:#ff3b30; --orange:#ff9500;
   --yellow:#ffcc00; --teal:#30b0c7; --indigo:#5856d6; --pink:#ff2d55;
   --purple:#af52de; --mint:#00c7be; --brown:#a2845e; --grey:#8e8e93;
+  --lime:#D0FF00;
   --acc-2:#248a3d;
   --on-acc:#ffffff;
 }
 
 /* accents — Apple's system colours, so a recolour never looks off-system */
-:root[data-accent="lime"]  { --acc:#D0FF00;       --acc-2:#a8cc00; --on-acc:#000 }
+:root[data-accent="lime"]  { --acc:var(--lime);   --acc-2:#a8cc00; --on-acc:#000 }
 :root[data-accent="sky"]   { --acc:var(--blue);   --acc-2:#0060df; --on-acc:#fff }
 :root[data-accent="orange"]{ --acc:var(--orange); --acc-2:#c76b00; --on-acc:#000 }
 :root[data-accent="violet"]{ --acc:var(--purple); --acc-2:#8944ab; --on-acc:#fff }
@@ -184,6 +186,7 @@
     --blue:#5cb8ff; --green:#4ad968; --red:#ff6165; --orange:#ffa056;
     --yellow:#fedf43; --teal:#3bddec; --indigo:#a7aaff; --pink:#ff8ac4;
     --purple:#ea8dff; --mint:#54dfcb; --brown:#dba679; --grey:#aeaeb2;
+    --lime:#D0FF00;
     --label-2:rgba(235,235,245,.78); --label-3:rgba(235,235,245,.55); --label-4:rgba(235,235,245,.36);
     --label-dim:rgba(235,235,245,.66);
     --sep:rgba(84,84,88,.95); --sep-op:rgba(84,84,88,.8);
@@ -193,6 +196,7 @@
     --blue:#1e6ef4; --green:#008932; --red:#e9152d; --orange:#c55300;
     --yellow:#a16a00; --teal:#008198; --indigo:#564ade; --pink:#e7124d;
     --purple:#b02fc2; --mint:#008575; --brown:#956d51; --grey:#6c6c70;
+    --lime:#D0FF00;
     --label-2:rgba(60,60,67,.82); --label-3:rgba(60,60,67,.6); --label-4:rgba(60,60,67,.4);
     --label-dim:var(--label-2);
     --sep:rgba(60,60,67,.6); --sep-op:rgba(60,60,67,.5);
@@ -612,10 +616,11 @@ h4.sec{
 }
 :root[data-theme="light"] #tabbar{background:rgba(249,249,251,.94)}
 #tabbar button{
-  flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;
-  color:var(--label-2);font-size:10px;font-weight:500;letter-spacing:.005em;padding-top:3px;
+  flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:3px;
+  color:var(--label-2);font-size:14px;font-weight:500;letter-spacing:0;padding:3px 2px 0;
   transition:color var(--fast);
 }
+#tabbar button>span:last-child{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* The inactive tint is semi-transparent, so wherever two strokes cross inside an
    icon (the calendar's hangers over its frame, the divider's caps on its sides)
    the alpha doubled up and the icon read as a stack of loose layers. Carrying the
@@ -682,7 +687,7 @@ h4.sec{
   .conn-bar,.whdr.stick,.stats-index{background:var(--bg)}
   /* The badges over an animation and the dim behind a sheet: no frost, and the badge gets a
      darker pill so its white text no longer depends on what the picture shows behind it. */
-  .exmedia .gifhint,.exmedia .giftoggle,.mback{-webkit-backdrop-filter:none;backdrop-filter:none}
+  .exmedia .gifhint,.exmedia .giftoggle,.mback,#modal-root:has(.rit-auth-sheet) .mback{-webkit-backdrop-filter:none;backdrop-filter:none}
   .exmedia .gifhint,.exmedia .giftoggle{background:rgba(0,0,0,.8)}
 }
 
@@ -2724,7 +2729,7 @@ button.wl-summary{width:100%;padding:0 0 10px;text-align:start;border-radius:var
   .tiles{grid-template-columns:repeat(4,minmax(0,1fr))}
   .cols .tiles,.center .tiles{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}   /* a 300px dialog has no room for four */
   #tabbar{
-    left:50%;right:auto;bottom:16px;transform:translateX(-50%);width:520px;
+    left:50%;right:auto;bottom:16px;transform:translateX(-50%);width:min(580px,calc(100vw - 32px));
     border:var(--hair) solid var(--sep-op);border-radius:var(--r-xl);
     padding:7px 10px 9px;box-shadow:0 12px 40px -10px rgba(0,0,0,.5);
   }
@@ -3530,7 +3535,12 @@ button.wl-summary{width:100%;padding:0 0 10px;text-align:start;border-radius:var
 .rit-auth-link-btn.accent {
   color: var(--acc, #D0FF00);
   font-weight: 600;
-  text-decoration-color: color-mix(in srgb, var(--acc, #D0FF00) 45%, transparent);
+  text-decoration-color: var(--acc-line, rgba(208, 255, 0, 0.45));
+}
+
+:root[data-theme="light"] :not(.rit-auth-shell):not(.rit-auth-sheet) > .rit-auth-link-btn.accent {
+  color: var(--acc-2, #248a3d);
+  text-decoration-color: var(--acc-2, #248a3d);
 }
 
 .rit-auth-pill {

@@ -240,14 +240,12 @@ describe('webhooks', () => {
 })
 
 describe('the Settings search', () => {
-  it('finds the page and its cards by what people type', () => {
+  it('hides standalone Integrations in B2B student Settings while finding mobile HealthKit', () => {
     const ctx = { user: null, mobile: false, demo: false }
     const tr = s => s
-    expect(searchSettings('integrations', ctx, tr)[0]).toMatchObject({ page: 'integrations', isPage: true })
-    expect(searchSettings('home assistant', ctx, tr).map(h => h.title)).toContain('Webhooks')
-    expect(searchSettings('garmin', ctx, tr).map(h => h.title)).toContain('Garmin')
+    expect(searchSettings('integrations', ctx, tr)).toEqual([])
     expect(searchSettings('webhook', { user: { id: 'u' }, mobile: false, integrations: [] }, tr).map(h => h.title)).not.toContain('Webhooks')
-    // On a phone the health store is its own page, found under Integrations.
+    // On a phone the health store is its own page, under Data & backup.
     const phone = searchSettings('healthkit', { mobile: true, ios: true }, tr)
     expect(phone[0]).toMatchObject({ page: 'apple-health', trail: 'Settings' })
   })

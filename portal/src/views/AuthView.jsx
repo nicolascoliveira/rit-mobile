@@ -47,13 +47,22 @@ export default function AuthView({
   initialMode = 'login',
   initialAccountType = 'gym'
 }) {
-  const [b2bMode, setB2bMode] = useState(() => (initialMode === 'signup' ? 'signup' : 'login'));
+  const [b2bMode, setB2bMode] = useState(() => (
+    initialMode === 'signup' ? 'signup' : (initialMode === 'forgot' ? 'forgot' : 'login')
+  ));
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [adminName, setAdminName] = useState('Administrador Geral');
   const [setupToken, setSetupToken] = useState('');
   const [loading, setLoading] = useState(false);
   const [seeding, setSeeding] = useState(false);
+
+  // Campos de recuperação de senha B2B ("Esqueci minha senha")
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotChallenge, setForgotChallenge] = useState(null);
+  const [forgotCode, setForgotCode] = useState('');
+  const [forgotNewPassword, setForgotNewPassword] = useState('');
+  const [forgotChannelBusy, setForgotChannelBusy] = useState(false);
 
   // Campos do auto-cadastro B2B ("Criar Conta")
   const [signupType, setSignupType] = useState(() => (initialAccountType === 'personal' ? 'personal' : 'gym'));
@@ -63,6 +72,8 @@ export default function AuthView({
   const [signupPhone, setSignupPhone] = useState('');
   const [signupPassword, setSignupPassword] = useState('');
   const [signupPlanId, setSignupPlanId] = useState(() => (initialAccountType === 'personal' ? 'personal' : 'starter'));
+  const [signupTermsAccepted, setSignupTermsAccepted] = useState(false);
+  const [showLegalSummary, setShowLegalSummary] = useState(false);
 
   const availablePlans = useMemo(() => {
     const list = Array.isArray(bootstrap?.plans) && bootstrap.plans.length
@@ -77,7 +88,7 @@ export default function AuthView({
   }, [bootstrap?.plans]);
 
   useEffect(() => {
-    setB2bMode(initialMode === 'signup' ? 'signup' : 'login');
+    setB2bMode(initialMode === 'signup' ? 'signup' : (initialMode === 'forgot' ? 'forgot' : 'login'));
   }, [initialMode]);
 
   useEffect(() => {
@@ -97,8 +108,15 @@ export default function AuthView({
 
   const switchB2bMode = nextMode => {
     setB2bMode(nextMode);
+    if (nextMode === 'forgot') {
+      if (!forgotEmail && identifier.includes('@')) setForgotEmail(identifier.trim());
+    } else {
+      setForgotChallenge(null);
+      setForgotCode('');
+      setForgotNewPassword('');
+    }
     if (typeof window !== 'undefined') {
-      const targetPath = nextMode === 'signup' ? '/cadastro' : '/login';
+      const targetPath = nextMode === 'signup' ? '/cadastro' : (nextMode === 'forgot' ? '/recuperar-senha' : '/login');
       if (isNativePortalApp()) {
         const nextHash = `#${targetPath}`;
         if (window.location.hash !== nextHash) {
@@ -174,6 +192,10 @@ export default function AuthView({
       toast('A senha deve ter no mínimo 10 caracteres');
       return;
     }
+    if (!signupTermsAccepted) {
+      toast('Aceite os Termos de Uso e a Política de Privacidade (LGPD) para continuar');
+      return;
+    }
     setLoading(true);
     try {
       const res = await portalApi('/api/saas/auth/register', {
@@ -185,7 +207,9 @@ export default function AuthView({
           email: signupEmail.trim(),
           phone: signupPhone.trim(),
           password: signupPassword,
-          planId: signupPlanId
+          planId: signupPlanId,
+          termsAccepted: true,
+          termsAcceptedAt: new Date().toISOString()
         },
         tenantId: ''
       });
@@ -193,6 +217,77 @@ export default function AuthView({
       onAuthenticated(res);
     } catch (err) {
       toast(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRequestResetOtp = async (e, channel = 'auto') => {
+    e?.preventDefault();
+    const cleanEmail = forgotEmail.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      toast('Informe o e-mail cadastrado da sua conta');
+      return;
+    }
+    if (channel === 'whatsapp') setForgotChannelBusy(true);
+    else setLoading(true);
+    try {
+      const res = await portalApi('/api/auth/verification/send', {
+        method: 'POST',
+        body: { email: cleanEmail, purpose: 'reset', channel },
+        tenantId: ''
+      });
+      setForgotChallenge(res);
+      toast(
+        channel === 'whatsapp'
+          ? `Código enviado para seu WhatsApp (${res.maskedPhone || 'cadastrado'})!`
+          : `Código de 6 dígitos enviado para ${res.maskedEmail || cleanEmail}`
+      );
+    } catch (err) {
+      toast(err.message || 'Não foi possível enviar o código de verificação');
+    } finally {
+      setLoading(false);
+      setForgotChannelBusy(false);
+    }
+  };
+
+  const handleConfirmResetPassword = async e => {
+    e.preventDefault();
+    const cleanEmail = forgotEmail.trim().toLowerCase();
+    const code = forgotCode.replace(/\D/g, '');
+    if (!forgotChallenge?.challengeId) {
+      toast('Solicite o código de verificação primeiro');
+      return;
+    }
+    if (code.length !== 6) {
+      toast('Digite o código de 6 dígitos recebido');
+      return;
+    }
+    if (!forgotNewPassword || forgotNewPassword.length < 10) {
+      toast('A nova senha deve ter no mínimo 10 caracteres');
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await portalApi('/api/saas/auth/password-reset', {
+        method: 'POST',
+        body: {
+          email: cleanEmail,
+          challengeId: forgotChallenge.challengeId,
+          otpCode: code,
+          password: forgotNewPassword
+        },
+        tenantId: ''
+      });
+      toast(res?.message || 'Senha redefinida com sucesso!');
+      if (res?.token && res?.user) {
+        onAuthenticated(res);
+      } else {
+        setIdentifier(cleanEmail);
+        switchB2bMode('login');
+      }
+    } catch (err) {
+      toast(err.message || 'Código inválido ou expirado');
     } finally {
       setLoading(false);
     }
@@ -526,6 +621,58 @@ export default function AuthView({
                     />
                   </div>
 
+                  <div className="b2b-auth-field" style={{ gap: 8 }}>
+                    <label
+                      htmlFor="signup-terms"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: 10,
+                        cursor: 'pointer',
+                        fontSize: 14,
+                        lineHeight: 1.45,
+                        color: 'var(--auth-muted)'
+                      }}
+                    >
+                      <input
+                        id="signup-terms"
+                        type="checkbox"
+                        checked={signupTermsAccepted}
+                        onChange={e => setSignupTermsAccepted(e.target.checked)}
+                        style={{ width: 20, height: 20, marginTop: 2, accentColor: 'var(--acc)', flexShrink: 0 }}
+                        required
+                      />
+                      <span>
+                        Li e concordo com os{' '}
+                        <button
+                          type="button"
+                          className="b2b-auth-link"
+                          onClick={() => setShowLegalSummary(v => !v)}
+                        >
+                          Termos de Uso e Política de Privacidade (LGPD)
+                        </button>
+                      </span>
+                    </label>
+                    {showLegalSummary && (
+                      <div
+                        style={{
+                          padding: '12px 14px',
+                          borderRadius: 12,
+                          background: 'rgba(255,255,255,0.04)',
+                          border: '1px solid var(--sep)',
+                          fontSize: 14,
+                          lineHeight: 1.5,
+                          color: 'var(--auth-muted)'
+                        }}
+                      >
+                        <strong style={{ color: 'var(--auth-ink)', display: 'block', marginBottom: 4 }}>
+                          Conformidade LGPD &amp; Operação de Saúde (Art. 11)
+                        </strong>
+                        A academia ou personal atua como Controlador dos dados físicos, medidas e treinos de seus alunos, enquanto a Rit atua como Operadora com isolamento multi-tenant, criptografia em repouso e exclusão definitiva sob solicitação do titular.
+                      </div>
+                    )}
+                  </div>
+
                   <div style={{ marginTop: 4 }}>
                     <button
                       type="submit"
@@ -545,6 +692,137 @@ export default function AuthView({
                     onClick={() => switchB2bMode('login')}
                   >
                     Fazer login
+                  </button>
+                </div>
+              </>
+            ) : b2bMode === 'forgot' ? (
+              <>
+                <h1 className="b2b-auth-title">Recuperar senha</h1>
+                <p className="b2b-auth-subtitle">
+                  {forgotChallenge
+                    ? 'Digite o código de 6 dígitos recebido e defina uma nova senha de acesso ao painel.'
+                    : 'Informe o e-mail da sua academia ou personal para receber um código de verificação.'}
+                </p>
+
+                {!forgotChallenge ? (
+                  <form className="b2b-auth-form" onSubmit={e => handleRequestResetOtp(e, 'auto')}>
+                    <div className="b2b-auth-field">
+                      <label className="b2b-auth-label" htmlFor="forgot-email">E-mail cadastrado</label>
+                      <input
+                        id="forgot-email"
+                        className="b2b-auth-input"
+                        type="email"
+                        placeholder="contato@suaacademia.com.br"
+                        value={forgotEmail}
+                        onChange={e => setForgotEmail(e.target.value)}
+                        autoComplete="email"
+                        required
+                      />
+                    </div>
+                    <div style={{ marginTop: 4 }}>
+                      <button
+                        type="submit"
+                        className="b2b-auth-pill"
+                        disabled={loading || !forgotEmail.trim()}
+                      >
+                        {loading ? 'Enviando código…' : 'Enviar código de verificação'}
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <form className="b2b-auth-form" onSubmit={handleConfirmResetPassword}>
+                    <div
+                      style={{
+                        padding: '12px 14px',
+                        borderRadius: 12,
+                        background: 'rgba(208, 255, 0, 0.08)',
+                        border: '1px solid rgba(208, 255, 0, 0.25)',
+                        fontSize: 14,
+                        lineHeight: 1.45,
+                        color: 'var(--auth-ink)'
+                      }}
+                    >
+                      Código enviado para{' '}
+                      <strong>
+                        {forgotChallenge.primaryChannel === 'whatsapp'
+                          ? (forgotChallenge.maskedPhone || 'seu WhatsApp')
+                          : (forgotChallenge.maskedEmail || forgotEmail)}
+                      </strong>
+                      . Válido por 10 minutos.
+                    </div>
+
+                    <div className="b2b-auth-field">
+                      <label className="b2b-auth-label" htmlFor="forgot-otp">Código de 6 dígitos</label>
+                      <input
+                        id="forgot-otp"
+                        className="b2b-auth-input"
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={6}
+                        placeholder="000000"
+                        value={forgotCode}
+                        onChange={e => setForgotCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                        autoComplete="one-time-code"
+                        required
+                      />
+                    </div>
+
+                    <div className="b2b-auth-field">
+                      <label className="b2b-auth-label" htmlFor="forgot-new-pw">Nova senha (mínimo 10 caracteres)</label>
+                      <AuthPasswordInput
+                        id="forgot-new-pw"
+                        placeholder="Defina uma nova senha forte"
+                        value={forgotNewPassword}
+                        onChange={setForgotNewPassword}
+                        autoComplete="new-password"
+                        required
+                      />
+                    </div>
+
+                    <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      <button
+                        type="submit"
+                        className="b2b-auth-pill"
+                        disabled={loading || forgotCode.length !== 6 || forgotNewPassword.length < 10}
+                      >
+                        {loading ? 'Redefinindo…' : 'Redefinir senha e entrar'}
+                      </button>
+
+                      {forgotChallenge.hasPhone && (
+                        <Button
+                          type="button"
+                          variant="tinted"
+                          block
+                          disabled={forgotChannelBusy || loading}
+                          onClick={e => handleRequestResetOtp(e, 'whatsapp')}
+                        >
+                          {forgotChannelBusy ? 'Enviando no WhatsApp…' : 'Receber código pelo WhatsApp'}
+                        </Button>
+                      )}
+
+                      <button
+                        type="button"
+                        className="b2b-auth-link"
+                        style={{ alignSelf: 'center', minHeight: 40, fontSize: 14 }}
+                        onClick={() => {
+                          setForgotChallenge(null);
+                          setForgotCode('');
+                        }}
+                      >
+                        Usar outro e-mail ou reenviar
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                <div style={{ marginTop: 18, textAlign: 'center', fontSize: 14, color: 'var(--auth-muted)' }}>
+                  Lembrou a senha?{' '}
+                  <button
+                    type="button"
+                    className="b2b-auth-link"
+                    onClick={() => switchB2bMode('login')}
+                  >
+                    Voltar para o login
                   </button>
                 </div>
               </>
@@ -568,7 +846,17 @@ export default function AuthView({
                     />
                   </div>
                   <div className="b2b-auth-field">
-                    <label className="b2b-auth-label" htmlFor="login-pw">Senha</label>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                      <label className="b2b-auth-label" htmlFor="login-pw">Senha</label>
+                      <button
+                        type="button"
+                        className="b2b-auth-link"
+                        style={{ fontSize: 14, minHeight: 36, display: 'inline-flex', alignItems: 'center' }}
+                        onClick={() => switchB2bMode('forgot')}
+                      >
+                        Esqueci minha senha
+                      </button>
+                    </div>
                     <AuthPasswordInput
                       id="login-pw"
                       placeholder="Digite sua senha"

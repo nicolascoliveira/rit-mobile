@@ -17,6 +17,8 @@ import path from 'node:path';
 import dns from 'node:dns';
 import crypto from 'node:crypto';
 import { Agent as UndiciAgent, fetch as undiciFetch } from 'undici';
+
+const NATIVE_GLOBAL_FETCH = globalThis.fetch;
 import { getTenant, resolveTenantEvolutionSettings } from './tenants.js';
 import {
   getSqliteInstance,
@@ -421,7 +423,9 @@ export function formatWorkoutWhatsAppMessage({
   // Nota do aluno
   let noteText = '';
   if (workout.note && String(workout.note).trim()) {
-    noteText = `\n📝 *Mensagem do Aluno:* "${String(workout.note).trim()}"`;
+    const cleanNote = String(workout.note).trim();
+    const truncated = cleanNote.length > 280 ? cleanNote.slice(0, 277) + '...' : cleanNote;
+    noteText = `\n📝 *Mensagem do Aluno:* "${truncated}"`;
   }
 
   const statItems = [
@@ -553,7 +557,8 @@ async function fetchEvolutionJson(
     if (!hostCheck.isPlatform) {
       fetchOpts.dispatcher = EVOLUTION_EXTERNAL_DISPATCHER;
     }
-    const doFetch = fetchOpts.dispatcher ? undiciFetch : fetch;
+    const useMockedGlobal = typeof globalThis.fetch === 'function' && globalThis.fetch !== NATIVE_GLOBAL_FETCH;
+    const doFetch = useMockedGlobal ? globalThis.fetch : (fetchOpts.dispatcher ? undiciFetch : fetch);
     const res = await doFetch(fullUrl, fetchOpts);
     clearTimeout(timer);
     const data = await res.json().catch(() => ({}));

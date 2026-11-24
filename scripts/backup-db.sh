@@ -19,6 +19,7 @@ mkdir -p "$BACKUP_DIR"
 
 echo "[$(date +'%T')] Iniciando rotina de backup de produção da Rit..."
 
+echo "[██░░░░░░░░] 20% (1/5) - Snapshot atômico do SQLite (rit.db)"
 # 1. Snapshot a quente do banco SQLite principal (rit.db)
 SQLITE_DB="$DATA_DIR/rit.db"
 SQLITE_DEST="$BACKUP_DIR/rit-db-$TIMESTAMP.sqlite"
@@ -46,6 +47,7 @@ else
     echo "[$(date +'%T')] Aviso: rit.db não encontrado em $DATA_DIR"
 fi
 
+echo "[████░░░░░░] 40% (2/5) - Exportando PostgreSQL da Evolution API"
 # 2. Dump do PostgreSQL da Evolution API (WhatsApp)
 PG_DEST="$BACKUP_DIR/evolution-pg-$TIMESTAMP.sql.gz"
 PG_CONTAINER="$(docker ps --format '{{.Names}}' | grep "evolution-postgres" | head -n 1 || true)"
@@ -60,6 +62,7 @@ if [ -n "$PG_CONTAINER" ]; then
     fi
 fi
 
+echo "[██████░░░░] 60% (3/5) - Compactando mídias customizadas"
 # 3. Compactação de mídias customizadas dos exercícios (uploads/)
 UPLOADS_DIR="$DATA_DIR/uploads"
 if [ -d "$UPLOADS_DIR" ] && [ "$(ls -A "$UPLOADS_DIR")" ]; then
@@ -67,12 +70,12 @@ if [ -d "$UPLOADS_DIR" ] && [ "$(ls -A "$UPLOADS_DIR")" ]; then
     tar -czf "$BACKUP_DIR/uploads-$DATE_TAG.tar.gz" -C "$DATA_DIR" uploads
 fi
 
+echo "[████████░░] 80% (4/5) - Aplicando rotação de backups (14 dias)"
 # 4. Rotação local (mantém os últimos 14 dias de backups)
 echo "[$(date +'%T')] Limpando arquivos de backup locais com mais de 14 dias..."
-find "$BACKUP_DIR" -type f -name "rit-db-*" -mtime +14 -delete
-find "$BACKUP_DIR" -type f -name "evolution-pg-*" -mtime +14 -delete
-find "$BACKUP_DIR" -type f -name "uploads-*" -mtime +14 -delete
+find "$BACKUP_DIR" -type f \( -name "rit-db-*" -o -name "evolution-pg-*" -o -name "uploads-*" -o -name "secret-*.key" -o -name "vapid-*.json" \) -mtime +14 -delete
 
+echo "[██████████] 100% (5/5) - Sincronização offsite e finalização"
 # 5. Opcional: Envio Offsite para AWS S3 ou Cloudflare R2 (sem --delete para impedir wipe acidental)
 if [ -n "${BACKUP_S3_BUCKET:-}" ] && command -v aws >/dev/null 2>&1; then
     echo "[$(date +'%T')] Sincronizando com armazenamento em nuvem S3: $BACKUP_S3_BUCKET..."

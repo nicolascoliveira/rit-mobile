@@ -34,7 +34,14 @@ async function startServer(t, { env = {}, users = [], creds = [] } = {}) {
   const h = { api: '', log: '', dataDir, env: childEnv, child };
   child.stdout.on('data', d => h.log += d);
   child.stderr.on('data', d => h.log += d);
-  t.after(() => { child.kill('SIGKILL'); fs.rmSync(dataDir, { recursive: true, force: true }); });
+  t.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      const done = new Promise(r => child.once('exit', r));
+      child.kill('SIGKILL');
+      await done;
+    }
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
   h.api = `http://127.0.0.1:${await boundPort(child, () => h.log)}`;
   h.req = async (method, p, { body, cookie, ip = '198.51.100.1' } = {}) => {
     const r = await fetch(`${h.api}${p}`, {
@@ -140,6 +147,7 @@ test('a profile full of passkeys still gets back in: the one used longest ago ma
 });
 
 test('recover.js asks the running server for the owner’s code, by name or by id', async t => {
+  if (process.platform === 'win32') return t.skip('Unix domain admin socket is disabled on Windows (admin-socket.js)');
   const fresh = softPasskey();
   const h = await startServer(t, { users: [OWNER, ADMIN, ANA, user('u9', 'Ana')] });
   const r = await h.cli('Olga');
@@ -164,6 +172,7 @@ test('recover.js asks the running server for the owner’s code, by name or by i
 });
 
 test('the admin socket is private, and recover.js says so when no server runs', async t => {
+  if (process.platform === 'win32') return t.skip('Unix domain admin socket is disabled on Windows (admin-socket.js)');
   const h = await startServer(t, { users: [OWNER] });
   const { socketDir, socketPath } = await import('../admin-socket.js');
   const dir = socketDir(h.env);

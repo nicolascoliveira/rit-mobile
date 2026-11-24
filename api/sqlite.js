@@ -793,6 +793,21 @@ export function getSqliteInstance(dirOrTenantDir) {
         expires_at = excluded.expires_at,
         created_at = excluded.created_at
     `),
+    supersedeAuthVerifications: db.prepare(`
+      UPDATE auth_verifications
+      SET expires_at = 0
+      WHERE email = ? AND purpose = ? AND id != ? AND expires_at > 0
+    `),
+    countAuthVerificationsByEmail: db.prepare(`
+      SELECT COUNT(*) AS cnt, MIN(created_at) AS oldest_at
+      FROM auth_verifications
+      WHERE email = ? AND purpose = ? AND created_at > ?
+    `),
+    countAuthVerificationsByPhone: db.prepare(`
+      SELECT COUNT(*) AS cnt, MIN(created_at) AS oldest_at
+      FROM auth_verifications
+      WHERE phone = ? AND purpose = ? AND created_at > ?
+    `),
     getAuthVerification: db.prepare(`
       SELECT id, email, phone, user_id, tenant_id, purpose, code_hash, attempts, expires_at, created_at
       FROM auth_verifications
@@ -808,7 +823,13 @@ export function getSqliteInstance(dirOrTenantDir) {
       DELETE FROM auth_verifications WHERE id = ?
     `),
     pruneExpiredAuthVerifications: db.prepare(`
-      DELETE FROM auth_verifications WHERE expires_at <= ?
+      DELETE FROM auth_verifications WHERE expires_at <= ? AND created_at <= ?
+    `),
+    deleteUserAuthVerifications: db.prepare(`
+      DELETE FROM auth_verifications WHERE user_id = ? OR (email != '' AND email = ?)
+    `),
+    deleteUserWhatsappOutbox: db.prepare(`
+      DELETE FROM whatsapp_outbox WHERE (? != '' AND json_extract(data, '$.phone') = ?) OR dedup_key LIKE ?
     `)
   };
 
@@ -892,21 +913,50 @@ function migrateLegacyJsonIfPresent(instance) {
 
   // 1. Migra db.json somente se o banco SQLite estiver vazio ou se db.json tiver sido editado externamente (hash diferente do último espelho gravado pelo SQLite)
   if (fs.existsSync(legacyDbFile)) {
+    const raw = fs.readFileSync(legacyDbFile, 'utf8');
+    let parsed = null;
+    let validJson = false;
     try {
-      const raw = fs.readFileSync(legacyDbFile, 'utf8');
-      const rawSha = crypto.createHash('sha256').update(raw).digest('hex');
-      const lastMirrorSha = stmts.getKv.get('db_json_mirror_sha')?.value || '';
-      const hasUsersInSqlite = (stmts.getUserIds.all()?.length || 0) > 0;
-      if (!hasUsersInSqlite || (lastMirrorSha !== 'SQLITE_AHEAD' && rawSha !== lastMirrorSha)) {
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      parsed = JSON.parse(raw);
+      validJson = !!parsed && typeof parsed === 'object' && !Array.isArray(parsed);
+    } catch {
+      validJson = false;
+    }
+
+    const lastMirrorSha = stmts.getKv.get('db_json_mirror_sha')?.value || '';
+    const hasUsersInSqlite = (stmts.getUserIds.all()?.length || 0) > 0;
+
+    if (validJson) {
+      try {
+        const rawSha = crypto.createHash('sha256').update(raw).digest('hex');
+        if (!hasUsersInSqlite || (lastMirrorSha !== 'SQLITE_AHEAD' && rawSha !== lastMirrorSha)) {
           saveCoreDbToSqlite(baseDir, parsed);
         }
+      } catch (e) {
+        console.warn('[SQLite Migration] Aviso ao migrar db.json:', e.message);
       }
-      // Mantem db.json intacto para MCP e testes legados
-      try { fs.unlinkSync(legacyDbFile + '.bak'); } catch { /* ignore */ }
-    } catch (e) {
-      console.warn('[SQLite Migration] Aviso ao migrar db.json:', e.message);
+    } else {
+      const stamp = Date.now();
+      try { fs.copyFileSync(legacyDbFile, path.join(baseDir, `db.json.unreadable-${stamp}`)); } catch { /* ignore */ }
+      const bakPath = legacyDbFile + '.bak';
+      let bakParsed = null;
+      if (fs.existsSync(bakPath)) {
+        try {
+          const b = JSON.parse(fs.readFileSync(bakPath, 'utf8'));
+          if (b && typeof b === 'object' && !Array.isArray(b)) bakParsed = b;
+        } catch { /* unreadable backup */ }
+      }
+      if (!hasUsersInSqlite && bakParsed) {
+        console.error('db.json unreadable; using db.json.bak');
+        saveCoreDbToSqlite(baseDir, bakParsed);
+      } else if (hasUsersInSqlite || lastMirrorSha) {
+        console.error(bakParsed ? 'db.json unreadable; using db.json.bak / rit.db' : 'db.json unreadable; continuing from rit.db');
+      } else {
+        console.error('Refusing to start: db.json is unreadable and no backup exists');
+        try { instance.db.close(); } catch { /* ignore */ }
+        dbInstances.delete(baseDir);
+        process.exit(1);
+      }
     }
   }
 
@@ -1253,11 +1303,14 @@ function writeDbMirrorSync(inst, dbObj) {
     return;
   }
   const mirrorPath = path.join(inst.baseDir, 'db.json');
+  const bakPath = mirrorPath + '.bak';
   try {
     const raw = JSON.stringify(dbObj, null, 2);
+    fs.writeFileSync(bakPath, raw, { mode: 0o600 });
     fs.writeFileSync(mirrorPath, raw, { mode: 0o600 });
     const rawSha = crypto.createHash('sha256').update(raw).digest('hex');
     inst.stmts.setKv.run('db_json_mirror_sha', rawSha, Date.now());
+    fs.chmodSync(bakPath, 0o600);
     fs.chmodSync(mirrorPath, 0o600);
   } catch { /* host filesystem may deny chmod */ }
 }
@@ -1523,13 +1576,16 @@ export function readUserStateSqlite(dataDir, userId) {
   const safeId = String(userId || '').replace(/[^a-zA-Z0-9_-]/g, '');
   if (!safeId) return null;
 
-  // Caso algum processo externo tenha colocado um `state-<uid>.json` no diretório, absorve-o
+  // Caso algum processo externo tenha colocado um `state-<uid>.json` no diretório, absorve-o preservando o arquivo/mtime
   const legacyFile = path.join(inst.baseDir, `state-${safeId}.json`);
   if (fs.existsSync(legacyFile)) {
     try {
+      const lst = fs.statSync(legacyFile);
       const text = fs.readFileSync(legacyFile, 'utf8');
       const parsed = JSON.parse(text);
-      writeUserStateSqlite(dataDir, safeId, parsed, text);
+      const rev = Number(parsed?._rev || 0);
+      const wid = parsed?._wid ? String(parsed._wid) : null;
+      inst.stmts.upsertState.run(safeId, rev, wid, lst.mtimeMs, Buffer.byteLength(text, 'utf8'), text);
       return parsed;
     } catch {
       return undefined; // sinaliza UNREADABLE se o arquivo foi corrompido externamente
@@ -1553,9 +1609,13 @@ export function statUserStateSqlite(dataDir, userId) {
   const legacyFile = path.join(inst.baseDir, `state-${safeId}.json`);
   if (fs.existsSync(legacyFile)) {
     try {
-      const text = fs.readFileSync(legacyFile, 'utf8');
-      const parsed = JSON.parse(text);
-      writeUserStateSqlite(dataDir, safeId, parsed, text);
+      const lst = fs.statSync(legacyFile);
+      return {
+        mtimeMs: Number(lst.mtimeMs),
+        size: Number(lst.size),
+        rev: 0,
+        wid: null
+      };
     } catch {
       return null;
     }
@@ -1584,7 +1644,7 @@ export function writeUserStateSqlite(dataDir, userId, stateObj, serializedText =
 
   const legacyFile = path.join(inst.baseDir, `state-${safeId}.json`);
   if (fs.existsSync(legacyFile)) {
-    try { fs.writeFileSync(legacyFile, text); } catch {}
+    try { fs.unlinkSync(legacyFile); } catch { /* ignore */ }
   }
 
   return stateObj;
@@ -2058,22 +2118,54 @@ export function deleteMobileNotificationsSqlite(dataDir, userId) {
   inst.stmts.deleteUserMobileNotif.run(uid);
 }
 
+export function checkOtpSendQuotaSqlite(
+  dataDir,
+  { email, phone = '', purpose = 'register', now = Date.now(), windowMs = 10 * 60_000, maxPerWindow = 5 }
+) {
+  const cleanEmail = String(email || '').trim().toLowerCase();
+  const cleanPhone = phone ? String(phone).trim() : '';
+  const cleanPurpose = String(purpose || 'register').trim();
+  const since = now - Math.max(60_000, Number(windowMs) || 10 * 60_000);
+  const cap = Math.max(1, Number(maxPerWindow) || 5);
+  const inst = getSqliteInstance(dataDir);
+  const byEmail = cleanEmail
+    ? inst.stmts.countAuthVerificationsByEmail.get(cleanEmail, cleanPurpose, since)
+    : { cnt: 0, oldest_at: null };
+  if (Number(byEmail?.cnt || 0) >= cap) {
+    const oldest = Number(byEmail.oldest_at || now);
+    const retryAfterSec = Math.max(1, Math.ceil((oldest + windowMs - now) / 1000));
+    return { ok: false, reason: 'email-quota', retryAfterSec };
+  }
+  if (cleanPhone) {
+    const byPhone = inst.stmts.countAuthVerificationsByPhone.get(cleanPhone, cleanPurpose, since);
+    if (Number(byPhone?.cnt || 0) >= cap) {
+      const oldest = Number(byPhone.oldest_at || now);
+      const retryAfterSec = Math.max(1, Math.ceil((oldest + windowMs - now) / 1000));
+      return { ok: false, reason: 'phone-quota', retryAfterSec };
+    }
+  }
+  return { ok: true };
+}
+
 export function createAuthVerificationSqlite(
   dataDir,
   { id, email, phone = null, userId = null, tenantId = 'default', purpose = 'register', codeHash, ttlMs = 10 * 60 * 1000 }
 ) {
   const now = Date.now();
   const expiresAt = now + Math.max(60_000, Number(ttlMs) || 10 * 60 * 1000);
+  const cleanEmail = String(email).trim().toLowerCase();
+  const cleanPurpose = String(purpose || 'register').trim();
   const inst = getSqliteInstance(dataDir);
   return runInTransaction(inst, () => {
-    inst.stmts.pruneExpiredAuthVerifications.run(now);
+    inst.stmts.pruneExpiredAuthVerifications.run(now, now - 15 * 60_000);
+    inst.stmts.supersedeAuthVerifications.run(cleanEmail, cleanPurpose, String(id));
     inst.stmts.upsertAuthVerification.run(
       String(id),
-      String(email).trim().toLowerCase(),
+      cleanEmail,
       phone ? String(phone).trim() : null,
       userId ? String(userId).trim() : null,
       String(tenantId || 'default').trim() || 'default',
-      String(purpose || 'register').trim(),
+      cleanPurpose,
       String(codeHash),
       0,
       expiresAt,
@@ -2081,14 +2173,29 @@ export function createAuthVerificationSqlite(
     );
     return {
       id: String(id),
-      email: String(email).trim().toLowerCase(),
+      email: cleanEmail,
       phone: phone ? String(phone).trim() : null,
       userId: userId ? String(userId).trim() : null,
       tenantId: String(tenantId || 'default').trim() || 'default',
-      purpose: String(purpose || 'register').trim(),
+      purpose: cleanPurpose,
       expiresAt,
       createdAt: now
     };
+  });
+}
+
+export function purgeUserPrivacyRecordsSqlite(dataDir, { userId, email = '', phone = '' } = {}) {
+  const uid = String(userId || '').trim();
+  const cleanEmail = String(email || '').trim().toLowerCase();
+  const cleanPhone = String(phone || '').trim();
+  const inst = getSqliteInstance(dataDir);
+  runInTransaction(inst, () => {
+    if (uid || cleanEmail) {
+      inst.stmts.deleteUserAuthVerifications.run(uid, cleanEmail);
+    }
+    if (uid || cleanPhone) {
+      inst.stmts.deleteUserWhatsappOutbox.run(cleanPhone, cleanPhone, `%:${uid}:%`);
+    }
   });
 }
 

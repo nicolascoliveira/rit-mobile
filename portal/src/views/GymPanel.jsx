@@ -2612,7 +2612,7 @@ export default function GymPanel({
                         {tpl.ex?.length || 0} exercícios configurados:
                       </div>
                       {(tpl.ex || []).slice(0, 4).map((x, idx) => (
-                        <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '3px 0' }}>
+                        <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, padding: '3px 0' }}>
                           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: 8 }}>
                             {idx + 1}. {x.name || `#${x.id}`}
                           </span>
@@ -3680,7 +3680,7 @@ export default function GymPanel({
                 return (
                   <div className="b2b-phone-preview">
                     {/* Status Bar simulada */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.72)', marginBottom: 14, padding: '0 4px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 14, fontWeight: 700, color: 'rgba(255,255,255,0.72)', marginBottom: 14, padding: '0 4px' }}>
                       <span>09:41</span>
                       <span style={{ width: 64, height: 16, borderRadius: 99, background: '#18181b' }} />
                       <span>5G · 100%</span>
@@ -3719,11 +3719,11 @@ export default function GymPanel({
                             <span style={{ fontWeight: 800, fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                               {brandForm.gymName || 'Sua Academia'}
                             </span>
-                            <span style={{ fontSize: 9.5, background: 'rgba(255,255,255,0.1)', color: accentHex, padding: '1px 5px', borderRadius: 4, fontWeight: 800 }}>
+                            <span style={{ fontSize: 14, background: 'rgba(255,255,255,0.1)', color: accentHex, padding: '1px 6px', borderRadius: 4, fontWeight: 800 }}>
                               Rit
                             </span>
                           </div>
-                          <div style={{ fontSize: 11, color: 'rgba(235,235,245,0.62)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          <div style={{ fontSize: 14, color: 'rgba(235,235,245,0.62)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {brandForm.slogan || (isPersonal ? 'Consultoria & Treinos' : 'App Oficial da Academia')}
                           </div>
                         </div>
@@ -3739,7 +3739,7 @@ export default function GymPanel({
                           gap: 6,
                           padding: '4px 10px',
                           borderRadius: 999,
-                          fontSize: 11,
+                          fontSize: 14,
                           fontWeight: 700,
                           marginBottom: 12,
                           background: 'rgba(251, 191, 36, 0.12)',
@@ -3761,21 +3761,21 @@ export default function GymPanel({
 
                     {/* Card da Ficha Prescrita */}
                     <div style={{ background: '#18181c', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 16, padding: 14, marginBottom: 12 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
-                        <span style={{ fontSize: 10.5, color: 'rgba(235,235,245,0.6)', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.04em' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5, gap: 6, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 14, color: 'rgba(235,235,245,0.6)', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.03em' }}>
                           Ficha de Hoje • {brandForm.gymName || tenant.name || (isPersonal ? 'Personal' : 'Academia')}
                         </span>
-                        <span style={{ fontSize: 9.5, color: accentHex, fontWeight: 800 }}>
+                        <span style={{ fontSize: 14, color: accentHex, fontWeight: 800 }}>
                           No App Rit
                         </span>
                       </div>
                       <div style={{ fontWeight: 800, fontSize: 16, margin: '2px 0 3px' }}>
                         Treino A — Superiores
                       </div>
-                      <div style={{ fontSize: 11.5, color: 'rgba(235,235,245,0.72)', marginBottom: 12 }}>
+                      <div style={{ fontSize: 14, color: 'rgba(235,235,245,0.72)', marginBottom: 12 }}>
                         Prescrito por <b>{team?.[0]?.name ? `Prof. ${team[0].name}` : isPersonal ? (brandForm.gymName || 'Seu Personal') : 'Professor da Unidade'}</b>
                       </div>
-                      <div style={{ fontSize: 12.5, color: 'rgba(235,235,245,0.82)', display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
+                      <div style={{ fontSize: 14, color: 'rgba(235,235,245,0.82)', display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
                           <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>1. Supino Reto c/ Barra</span>
                           <b className="num" style={{ flexShrink: 0 }}>4×10</b>
@@ -3794,7 +3794,7 @@ export default function GymPanel({
                           background: accentHex,
                           color: accentFg,
                           fontWeight: 800,
-                          fontSize: 13.5,
+                          fontSize: 14,
                           borderRadius: 11,
                           padding: '10px 12px',
                           textAlign: 'center'
@@ -3804,14 +3804,14 @@ export default function GymPanel({
                       </div>
                     </div>
 
-                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 6, margin: '2px 0 10px', fontSize: 10.5, color: 'rgba(235,235,245,0.45)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 6, margin: '2px 0 10px', fontSize: 14, color: 'rgba(235,235,245,0.45)', flexWrap: 'wrap' }}>
                       <span>Plataforma</span>
                       <b style={{ color: accentHex }}>Rit</b>
                       <span>• {brandForm.gymName || tenant.name || 'Sua Academia'}</span>
                     </div>
 
                     {(brandForm.contactPhone || brandForm.instagram || brandForm.address) && (
-                      <div style={{ background: '#141417', borderRadius: 12, padding: '8px 11px', marginBottom: 12, fontSize: 11, color: 'rgba(235,235,245,0.65)', display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      <div style={{ background: '#141417', borderRadius: 12, padding: '8px 11px', marginBottom: 12, fontSize: 14, color: 'rgba(235,235,245,0.65)', display: 'flex', flexDirection: 'column', gap: 3 }}>
                         {brandForm.address && (
                           <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {brandForm.address}
@@ -4329,10 +4329,10 @@ export default function GymPanel({
                             textAlign: 'center'
                           }}
                         >
-                          <div style={{ fontWeight: 800, fontSize: 12, color: dayNames.length ? 'var(--acc-ink)' : 'var(--label-2)' }}>
+                          <div style={{ fontWeight: 800, fontSize: 14, color: dayNames.length ? 'var(--acc-ink)' : 'var(--label-2)' }}>
                             {w.short}
                           </div>
-                          <div style={{ fontSize: 11, marginTop: 4, lineHeight: 1.25 }}>
+                          <div style={{ fontSize: 14, marginTop: 4, lineHeight: 1.25 }}>
                             {dayNames.length ? dayNames.join(', ') : <span className="muted">Descanso</span>}
                           </div>
                         </div>
@@ -4480,7 +4480,7 @@ export default function GymPanel({
                                   />
                                 )}
                                 <div style={{ minWidth: 0, flex: 1 }}>
-                                  <div style={{ fontWeight: 600, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  <div style={{ fontWeight: 600, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                     {idx + 1}. {slot.name}
                                   </div>
                                   <div className="muted small num">
@@ -4511,7 +4511,7 @@ export default function GymPanel({
                             <span
                               key={rec.id}
                               style={{
-                                fontSize: 12,
+                                fontSize: 14,
                                 padding: '4px 9px',
                                 borderRadius: 8,
                                 background: 'var(--surface)',
@@ -4532,7 +4532,7 @@ export default function GymPanel({
                             <span
                               key={idx}
                               style={{
-                                fontSize: 12,
+                                fontSize: 14,
                                 padding: '4px 9px',
                                 borderRadius: 8,
                                 background: 'var(--surface)',
@@ -4649,7 +4649,7 @@ export default function GymPanel({
                                           border: 'var(--hair) solid var(--sep)'
                                         }}
                                       >
-                                        <div style={{ fontWeight: 600, fontSize: 13 }}>
+                                        <div style={{ fontWeight: 600, fontSize: 14 }}>
                                           {exIdx + 1}. {ex.name || `#${ex.id}`}
                                         </div>
                                         <div className="muted small num" style={{ marginTop: 2 }}>

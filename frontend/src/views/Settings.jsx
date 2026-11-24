@@ -1694,11 +1694,22 @@ function EquipmentCard({ S, update }) {
         <Switch checked={!!S.equipFilterOn} onChange={v => update(s => { s.equipFilterOn = v })} />
       </Row>}
       {profiles.map(p => (
-        <Row key={p.id} icon="house" iconTint="var(--teal)" title={p.name}
-          subtitle={t('{0} equipment types', p.equipment.length)} accessory="chevron"
-          onClick={() => equipmentProfileSheet(p)}>
-          <button className="iconbtn" aria-label={t('Delete')} onClick={ev => { ev.stopPropagation(); remove(p) }}><Icon name="trash" /></button>
-        </Row>
+        <div key={p.id} className="lrow" style={{ gap: 8 }}>
+          <button
+            type="button"
+            className="lrow tap"
+            style={{ flex: 1, minWidth: 0, padding: 0, border: 0, background: 'none', textAlign: 'inherit', font: 'inherit', color: 'inherit' }}
+            onClick={() => equipmentProfileSheet(p)}
+          >
+            <span className="lrow-i" style={{ '--tint': 'var(--teal)' }}><Icon name="house" /></span>
+            <span className="lrow-m">
+              <span className="lrow-t">{p.name}</span>
+              <span className="lrow-s">{t('{0} equipment types', p.equipment.length)}</span>
+            </span>
+            <Icon name="chevronRight" className="lrow-c" />
+          </button>
+          <button type="button" className="iconbtn" style={{ flexShrink: 0 }} aria-label={t('Delete')} onClick={() => remove(p)}><Icon name="trash" /></button>
+        </div>
       ))}
       <Row icon="plus" iconTint="var(--acc)" title={t('Add equipment profile')} accessory="chevron" onClick={() => equipmentProfileSheet(null)} />
     </Section>

@@ -1072,8 +1072,8 @@ paths:
         '400':
           description: >-
             The password breaks the policy with `too-short` (under 10 characters), `too-long`
-            (over 256) or `too-common`; a field is `missing`; or `email-invalid`: the
-            `email` given is not an e-mail address.
+            (over 256) or `too-common`; a field is `missing`; `email-invalid` (the `email`
+            given is not an e-mail address); or `phone-invalid` (invalid or missing phone number).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }

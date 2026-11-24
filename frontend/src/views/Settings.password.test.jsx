@@ -131,7 +131,7 @@ describe('Settings with password sign-in', () => {
   it('"Sign in" after the server ended the session asks which way; the passkey is one tap on it', async () => {
     mocks.sync = { status: 'auth', offline: false, pending: true, auth: true, lastError: { status: 401 }, lastSynced: 0, server: null }
     const page = mount(<Settings page="account" />)
-    const row = rowByTitle(section(page, 'Server & sync'), 'Sign in')
+    const row = rowByTitle(section(page, 'Conta e sincronização'), 'Sign in')
     expect(row).toBeTruthy()
     act(() => row.click())
     expect(mocks.passkeyLogin).not.toHaveBeenCalled()

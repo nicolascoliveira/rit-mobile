@@ -89,32 +89,29 @@ describe('Settings: passkeys and another device', () => {
     const account = section(page, 'Account')
     expect(titles(account)).toEqual(expect.arrayContaining(['Passkeys', 'Add another device']))
     expect(rowByTitle(account, 'Passkeys').textContent).toContain('2 passkeys')
-    // Above pairing and the password, which are about other ways in.
+    // Add another device sits above Password in Account.
     const order = titles(account)
-    expect(order.indexOf('Passkeys')).toBeLessThan(order.indexOf('Pair the mobile app'))
     expect(order.indexOf('Add another device')).toBeLessThan(order.indexOf('Password'))
   })
 
-  // #551: the code for a computer comes from a phone connected to the server, and a phone that
-  // keeps everything on itself says why it has none instead of leaving you to search for it.
-  it('a paired phone offers a code for another device in its Server & sync block', async () => {
+  it('a paired phone uses the Conta e sincronização section and Rit Painel', async () => {
     mocks.MOBILE = true
     mocks.sync.server = 'https://gym.example.com'
     const page = mount(<Settings page="account" />)
     await settle()
-    expect(titles(section(page, 'Server & sync'))).toContain('Add another device')
-    expect(section(page, 'Your data')).toBeUndefined()
+    expect(titles(section(page, 'Conta e sincronização'))).toContain('Sync now')
+    expect(section(page, 'Rit Painel')).toBeTruthy()
   })
 
-  it('a local-only phone has no code to give, and says what it takes', async () => {
+  it('a signed-out phone shows password sign-in, registration and Rit Painel without Add another device', async () => {
     mocks.MOBILE = true
     mocks.user = null
     const page = mount(<Settings page="account" />)
     await settle()
-    const data = section(page, 'Your data')
-    expect(titles(data)).toContain('Connect to my server')
+    const acct = section(page, 'Account')
+    expect(titles(acct)).toEqual(['Sign in with password', 'Create new profile'])
     expect(titles(page)).not.toContain('Add another device')
-    expect(data.querySelector('.sect-f').textContent).toContain('needs your own server')
+    expect(section(page, 'Rit Painel')).toBeTruthy()
   })
 
   it('a guest gets neither, and nothing is asked', async () => {

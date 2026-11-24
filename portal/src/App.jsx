@@ -178,9 +178,18 @@ function parsePortalRoute() {
     searchMode === 'signup' ||
     searchMode === 'cadastro';
 
+  const isForgotRoute =
+    rawPath === 'recuperar-senha' ||
+    rawPath === 'esqueci-senha' ||
+    rawHash === 'recuperar-senha' ||
+    rawHash === 'esqueci-senha' ||
+    searchMode === 'forgot' ||
+    searchMode === 'recuperar';
+
   const isLoginRoute =
     native ||
     isSignupRoute ||
+    isForgotRoute ||
     rawPath === 'login' ||
     rawPath === 'entrar' ||
     rawPath === 'painel' ||
@@ -194,7 +203,7 @@ function parsePortalRoute() {
 
   return {
     isLoginRoute,
-    authMode: isSignupRoute ? 'signup' : 'login',
+    authMode: isSignupRoute ? 'signup' : (isForgotRoute ? 'forgot' : 'login'),
     signupAccountType: searchType === 'personal' ? 'personal' : 'gym',
     tab: isKnownTab ? route : ''
   };
@@ -792,10 +801,10 @@ function PortalApp() {
 
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '6px 8px 2px' }}>
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 700, fontSize: 13.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <div style={{ fontWeight: 700, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {user.name}
                 </div>
-                <div className="muted small" style={{ fontSize: 11.5 }}>{roleLabel}</div>
+                <div className="muted small" style={{ fontSize: 14 }}>{roleLabel}</div>
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
                 <button
@@ -817,7 +826,7 @@ function PortalApp() {
                 </button>
               </div>
             </div>
-            <div className="muted" style={{ fontSize: 10.5, padding: '2px 8px 0', opacity: 0.65 }}>
+            <div className="muted rit-footer-legal" style={{ fontSize: 12, padding: '2px 8px 0', opacity: 0.7 }}>
               Rit · Desenvolvido por Nicolas Oliveira
             </div>
           </div>

@@ -73,35 +73,20 @@ afterEach(() => {
   host.remove()
 })
 
+import { showsConnection, showsLocalLine } from '../components/SyncBanner.jsx'
+
 const mount = () => act(() => root.render(<Settings page="look" />))
 const row = () => [...host.querySelectorAll('.lrow')].find(r => r.textContent.includes('Show connection status'))
 
-describe('Show connection status', () => {
-  it('is there with no account, on a phone kept local, and on by default', () => {
+describe('Show connection status and SyncBanner helpers', () => {
+  it('hides the self-hoster connection status toggle in B2B Look & Home while helpers stay active', () => {
     mocks.MOBILE = true
     mount()
-    expect(row()).toBeTruthy()
-    expect(row().textContent).toContain('A dot on Home still warns when syncing is stuck.')
-    expect(row().querySelector('[role="switch"]').getAttribute('aria-checked')).toBe('true')
-  })
-
-  it('switches the profile setting off and on', () => {
-    mount()
-    act(() => { row().querySelector('[role="switch"]').click() })
-    expect(mocks.S.connStatus).toBe(false)
-    mount()
-    expect(row().querySelector('[role="switch"]').getAttribute('aria-checked')).toBe('false')
-    act(() => { row().querySelector('[role="switch"]').click() })
-    expect(mocks.S.connStatus).toBe(true)
-  })
-
-  // #454: the no-server line's × sets connLocal off; switching the status on is the way back.
-  it('switching it on brings back the no-server line its × hid', () => {
-    mocks.S = { ...mocks.S, connStatus: false, connLocal: false }
-    mount()
-    act(() => { row().querySelector('[role="switch"]').click() })
-    expect(mocks.S.connStatus).toBe(true)
-    expect(mocks.S.connLocal).toBe(true)
+    expect(row()).toBeUndefined()
+    expect(showsConnection({})).toBe(true)
+    expect(showsConnection({ connStatus: false })).toBe(false)
+    expect(showsLocalLine({ connLocal: true })).toBe(true)
+    expect(showsLocalLine({ connLocal: false })).toBe(false)
   })
 })
 

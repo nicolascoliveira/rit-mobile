@@ -699,7 +699,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
           </div>
 
           <div className="b2b-grid-2">
-            <div className="card" style={{ margin: 0 }}>
+            <div className="card" style={{ margin: 0, minWidth: 0 }}>
               <CardHead
                 icon="chartLine"
                 iconTint="var(--acc)"
@@ -715,7 +715,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
               />
             </div>
 
-            <div className="card" style={{ margin: 0 }}>
+            <div className="card" style={{ margin: 0, minWidth: 0 }}>
               <CardHead
                 icon="crown"
                 iconTint="var(--indigo)"
@@ -1155,7 +1155,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                       <span className="muted small">/mês</span>
                     </div>
 
-                    <div style={{ borderTop: 'var(--hair) solid var(--sep)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13.5 }}>
+                    <div style={{ borderTop: 'var(--hair) solid var(--sep)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 8, fontSize: 14 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <Icon name="users" size={16} style={{ color: 'var(--acc-ink)' }} />
                         <span>{plan.maxStudents >= 100000 ? <>Alunos ativos <b>ilimitados</b></> : <>Até <b>{plan.maxStudents}</b> alunos ativos</>}</span>
@@ -1364,7 +1364,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                     gap: 12,
                     flexWrap: 'wrap'
                   }}>
-                    <div>
+                    <div style={{ minWidth: 0, flex: '1 1 220px' }}>
                       <div style={{ fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                         <span>Status do Robô:</span>
                         <StatusPill tone={centralWa?.connected ? 'ok' : 'bad'}>
@@ -1452,11 +1452,11 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                     gap: 12,
                     flexWrap: 'wrap'
                   }}>
-                    <div>
+                    <div style={{ minWidth: 0, flex: '1 1 220px' }}>
                       <div style={{ fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                         <span>Status da Integração:</span>
                         <StatusPill tone={mpStatus?.configured ? 'ok' : 'warn'}>
-                          {mpStatus?.configured ? 'Conectado em Produção' : 'Modo Simulação Ativo (Aguardando Token no .env)'}
+                          {mpStatus?.configured ? 'Conectado em Produção' : 'Modo Simulação (sem token)'}
                         </StatusPill>
                       </div>
                       <div className="muted" style={{ marginTop: 4, fontSize: 14 }}>
@@ -1520,7 +1520,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
               </Section>
             </div>
 
-            <div className="card" style={{ margin: 0 }}>
+            <div className="card" style={{ margin: 0, minWidth: 0 }}>
               <CardHead
                 icon="shield"
                 iconTint="var(--orange)"
@@ -1553,7 +1553,7 @@ export default function SuperAdminPanel({ activeTab = 'overview', onChangeTab, o
                         borderRadius: 'var(--r)',
                         background: 'var(--bg-el)',
                         border: 'var(--hair) solid var(--sep)',
-                        fontSize: 13
+                        fontSize: 14
                       }}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>

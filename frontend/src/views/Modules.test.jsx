@@ -116,13 +116,16 @@ describe('Settings follows the modules', () => {
   const web = { user: null, mobile: false, android: false, demo: false, wakeOK: true, profiles: true, nfc: true }
   const off = (...ids) => ({ ...web, mod: id => !ids.includes(id) })
 
-  it('a module that is off takes its pages away', () => {
+  it('a module that is off takes its active pages away, while B2B-hidden pages stay hidden', () => {
     const phone = { ...web, user: { id: 'u' }, mobile: true, ios: true }
-    for (const [page, mod] of [['coach', 'coach'], ['watch', 'watch'], ['zepp', 'watch'], ['apple-health', 'health'], ['themes', 'seasonal']]) {
+    for (const hidden of ['modules', 'integrations', 'zepp', 'coach']) {
+      expect(pageVisible(hidden, phone), hidden).toBe(false)
+      expect(pageVisible(hidden, web), hidden).toBe(false)
+    }
+    for (const [page, mod] of [['watch', 'watch'], ['apple-health', 'health'], ['themes', 'seasonal']]) {
       expect(pageVisible(page, phone), page).toBe(true)
       expect(pageVisible(page, { ...phone, mod: id => id !== mod }), page).toBe(false)
     }
-    expect(pageVisible('modules', web)).toBe(true)
   })
 
   it('the search drops the rows and pages of a module that is off, and finds them when on', () => {
@@ -130,18 +133,16 @@ describe('Settings follows the modules', () => {
     for (const [q, title, mod] of [
       ['rir', 'Effort per set', 'effort'], ['weigh', 'Weigh in before workouts', 'body'], ['recap', 'Week and month recap', 'motivation'],
       ['challenges', 'Monthly challenges', 'motivation'], ['halloween', 'Halloween', 'seasonal'], ['recovery', 'Recovery tips', 'health'],
-      ['webhook', 'Webhooks', 'integrations'], ['nfc', 'Set up an NFC sticker', 'checkin'], ['about you', 'About you', 'strength'],
-      ['warm-up', 'Automatic warm-ups', 'plates'],
+      ['about you', 'About you', 'strength'], ['warm-up', 'Automatic warm-ups', 'plates'],
     ]) {
       expect(has(q, web, title), title).toBe(true)
       expect(has(q, off(mod), title), title).toBe(false)
     }
   })
 
-  it('every module is a hit of its own, on the Modules page', () => {
-    for (const m of MODULES) expect(SEARCH.some(e => e.page === 'modules' && e.title === m.title), m.id).toBe(true)
-    const hits = searchSettings('streak', off('motivation'))
-    expect(hits.some(h => h.page === 'modules' && h.title === 'Motivation')).toBe(true)
-    expect(searchSettings('modules', web)[0].page).toBe('modules')
+  it('hides standalone Modules entries from student Settings search in B2B mode', () => {
+    expect(MODULES.length).toBeGreaterThan(0)
+    expect(SEARCH.some(e => e.page === 'modules')).toBe(false)
+    expect(searchSettings('modules', web)).toEqual([])
   })
 })

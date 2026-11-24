@@ -52,8 +52,9 @@ describe('Settings → Siri & Shortcuts', () => {
     for (const lang of LPROJ) {
       const loc = PAGE_LOCALE[lang] || lang
       const { default: pack } = await import(`../locales/${loc}.js`)
+      const appLabel = loc.startsWith('pt') ? 'Rit' : 'openGym'
       for (const [key, phrase] of Object.entries(rows)) {
-        expect(bare(pack[key]), `${loc} ${key}`).toBe(PHRASES[phrase][lang].replace('{app}', 'openGym'))
+        expect(bare(pack[key]), `${loc} ${key}`).toBe(PHRASES[phrase][lang].replace('{app}', appLabel))
       }
     }
   })

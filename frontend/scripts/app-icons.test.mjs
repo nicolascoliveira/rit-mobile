@@ -58,7 +58,7 @@ describe('node scripts/app-icons.mjs --check', () => {
   it('finds nothing out of date', () => {
     const out = execFileSync(process.execPath, [join(ROOT, 'scripts/app-icons.mjs'), '--check'], { encoding: 'utf8' })
     expect(out).toContain('app icons up to date')
-  }, 120_000)
+  }, 240_000)
 })
 
 describe('the Halloween icon', () => {

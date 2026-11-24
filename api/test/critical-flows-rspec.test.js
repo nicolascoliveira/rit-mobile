@@ -35,7 +35,7 @@ const MP_ACCESS_TOKEN = 'APP_USR-847291047281-111116-abcdef1234567890-12345678';
 function signMpWebhook({
   dataId,
   requestId = `req-${crypto.randomBytes(4).toString('hex')}`,
-  ts = '1700000000',
+  ts = String(Math.floor(Date.now() / 1000)),
   rawBody = '',
   secret = WEBHOOK_SECRET,
   withBodySig = false

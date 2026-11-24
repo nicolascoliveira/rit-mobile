@@ -85,27 +85,27 @@ beforeEach(() => {
 })
 afterEach(() => { act(() => { mounted.splice(0).forEach(({ root, host }) => { root.unmount(); host.remove() }) }) })
 
-const block = page => [...page.querySelectorAll('.sect')].find(s => s.querySelector('.sect-t')?.textContent === 'Server & sync')
+const block = page => [...page.querySelectorAll('.sect')].find(s => s.querySelector('.sect-t')?.textContent === 'Conta e sincronização')
 const rowByTitle = (el, title) => [...el.querySelectorAll('.lrow')].find(r => r.querySelector('.lrow-t')?.textContent === title)
 const buttonByText = (el, text) => [...el.querySelectorAll('button')].find(b => b.textContent === text)
 const openSheet = (i = -1) => mount(mocks.sheets.at(i).render(() => {}))
 
-describe('Server & sync', () => {
-  it('a paired phone in step: server, account, "All synced" with the time, and Sync now reporting back', async () => {
+describe('Conta e sincronização', () => {
+  it('a paired phone in step: account, "All synced" with the time, and Sync now reporting back', async () => {
     const page = mount(<Settings page="account" />)
     const b = block(page)
     expect(b).toBeTruthy()
-    expect(rowByTitle(b, 'gym.example.com').textContent).toContain('Signed in as andi')
+    expect(rowByTitle(b, 'andi').textContent).toContain('Signed in as andi')
     expect(rowByTitle(b, 'All synced').textContent).toContain('Last synced: 5 minutes ago')
-    expect(rowByTitle(b, 'Disconnect')).toBeTruthy()          // the phone's own rows sit in the block
-    expect(rowByTitle(b, 'Pair again')).toBeUndefined()       // nothing to fix
+    expect(rowByTitle(b, 'Sair da conta')).toBeTruthy()
+    expect(rowByTitle(b, 'Entrar novamente')).toBeUndefined()
 
     await act(async () => { rowByTitle(b, 'Sync now').click() })
     expect(mocks.syncNow).toHaveBeenCalledTimes(1)
     expect(mocks.toast).toHaveBeenCalledWith('All synced')
   })
 
-  it('refused by the server: says so, how much is waiting, and offers "Pair again" with the address filled in', async () => {
+  it('refused by the server: says so, how much is waiting, and offers "Entrar novamente" with the address filled in', async () => {
     mocks.sync = sync('auth', { auth: true, pending: true, lastSynced: Date.now() - 2 * 86400000, lastError: { status: 401, code: 'auth' } })
     mocks.unsynced = { owed: true, count: 3 }
     const page = mount(<Settings page="account" />)
@@ -113,7 +113,7 @@ describe('Server & sync', () => {
     const status = rowByTitle(b, 'The server refuses this phone')
     expect(status.textContent).toContain('Last synced: 2 days ago')
     expect(status.textContent).toContain('Not on your server yet: 3 changes')
-    act(() => rowByTitle(b, 'Pair again').click())
+    act(() => rowByTitle(b, 'Entrar novamente').click())
     const sheet = openSheet().querySelector('.connect')
     expect(sheet.dataset.url).toBe(BASE)
     expect(sheet.dataset.again).toBe('true')
@@ -123,15 +123,13 @@ describe('Server & sync', () => {
     expect(mocks.toast).toHaveBeenCalledWith('The server refuses this phone')
   })
 
-  // A v1.3.8 phone that lost its pairing, upgraded: both rows said "This phone is not connected to a
-  // server." (Android QA, v1.3.9). The status row says it; the server row says there is no address.
-  it('a phone an earlier version unpaired says it is not connected once, and that its address is unknown', () => {
+  it('a phone an earlier version unpaired says it is not connected once, and offers Entrar novamente', () => {
     mocks.sync = sync('auth', { auth: true, pending: true, server: null, lastError: { status: 0, code: 'not-paired' } })
     const page = mount(<Settings page="account" />)
     const b = block(page)
-    expect(rowByTitle(b, 'Server address unknown').textContent).toContain('Signed in as andi')
+    expect(rowByTitle(b, 'andi').textContent).toContain('Signed in as andi')
     expect([...b.querySelectorAll('.lrow-t')].filter(el => el.textContent === 'This phone is not connected to a server.')).toHaveLength(1)
-    expect(rowByTitle(b, 'Pair again')).toBeTruthy()
+    expect(rowByTitle(b, 'Entrar novamente')).toBeTruthy()
   })
 
   it('a browser with a server error shows the HTTP code; one that never synced here says so', () => {
@@ -177,23 +175,22 @@ describe('Server & sync', () => {
 describe('leaving the server', () => {
   const confirm = () => mocks.confirmSheet.mock.calls.at(-1)[0]
 
-  it('Disconnect no longer promises a sync it did not check, and goes straight through when nothing is waiting', async () => {
+  it('Sair da conta checks that the server has every change, and redirects to /login when nothing is waiting', async () => {
     mocks.disconnectServer.mockResolvedValueOnce({ owed: false })
     const page = mount(<Settings page="account" />)
-    act(() => rowByTitle(page, 'Disconnect').click())
-    expect(confirm().message).not.toMatch(/synced to your server first/)
-    expect(confirm().message).toContain('checks that your server has every change')
+    act(() => rowByTitle(page, 'Sair da conta').click())
+    expect(confirm().message).toContain('Seus treinos ficam salvos na nuvem da Rit.')
     await act(async () => { await confirm().onConfirm() })
     expect(mocks.disconnectServer).toHaveBeenCalledWith(undefined)
     expect(mocks.sheets).toHaveLength(0)
-    expect(mocks.navs).toEqual(['/home'])
-    expect(mocks.toast).toHaveBeenCalledWith('Disconnected. Back to local-only')
+    expect(mocks.navs).toEqual(['/login'])
+    expect(mocks.toast).toHaveBeenCalledWith('Você saiu da sua conta.')
   })
 
   it('with changes waiting it asks: how many, try again, export, or disconnect anyway — which keeps them', async () => {
     mocks.disconnectServer.mockResolvedValueOnce({ owed: true, count: 2 })
     const page = mount(<Settings page="account" />)
-    act(() => rowByTitle(page, 'Disconnect').click())
+    act(() => rowByTitle(page, 'Sair da conta').click())
     await act(async () => { await confirm().onConfirm() })
     expect(mocks.navs).toEqual([])                         // nothing left, nothing wiped
     expect(mocks.sheets.at(-1).opts).toMatchObject({ kind: 'center' })
@@ -203,19 +200,19 @@ describe('leaving the server', () => {
 
     await act(async () => { buttonByText(sheet, 'Export backup (JSON)').click() })
     expect(mocks.shareExport).toHaveBeenCalledTimes(1)     // the phone exports through the share sheet
-    expect(mocks.shareExport.mock.calls[0][1]).toMatch(/^opengym-backup-\d{4}-\d{2}-\d{2}\.json$/)
+    expect(mocks.shareExport.mock.calls[0][1]).toMatch(/^rit-backup-\d{4}-\d{2}-\d{2}\.json$/)
 
     mocks.disconnectServer.mockResolvedValueOnce({ owed: true, count: 2, stashed: true })
     await act(async () => { buttonByText(sheet, 'Disconnect anyway').click() })
     expect(mocks.disconnectServer).toHaveBeenLastCalledWith({ force: true })
-    expect(mocks.navs).toEqual(['/home'])
+    expect(mocks.navs).toEqual(['/login'])
     expect(mocks.toast).toHaveBeenLastCalledWith('The changes your server has not seen are kept on this device, and added back when it connects as this account again.')
   })
 
   it('"Try again" syncs, and leaves once the server has everything', async () => {
     mocks.disconnectServer.mockResolvedValueOnce({ owed: true, count: 1 })
     const page = mount(<Settings page="account" />)
-    act(() => rowByTitle(page, 'Disconnect').click())
+    act(() => rowByTitle(page, 'Sair da conta').click())
     await act(async () => { await confirm().onConfirm() })
     const sheet = openSheet()
 
@@ -228,14 +225,14 @@ describe('leaving the server', () => {
 
     mocks.disconnectServer.mockResolvedValueOnce({ owed: false })
     await act(async () => { buttonByText(sheet, 'Try again').click() })
-    expect(mocks.navs).toEqual(['/home'])
+    expect(mocks.navs).toEqual(['/login'])
   })
 
   it('refused by the server, "Try again" makes way for "Pair again" — pairing is what brings the changes over', async () => {
     mocks.sync = sync('auth', { auth: true, pending: true, lastError: { status: 401, code: 'auth' } })
     mocks.disconnectServer.mockResolvedValueOnce({ owed: true, count: null })
     const page = mount(<Settings page="account" />)
-    act(() => rowByTitle(page, 'Disconnect').click())
+    act(() => rowByTitle(page, 'Sair da conta').click())
     await act(async () => { await confirm().onConfirm() })
     const sheet = openSheet()
     expect(sheet.textContent).toContain('Some changes on this device have not reached your server.')
@@ -263,7 +260,7 @@ describe('leaving the server', () => {
   it('a server that is only out of reach still offers Try again, and says so', async () => {
     mocks.disconnectServer.mockResolvedValueOnce({ owed: true, count: 1 })
     const page = mount(<Settings page="account" />)
-    act(() => rowByTitle(page, 'Disconnect').click())
+    act(() => rowByTitle(page, 'Sair da conta').click())
     await act(async () => { await confirm().onConfirm() })
     const sheet = openSheet()
     expect(sheet.textContent).toContain('Try again, or export a backup first.')
@@ -273,7 +270,7 @@ describe('leaving the server', () => {
   it('a copy that cannot be kept aside is not wiped either, and it says so', async () => {
     mocks.disconnectServer.mockResolvedValueOnce({ owed: true, count: 1 })
     const page = mount(<Settings page="account" />)
-    act(() => rowByTitle(page, 'Disconnect').click())
+    act(() => rowByTitle(page, 'Sair da conta').click())
     await act(async () => { await confirm().onConfirm() })
     const sheet = openSheet()
     mocks.disconnectServer.mockResolvedValueOnce({ owed: true, count: 1, stashed: false })
@@ -294,7 +291,7 @@ describe('leaving the server', () => {
     mocks.signOut.mockResolvedValueOnce({ owed: true, count: 4, stashed: true })
     await act(async () => { buttonByText(sheet, 'Sign out anyway').click() })
     expect(mocks.signOut).toHaveBeenLastCalledWith({ force: true })
-    expect(mocks.navs).toEqual(['/home'])
+    expect(mocks.navs).toEqual(['/login'])
 
     act(() => rowByTitle(page, 'Sign out everywhere').click())
     expect(confirm().message).toContain('Phones paired with it are disconnected and have to be paired again.')
@@ -305,9 +302,9 @@ describe('leaving the server', () => {
 })
 
 /* "Delete my account" (App Store rule 5.1.1(v)): wherever there is a server account, a paired
-   phone or a signed-in browser, and nowhere there is none. Once it is gone, Settings goes home. */
+   phone or a signed-in browser, and nowhere there is none. Once it is gone, Settings goes to /login. */
 describe('deleting the account', () => {
-  it('a paired phone and a signed-in browser both have the row; it goes home once the account is gone', async () => {
+  it('a paired phone and a signed-in browser both have the row; it goes to /login once the account is gone', async () => {
     const phone = mount(<Settings page="account" />)
     expect(rowByTitle(phone, 'Delete my account')).toBeTruthy()
 
@@ -316,7 +313,7 @@ describe('deleting the account', () => {
     act(() => rowByTitle(page, 'Delete my account').click())
     const done = mocks.sheets.at(-1).render(() => {}).props.done
     done()
-    expect(mocks.navs).toEqual(['/home'])
+    expect(mocks.navs).toEqual(['/login'])
   })
 
   it('no account, no row: a phone kept local, and a guest in a browser', async () => {

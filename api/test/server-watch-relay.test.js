@@ -11,6 +11,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { boundPort } from './helpers.mjs';
+import { readWatchBoxSqlite, closeAllSqliteInstances } from '../sqlite.js';
 
 const API = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SECRET = crypto.randomBytes(32).toString('hex');
@@ -111,9 +112,9 @@ test('unpairing the last watch empties the mailbox', async t => {
   const { body: { code } } = await call('POST', '/api/watch/pair', { headers: page });
   const { body: { token, id } } = await call('POST', '/api/watch/redeem', { body: { code } });
   await call('PUT', '/api/watch/snapshot', { headers: page, body: { json: '{"v":1}' } });
-  assert.ok(fs.existsSync(path.join(h.dataDir, 'watch-u_w_2.json')));
+  assert.ok(readWatchBoxSqlite(h.dataDir, 'u_w_2'));
   const r = await call('POST', '/api/watch/unlink', { headers: page, body: { id } });
   assert.deepEqual(r.body, { ok: true, links: [] });
-  assert.ok(!fs.existsSync(path.join(h.dataDir, 'watch-u_w_2.json')));
+  assert.equal(readWatchBoxSqlite(h.dataDir, 'u_w_2'), null);
   assert.equal((await call('GET', '/api/watch/box', { headers: { Authorization: 'Bearer ' + token } })).status, 401);
 });

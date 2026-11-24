@@ -4,8 +4,11 @@
  * com fallback biomecânico determinístico sobre o catálogo real (~5.6k exercícios + customizados
  * da academia), sem expor dados sensíveis nem vídeos de execução do aluno (`set.media`).
  */
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { LIBRARY, LIB_BY_ID, equipmentAllows, isStretch } from './core/library.js';
-import { load as loadCoachConfig, isEnabled as isCoachEnabled, accountFor, jobEnv } from './config.js';
+import { load as loadCoachConfig, isEnabled as isCoachEnabled, credentialFor, jobEnv, PROVIDERS } from './config.js';
 import anthropicAdapter from './core/adapters/anthropic.js';
 import openaiAdapter from './core/adapters/openai.js';
 import geminiAdapter from './core/adapters/gemini.js';
@@ -401,13 +404,15 @@ export async function suggestTrainerWorkouts({
   let llmWorkouts = null;
 
   if (mode !== 'rules' && isCoachEnabled()) {
+    let tmpJobDir = null;
     try {
       const cfg = loadCoachConfig();
       const pid = cfg?.provider;
       const adapter = HTTP_ADAPTERS[pid];
-      if (adapter && cfg) {
-        const acct = accountFor('trainer_b2b');
-        const canCall = Boolean(cfg.providers?.[pid] && acct && !acct.refused);
+      if (adapter && cfg && PROVIDERS[pid]) {
+        const credUid = String(studentState?.uid || cfg?.boundUid?.[pid] || 'trainer_b2b');
+        const cred = credentialFor(credUid);
+        const canCall = Boolean(cred?.ok);
         if (canCall) {
           const compactLib = [];
           for (const [bp, list] of validPool.byBodyPart.entries()) {
@@ -434,13 +439,14 @@ export async function suggestTrainerWorkouts({
             exerciciosRecentesAluno: recentEx,
             LIBRARY: compactLib
           });
-          const env = jobEnv('', acct);
+          tmpJobDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rit-b2b-coach-'));
+          const env = jobEnv(tmpJobDir, cred);
           const res = await adapter.invoke({
             cfg,
             prompt,
             system,
             env,
-            model: cfg.providers?.[pid]?.model,
+            model: cfg.models?.[pid] || PROVIDERS[pid]?.defaultModel,
             maxTokens: 3200,
             timeoutMs: 35000,
             fetch: fetchImpl
@@ -461,6 +467,10 @@ export async function suggestTrainerWorkouts({
       }
     } catch {
       // Fallback transparente para o motor biomecânico local
+    } finally {
+      if (tmpJobDir) {
+        try { fs.rmSync(tmpJobDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      }
     }
   }
 

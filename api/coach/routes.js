@@ -4,6 +4,7 @@
  * are closures over the db and the session secret, and passing them in keeps this module free
  * of a cycle (and trivially testable against fakes).
  */
+import fs from 'node:fs';
 import * as cfgStore from './config.js';
 import * as jobs from './jobs.js';
 import { computeCohort } from './cohort.js';
@@ -11,6 +12,7 @@ import { adapterFor } from './adapters/index.js';
 import { canDropPrivileges, privilegeRefusal } from './adapters/spawn.js';
 import { DATA_CATEGORIES } from './core/payload.js';
 import { validateBaseUrl, validateHeaders, baseUrlFor } from './core/providers.js';
+import { getTenant } from '../tenants.js';
 
 // Job failures the user sees, in the app's own voice. The raw provider detail never reaches
 // them — it goes to the admin card, which is where someone can act on it (FR-47).
@@ -27,7 +29,7 @@ const USER_ERROR = {
 const hostOf = url => { try { return url ? new URL(url).host : null; } catch { return null; } };
 const HTTP_FOR = { off: 503, busy: 409, cap: 429, consent: 403, shared: 409, unprivileged: 503 };
 
-export function coachRoutes({ json, readBody, readSession, requireAdmin }) {
+export function coachRoutes({ json, readBody, readSession, requireAdmin, dataDir = process.env.DATA_DIR || '/data' }) {
   /** Every user route starts the same way: signed in, feature on, feature reachable. The class
    *  goes beside the words, as enqueue's refusal sends it: the app shows its own translated line
    *  for the class, and these English words only where it has none. */
@@ -35,6 +37,13 @@ export function coachRoutes({ json, readBody, readSession, requireAdmin }) {
     const user = readSession(req);
     if (!user) { json(res, 401, { error: 'not signed in' }); return null; }
     if (!cfgStore.isEnabled() || !cfgStore.isConnected()) { json(res, 503, { error: USER_ERROR.off, code: 'off' }); return null; }
+    if (user.tenantId && user.tenantId !== 'default' && user.saasRole !== 'superadmin' && dataDir && fs.existsSync(dataDir)) {
+      const tenant = getTenant(dataDir, user.tenantId);
+      if (tenant && tenant.limits?.features?.aiCoach === false) {
+        json(res, 403, { error: 'O plano atual da academia não inclui o Coach IA.', code: 'off' });
+        return null;
+      }
+    }
     return user;
   };
   const failEnqueue = (res, e) => {

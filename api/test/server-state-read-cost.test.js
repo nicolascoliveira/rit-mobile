@@ -27,6 +27,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { boundPort } from './helpers.mjs';
+import { readUserStateSqlite, closeAllSqliteInstances } from '../sqlite.js';
 
 const API = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SECRET = crypto.randomBytes(32).toString('hex');
@@ -50,7 +51,15 @@ async function startServer(t) {
   const h = { api: '', port: 0, dataDir, log: '' };
   child.stdout.on('data', d => h.log += d);
   child.stderr.on('data', d => h.log += d);
-  t.after(() => { child.kill('SIGKILL'); fs.rmSync(dataDir, { recursive: true, force: true }); });
+  t.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      const done = new Promise(r => child.once('exit', r));
+      child.kill('SIGKILL');
+      await done;
+    }
+    closeAllSqliteInstances();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
   // The boot line carries the port the listener bound, so it is both the address and the
   // readiness signal — see boundPort in helpers.mjs for why the test does not pick one.
   h.port = await boundPort(child, () => h.log);
@@ -66,6 +75,7 @@ async function startServer(t) {
    PUT's has finished, which is a different effect and would prove nothing about the cache. */
 async function keepAlive(t, port) {
   const sock = net.connect(port, '127.0.0.1');
+  sock.on('error', () => {});
   await new Promise(r => sock.once('connect', r));
   t.after(() => sock.destroy());
   let buf = Buffer.alloc(0), want = null;
@@ -102,7 +112,8 @@ async function keepAlive(t, port) {
       const b = JSON.stringify({ state: { _ts: ts, workouts: [], routines: [] } });
       return send(`PUT /api/data HTTP/1.1\r\nHost: x\r\nCookie: ${headers.Cookie}\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(b)}\r\n\r\n${b}`);
     },
-    rev: () => send(`GET /api/data/rev HTTP/1.1\r\nHost: x\r\nCookie: ${headers.Cookie}\r\n\r\n`)
+    rev: () => send(`GET /api/data/rev HTTP/1.1\r\nHost: x\r\nCookie: ${headers.Cookie}\r\n\r\n`),
+    close: () => sock.destroy()
   };
 }
 
@@ -123,8 +134,9 @@ test('a poll right after a sync reports the revision that sync returned, not the
   }
   assert.deepEqual(stale, [], 'every poll saw the write that preceded it');
 
-  // and what the polls were reporting is what is actually on disk
-  assert.equal((await c.rev()).rev, JSON.parse(fs.readFileSync(file, 'utf8'))._rev);
+  // and what the polls were reporting is what is actually stored
+  assert.equal((await c.rev()).rev, readUserStateSqlite(h.dataDir, 'u_cost_1')._rev);
+  c.close();
 });
 
 test('the poll really is reading through the stat cache', async t => {

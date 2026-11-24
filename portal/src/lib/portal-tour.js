@@ -282,15 +282,16 @@ export function getPortalTutorials(isPersonal = false) {
 export function placePortalTourCard(targetRect, cardSize, prefer = 'bottom') {
   const vw = typeof window !== 'undefined' ? window.innerWidth : 1280;
   const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
-  const margin = 16;
+  const margin = vw <= 480 ? 12 : 16;
   const gap = 14;
   const cw = Math.min(cardSize.width || 372, vw - margin * 2);
   const ch = Math.min(cardSize.height || 240, vh - margin * 2);
+  const clamp = (val, min, max) => Math.max(min, Math.min(max, val));
 
   if (!targetRect || targetRect.width === 0 || targetRect.height === 0) {
     return {
-      left: Math.round((vw - cw) / 2),
-      top: Math.round((vh - ch) / 2),
+      left: Math.round(clamp((vw - cw) / 2, margin, Math.max(margin, vw - cw - margin))),
+      top: Math.round(clamp((vh - ch) / 2, margin, Math.max(margin, vh - ch - margin))),
       placement: 'center',
       arrowOffset: 0
     };
@@ -300,8 +301,6 @@ export function placePortalTourCard(targetRect, cardSize, prefer = 'bottom') {
   for (const dir of [prefer, 'bottom', 'top', 'right', 'left']) {
     if (!order.includes(dir)) order.push(dir);
   }
-
-  const clamp = (val, min, max) => Math.max(min, Math.min(max, val));
 
   const tryPlace = dir => {
     let left = 0;

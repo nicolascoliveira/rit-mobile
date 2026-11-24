@@ -17,9 +17,19 @@ const SECRET = crypto.randomBytes(32).toString('hex');
 const cookie = uid => { const p = `${uid}:${Date.now() + 86400000}:0`; return `gymsid=${p}.${crypto.createHmac('sha256', SECRET).update(p).digest('base64url')}`; };
 const USERS = [{ id: 'u_a', name: 'Anna', created: new Date().toISOString() }, { id: 'u_b', name: 'Bruno', created: new Date().toISOString() }];
 
+const kidsByDir = new Map();
 function dataDir(t) {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'gym-dbx-'));
-  t.after(() => fs.rmSync(d, { recursive: true, force: true }));
+  kidsByDir.set(d, []);
+  t.after(async () => {
+    for (const c of kidsByDir.get(d) || []) {
+      if (c.exitCode === null && c.signalCode === null) {
+        await new Promise(r => { c.once('exit', r); c.kill('SIGKILL'); });
+      }
+    }
+    kidsByDir.delete(d);
+    fs.rmSync(d, { recursive: true, force: true });
+  });
   fs.writeFileSync(path.join(d, 'secret'), SECRET, { mode: 0o600 });
   fs.writeFileSync(path.join(d, 'db.json'), JSON.stringify({ users: USERS, creds: [], subs: [], invites: [] }));
   return d;
@@ -27,10 +37,11 @@ function dataDir(t) {
 function start(t, d, env = {}) {
   const child = spawn(process.execPath, ['server.js'], { cwd: API, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, PORT: '0', DATA_DIR: d, ORIGIN: 'http://localhost:8080', RP_ID: 'localhost', ...env } });
+  const list = kidsByDir.get(d);
+  if (list) list.push(child);
   const h = { log: '', child };
   child.stdout.on('data', x => h.log += x); child.stderr.on('data', x => h.log += x);
   h.exit = new Promise(r => child.on('exit', code => r(code)));
-  t.after(() => child.kill('SIGKILL'));
   return h;
 }
 
@@ -73,7 +84,9 @@ test('db.json unreadable after a sign-up: the copy kept is the last save, so the
   assert.ok(carla);
   h.child.kill('SIGKILL'); await h.exit;
   assert.equal(fs.readFileSync(path.join(d, 'db.json.bak'), 'utf8'), fs.readFileSync(path.join(d, 'db.json'), 'utf8'));
-  assert.equal((fs.statSync(path.join(d, 'db.json.bak')).mode & 0o777), 0o600);
+  if (process.platform !== 'win32') {
+    assert.equal((fs.statSync(path.join(d, 'db.json.bak')).mode & 0o777), 0o600);
+  }
   fs.writeFileSync(path.join(d, 'db.json'), '{"users":[{"id"');
   h = start(t, d, { PASSWORD_LOGIN: '1' });
   const base2 = `http://127.0.0.1:${await boundPort(h.child, () => h.log)}`;

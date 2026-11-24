@@ -14,14 +14,14 @@ describe('effectiveLang', () => {
     expect(effectiveLang({ lang: 'de' }, { default_lang: 'fr' }, ['it'])).toBe('de')
     expect(effectiveLang({ lang: 'en' }, { default_lang: 'fr' }, ['it'])).toBe('en')
   })
-  it('falls back to English for a copy with no usable lang', () => {
-    expect(effectiveLang(null, null, ['it'])).toBe('en')
-    expect(effectiveLang({ lang: '' }, null, [])).toBe('en')
+  it('falls back to pt-BR for a copy with no usable lang', () => {
+    expect(effectiveLang(null, null, ['it'])).toBe('pt-BR')
+    expect(effectiveLang({ lang: '' }, null, [])).toBe('pt-BR')
   })
   it('gives an unpicked copy the instance default, then the browser\'s language', () => {
     expect(effectiveLang(auto, { default_lang: 'fr' }, ['it'])).toBe('fr')
     expect(effectiveLang(auto, { default_lang: '' }, ['it-IT'])).toBe('it')
-    expect(effectiveLang(auto, { default_lang: '' }, ['nl'])).toBe('en')
+    expect(effectiveLang(auto, { default_lang: '' }, ['nl'])).toBe('pt-BR')
   })
   it('before the config is in, uses the default this device saw last', () => {
     rememberDefaultLang({ default_lang: 'fr' })

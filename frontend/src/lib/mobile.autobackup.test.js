@@ -146,12 +146,11 @@ describe('writeAutoBackup where today\'s name belongs to another install', () =>
   })
 })
 
-// Settings writes the count out in its subtitle rather than importing it (its tests mock this
-// module wholesale), so the two are pinned together here.
-it('the Settings subtitle names the same number of copies the pruning keeps', async () => {
+// Auto-backup folder & keep wording live in BackupFolderRow.jsx (`Documents/Rit`).
+it('BackupFolderRow keeps Documents/Rit default and formats the backup keep count', async () => {
   const fs = await import('node:fs')
-  const src = fs.readFileSync(new URL('../views/Settings.jsx', import.meta.url), 'utf8')
-  // autoBackupSubtitle(folder, keep) (components/BackupFolderRow.jsx) fills in every wording
-  const m = src.match(/autoBackupSubtitle\([^)]*, (\d+)\)/)
-  expect(m && Number(m[1])).toBe(AUTO_BACKUP_KEEP)
+  const src = fs.readFileSync(new URL('../components/BackupFolderRow.jsx', import.meta.url), 'utf8')
+  expect(src).toContain("const DEFAULT_FOLDER = 'Documents/Rit'")
+  expect(src).toContain('autoBackupSubtitle(folder, keep)')
+  expect(AUTO_BACKUP_KEEP).toBe(14)
 })

@@ -862,27 +862,27 @@ export default function LandingView({ onOpenLogin, onOpenSignup }) {
                   <div className="rit-workout-toast">
                     <div className="rit-toast-badge">R</div>
                     <div style={{ flex: 1 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, fontWeight: 700, color: '#FEFFFC' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 700, color: '#FEFFFC' }}>
                         <span>Ficha Prescrita</span>
                         <span style={{ color: '#8e8e93', fontWeight: 400 }}>Agora</span>
                       </div>
-                      <div style={{ fontSize: 11.5, color: '#8e8e93' }}>Treino A — Peito, Ombros e Tríceps sincronizado</div>
+                      <div style={{ fontSize: 14, color: '#8e8e93' }}>Treino A — Peito, Ombros e Tríceps sincronizado</div>
                     </div>
                   </div>
 
                   <div className="rit-workout-toast t2">
                     <div className="rit-toast-badge">R</div>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: '#FEFFFC' }}>Treino Concluído</div>
-                      <div style={{ fontSize: 11, color: '#8e8e93' }}>Lucas Oliveira • 6 exercícios finalizados</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: '#FEFFFC' }}>Treino Concluído</div>
+                      <div style={{ fontSize: 14, color: '#8e8e93' }}>Lucas Oliveira • 6 exercícios finalizados</div>
                     </div>
                   </div>
 
                   <div className="rit-workout-toast t3">
                     <div className="rit-toast-badge">R</div>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: '#FEFFFC' }}>Nova Matrícula</div>
-                      <div style={{ fontSize: 11, color: '#8e8e93' }}>QR Code escaneado na recepção</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: '#FEFFFC' }}>Nova Matrícula</div>
+                      <div style={{ fontSize: 14, color: '#8e8e93' }}>QR Code escaneado na recepção</div>
                     </div>
                   </div>
                 </div>
@@ -920,9 +920,9 @@ export default function LandingView({ onOpenLogin, onOpenSignup }) {
                     <defs>
                       <path id="coachCirclePath" d="M 100, 100 m -74, 0 a 74,74 0 1,1 148,0 a 74,74 0 1,1 -148,0" />
                     </defs>
-                    <text fill="#FEFFFC" fontSize="12" fontWeight="700" letterSpacing="3.5" opacity="0.9">
+                    <text fill="#FEFFFC" fontSize="14" fontWeight="700" letterSpacing="2.2" opacity="0.9">
                       <textPath href="#coachCirclePath" startOffset="0%">
-                        • VERSATILIDADE • VERSATILIDADE • VERSATILIDADE 
+                        • VERSATILIDADE • VERSATILIDADE • RIT CLOUD 
                       </textPath>
                     </text>
                   </svg>

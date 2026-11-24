@@ -88,11 +88,11 @@ describe('Settings: Show the tour again', () => {
 })
 
 describe('Settings: Tutorials', () => {
-  it('lists the tour and the four tutorials together, under one heading', () => {
+  it('lists the tour and the three active B2B tutorials together, under one heading', () => {
     act(() => root.render(<Settings page="about" />))
     const sect = [...host.querySelectorAll('.sect')].find(x => x.textContent.includes('Tutorials'))
     expect([...sect.querySelectorAll('.lrow-t')].map(x => x.textContent))
-      .toEqual(['Show the tour again', 'Build your first plan', 'Create your own exercise', 'Edit your data', 'Export & import'])
+      .toEqual(['Show the tour again', 'Build your first plan', 'Create your own exercise', 'Edit your data'])
   })
   it('each runs its own tutorial, and one seen to the end says Done', () => {
     markTutorialDone('edit')
@@ -102,8 +102,8 @@ describe('Settings: Tutorials', () => {
     act(() => row('Build your first plan').click())
     expect(tourState()).toEqual({ kind: 'run', at: null, flow: 'plan' })
     closeTour()
-    act(() => row('Export & import').click())
-    expect(tourState()).toEqual({ kind: 'run', at: null, flow: 'backup' })
+    act(() => row('Edit your data').click())
+    expect(tourState()).toEqual({ kind: 'run', at: null, flow: 'edit' })
   })
   it('a tutorial waits for a running workout too', () => {
     mocks.S.active = { id: 'a', entries: [] }
@@ -115,6 +115,6 @@ describe('Settings: Tutorials', () => {
     const ctx = { mobile: false }
     expect(searchSettings('Show the tour again', ctx).some(h => h.title === 'Show the tour again' && h.page === 'about')).toBe(true)
     expect(searchSettings('tour', ctx).some(h => h.title === 'Show the tour again')).toBe(true)
-    expect(searchSettings('tutorial', ctx).map(h => h.title)).toEqual(expect.arrayContaining(['Show the tour again', 'Build your first plan', 'Edit your data', 'Export & import']))
+    expect(searchSettings('tutorial', ctx).map(h => h.title)).toEqual(expect.arrayContaining(['Show the tour again', 'Build your first plan', 'Edit your data']))
   })
 })

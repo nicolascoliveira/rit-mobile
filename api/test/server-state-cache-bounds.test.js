@@ -41,7 +41,14 @@ async function startServer(t, env = {}) {
     cwd: API, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, PORT: '0', DATA_DIR: dataDir, ORIGIN: 'http://localhost:8080', RP_ID: 'localhost', ...env }
   });
-  t.after(() => { child.kill('SIGKILL'); fs.rmSync(dataDir, { recursive: true, force: true }); });
+  t.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      const done = new Promise(r => child.once('exit', r));
+      child.kill('SIGKILL');
+      await done;
+    }
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
   let log = '';
   child.stdout.on('data', d => { log += d; });
   child.stderr.on('data', d => { log += d; });

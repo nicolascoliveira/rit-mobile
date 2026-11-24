@@ -82,7 +82,7 @@
   background: #0c0d0c;
   border-bottom: 1px solid rgba(254, 255, 252, 0.06);
   padding: 10px 20px;
-  font-size: 13.5px;
+  font-size: 14px;
   position: relative;
   z-index: 50;
 }
@@ -115,7 +115,7 @@
   border: 1px solid rgba(208, 255, 0, 0.32);
   color: var(--rit-lime) !important;
   font-weight: 600;
-  font-size: 12.5px;
+  font-size: 14px;
   transition: all 0.2s ease;
 }
 
@@ -159,7 +159,7 @@
   display: flex;
   align-items: center;
   gap: 14px;
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 500;
   color: rgba(254, 255, 252, 0.85);
   white-space: nowrap;
@@ -177,7 +177,7 @@
 
 .rit-nav-dot {
   color: rgba(254, 255, 252, 0.24);
-  font-size: 11px;
+  font-size: 14px;
   user-select: none;
 }
 
@@ -197,7 +197,7 @@
   background: rgba(254, 255, 252, 0.04);
   border: 1px solid rgba(254, 255, 252, 0.12);
   color: var(--rit-white) !important;
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 600;
   white-space: nowrap;
   transition: all 0.22s ease;
@@ -299,7 +299,7 @@
   background: rgba(254, 255, 252, 0.03);
   border: 1px solid rgba(254, 255, 252, 0.11);
   color: rgba(254, 255, 252, 0.72);
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 500;
   margin-bottom: 26px;
 }
@@ -311,9 +311,7 @@
   line-height: 1.08;
   letter-spacing: -0.035em;
   margin-bottom: 22px !important;
-  background: radial-gradient(52% 80% at 50% 50%, #FEFFFC 38%, rgba(254, 255, 252, 0.36) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: #FEFFFC;
 }
 
 .rit-hero-sub {
@@ -395,7 +393,7 @@
 .rit-screen-tab {
   padding: 7px 15px;
   border-radius: 999px;
-  font-size: 12.5px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--rit-text-muted);
   transition: all 0.2s ease;
@@ -523,7 +521,7 @@
   background: rgba(254, 255, 252, 0.03);
   border: 1px solid rgba(254, 255, 252, 0.11);
   color: rgba(254, 255, 252, 0.78);
-  font-size: 12.5px;
+  font-size: 14px;
   font-weight: 500;
   display: inline-flex;
   align-items: center;
@@ -560,9 +558,7 @@
   font-weight: 600;
   line-height: 1.12;
   letter-spacing: -0.03em;
-  background: radial-gradient(60% 90% at 55% 50%, #FEFFFC 45%, rgba(254, 255, 252, 0.38) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: #FEFFFC;
 }
 
 .rit-support-desc {
@@ -774,7 +770,7 @@
   border: 1px solid var(--rit-lime);
   color: var(--rit-lime);
   font-weight: 700;
-  font-size: 13px;
+  font-size: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -782,22 +778,22 @@
 
 .rit-alert-meta b {
   display: block;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--rit-white);
 }
 
 .rit-alert-meta span {
   display: block;
-  font-size: 11px;
+  font-size: 14px;
   color: var(--rit-text-muted);
 }
 
 .rit-alert-btn {
-  padding: 5px 14px;
+  padding: 6px 14px;
   border-radius: 999px;
   background: var(--rit-lime);
   color: var(--rit-black);
-  font-size: 11.5px;
+  font-size: 14px;
   font-weight: 700;
 }
 
@@ -892,7 +888,7 @@
 }
 
 .rit-sol-body {
-  font-size: 13.8px;
+  font-size: 14px;
   line-height: 1.62;
   color: var(--rit-text-muted);
   margin-bottom: 24px !important;
@@ -910,7 +906,7 @@
   border-radius: 999px;
   background: rgba(254, 255, 252, 0.04);
   border: 1px solid rgba(254, 255, 252, 0.1);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   color: rgba(254, 255, 252, 0.72);
 }
@@ -955,9 +951,7 @@
   line-height: 1.1;
   letter-spacing: -0.035em;
   margin-bottom: 20px !important;
-  background: linear-gradient(95deg, rgba(8, 8, 8, 0.45) 0%, #080808 48%, #080808 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: #080808;
 }
 
 .rit-light-sub {
@@ -1102,7 +1096,7 @@
 
 .rit-plan-row span.sub {
   font-weight: 400;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--rit-text-muted);
   margin-left: 6px;
 }
@@ -1193,7 +1187,7 @@
   border-radius: 999px;
   background: var(--rit-white) !important;
   color: var(--rit-black) !important;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
   transition: transform 0.2s ease;
 }
@@ -1301,7 +1295,7 @@
 }
 
 .rit-why-card p {
-  font-size: 13.8px;
+  font-size: 14px;
   line-height: 1.55;
   color: var(--rit-text-muted);
   max-width: 340px;
@@ -1327,7 +1321,7 @@
 .rit-chat-bubble {
   padding: 12px 16px;
   border-radius: 14px;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.4;
   max-width: 250px;
 }
@@ -1356,7 +1350,7 @@
   border: 2px solid var(--rit-lime);
   color: var(--rit-lime);
   font-weight: 700;
-  font-size: 13px;
+  font-size: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1438,7 +1432,7 @@
   background: var(--rit-lime);
   color: var(--rit-black);
   font-weight: 800;
-  font-size: 13px;
+  font-size: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1624,7 +1618,7 @@
 }
 
 .rit-gallery-caption span {
-  font-size: 12.5px;
+  font-size: 14px;
   color: var(--rit-text-muted);
 }
 
@@ -1695,7 +1689,7 @@
   width: 42px;
   height: 42px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--rit-lime), var(--rit-purple));
+  background: var(--rit-lime);
   color: var(--rit-black);
   font-weight: 800;
   font-size: 14px;
@@ -1712,7 +1706,7 @@
 
 .rit-testi-author span {
   display: block;
-  font-size: 12.5px;
+  font-size: 14px;
   color: var(--rit-text-muted);
 }
 
@@ -1849,7 +1843,7 @@
 }
 
 .rit-footer-col h4 {
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 500;
   color: var(--rit-text-muted);
   margin-bottom: 18px !important;
@@ -1866,7 +1860,7 @@
 
 .rit-footer-col a,
 .rit-footer-col button {
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--rit-white);
   transition: color 0.2s ease;
@@ -1897,7 +1891,7 @@
 
 .rit-footer-legal b {
   display: block;
-  font-size: 12.5px;
+  font-size: 14px;
   color: var(--rit-white);
   margin-bottom: 4px;
 }
@@ -1909,7 +1903,7 @@
 }
 
 .rit-footer-managers h5 {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   margin-bottom: 10px !important;
   color: var(--rit-white);
@@ -1930,7 +1924,7 @@
   border-radius: 999px;
   background: rgba(254, 255, 252, 0.03);
   border: 1px solid rgba(254, 255, 252, 0.1);
-  font-size: 13px;
+  font-size: 14px;
   color: var(--rit-text-muted);
 }
 
@@ -1940,7 +1934,7 @@
   background: rgba(208, 255, 0, 0.12);
   border: 1px solid rgba(208, 255, 0, 0.35);
   color: var(--rit-lime);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
 }
 
@@ -1961,7 +1955,7 @@
   color: var(--rit-black) !important;
   padding: 9px 16px;
   border-radius: 12px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   display: inline-block;
@@ -2135,7 +2129,7 @@
 
   .rit-topbar {
     padding: 8px 12px;
-    font-size: 12px;
+    font-size: 14px;
   }
 
   .rit-topbar-inner {
@@ -2147,8 +2141,8 @@
   }
 
   .rit-topbar-cta {
-    padding: 4px 11px;
-    font-size: 11.5px;
+    padding: 5px 12px;
+    font-size: 14px;
     gap: 5px;
   }
 
@@ -2175,8 +2169,18 @@
   }
 
   .rit-wa-float {
-    right: 16px;
-    bottom: 16px;
+    right: 14px;
+    bottom: 14px;
+  }
+
+  .rit-landing-root .rit-wa-bubble,
+  .rit-wa-bubble {
+    display: none !important;
+  }
+
+  .rit-landing-root .rit-wa-btn {
+    width: 48px;
+    height: 48px;
   }
 
   .rit-solutions-cards,
@@ -2274,9 +2278,9 @@
 }
 
 .rit-legal-eyebrow {
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   color: var(--rit-lime);
   margin-bottom: 6px;
 }
@@ -2288,15 +2292,15 @@
 }
 
 .rit-legal-meta {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--rit-text-muted);
   margin-top: 4px;
 }
 
 .rit-legal-close {
   flex: none;
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   border-radius: 10px;
   border: 1px solid var(--rit-border);
   background: var(--rit-black-card-2);
@@ -2328,7 +2332,7 @@
 
 .rit-legal-section p {
   margin: 0;
-  font-size: 13.5px;
+  font-size: 14px;
   line-height: 1.6;
   color: var(--rit-text-muted);
 }
@@ -2347,6 +2351,6 @@
   background: var(--rit-lime);
   color: var(--rit-black);
   font-weight: 700;
-  font-size: 13px;
+  font-size: 14px;
   cursor: pointer;
 }

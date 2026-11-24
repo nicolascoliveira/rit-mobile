@@ -164,7 +164,7 @@ test('Onboarding WhatsApp + Convite Único: criação, idempotência, ativação
   const inviteCode = createRes.body.invite?.code;
   const inviteUrl = createRes.body.invite?.url;
   assert.ok(anaId, 'student.id deve existir');
-  assert.match(String(inviteCode), /^[A-F0-9]{8}$/, 'invite.code deve ter 8 caracteres hex');
+  assert.match(String(inviteCode), /^[A-F0-9]{16}$/, 'invite.code deve ter 16 caracteres hex');
   assert.equal(inviteUrl, `https://app.treinerit.com.br/cadastro?tenant=ironpower&convite=${inviteCode}`);
   assert.equal(createRes.body.whatsapp?.status, 'sent');
   assert.equal(createRes.body.whatsapp?.sent, true);

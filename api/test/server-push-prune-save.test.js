@@ -48,9 +48,13 @@ async function startServer(t) {
   child.stdout.on('data', d => h.log += d);
   child.stderr.on('data', d => h.log += d);
   child.on('exit', (code, signal) => { h.exited = { code, signal }; });
-  t.after(() => {
+  t.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      const done = new Promise(r => child.once('exit', r));
+      child.kill('SIGKILL');
+      await done;
+    }
     try { fs.chmodSync(dataDir, 0o700); } catch { /* already restored */ }
-    child.kill('SIGKILL');
     fs.rmSync(dataDir, { recursive: true, force: true });
   });
   // The boot line carries the port the listener bound, so it is both the address and the
@@ -63,7 +67,9 @@ const unwritable = h => fs.chmodSync(h.dataDir, 0o500);
 // Root writes through a 0500 directory, so the failure these tests need cannot be made as root
 // (the GitLab CI container runs as root); they are skipped there rather than failing for it.
 const asRoot = typeof process.getuid === 'function' && process.getuid() === 0;
-const skip = asRoot ? 'running as root: a 0500 directory is still writable' : false;
+const skip = process.platform === 'win32'
+  ? 'POSIX chmod 0o500 does not block directory writes on Windows NTFS'
+  : (asRoot ? 'running as root: a 0500 directory is still writable' : false);
 const writable = h => fs.chmodSync(h.dataDir, 0o700);
 
 test('an unwritable ./data cannot take the process down through the rest timer nobody awaits', { skip }, async t => {

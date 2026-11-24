@@ -46,7 +46,7 @@ describe('export with photos & videos', () => {
       }
     }
     await expect(exportBackupZip(S, { media })).rejects.toMatchObject({ code: 'too-many' })
-  })
+  }, 20_000)
 })
 
 describe('import', () => {

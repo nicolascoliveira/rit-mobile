@@ -67,7 +67,9 @@ test('connections are capped on the way in and the log keeps the newest 50', () 
   assert.ok(back.log.every(e => e.msg.length <= 160));
   // Read back from disk the same way, with the mode a secret-holding file gets.
   const file = path.join(dir, 'u-u1.json');
-  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') {
+    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  }
   const again = createStore({ dir, key: deriveKey(SECRET) }).get('u1', 'c1');
   assert.equal(again.log.length, LOG_MAX);
   store.removeUser('u1');

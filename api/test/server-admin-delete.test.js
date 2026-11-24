@@ -12,6 +12,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { boundPort } from './helpers.mjs';
+import { loadCoreDbFromSqlite, readUserStateSqlite, closeAllSqliteInstances } from '../sqlite.js';
 
 const API = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SECRET = crypto.randomBytes(32).toString('hex');
@@ -43,7 +44,11 @@ async function startServer(t, { twoAdmins = false } = {}) {
   const h = { api: '', log: '', dataDir };
   child.stdout.on('data', d => h.log += d);
   child.stderr.on('data', d => h.log += d);
-  t.after(() => { child.kill('SIGKILL'); fs.rmSync(dataDir, { recursive: true, force: true }); });
+  t.after(() => {
+    try { child.kill('SIGKILL'); } catch {}
+    closeAllSqliteInstances();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
   // The boot line carries the port the listener bound, so it is both the address and the
   // readiness signal — see boundPort in helpers.mjs for why the test does not pick one.
   h.port = await boundPort(child, () => h.log);
@@ -56,14 +61,15 @@ async function startServer(t, { twoAdmins = false } = {}) {
     const r = await fetch(`${h.api}${route}`, { method: 'POST', headers: { ...as(uid), Origin: 'http://localhost:8080' }, body: JSON.stringify(body) });
     return { status: r.status, body: await r.json() };
   };
-  h.db = () => JSON.parse(fs.readFileSync(path.join(h.dataDir, 'db.json'), 'utf8'));
+  h.db = () => loadCoreDbFromSqlite(h.dataDir);
+  h.hasState = uid => Boolean(readUserStateSqlite(h.dataDir, uid));
   h.stackFrames = () => h.log.split('\n').filter(l => /^\s+at /.test(l)).length;
   return h;
 }
 
 test('removes the account and everything attached to it', async t => {
   const h = await startServer(t);
-  assert.ok(fs.existsSync(path.join(h.dataDir, `state-${VICTIM}.json`)));
+  assert.ok(h.hasState(VICTIM));
   const res = await h.del(VICTIM);
   assert.equal(res.status, 200);
 
@@ -71,7 +77,7 @@ test('removes the account and everything attached to it', async t => {
   assert.deepEqual(db.users.map(u => u.id), [ADMIN], 'the user is gone');
   assert.deepEqual(db.creds.map(c => c.userId), [ADMIN], 'their passkeys are gone');
   assert.deepEqual(db.subs.map(s => s.userId), [ADMIN], 'their push subscriptions are gone');
-  assert.equal(fs.existsSync(path.join(h.dataDir, `state-${VICTIM}.json`)), false, 'their history is gone');
+  assert.equal(h.hasState(VICTIM), false, 'their history is gone');
   // The code they joined with stays burned: it was used, and freeing it would quietly widen
   // an invite-only instance.
   assert.equal(db.invites[0].usedBy, VICTIM);

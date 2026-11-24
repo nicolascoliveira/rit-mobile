@@ -163,9 +163,20 @@ export function formatVerificationWhatsAppMessage({
   ].join('\n');
 }
 
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[ch]);
+}
+
 function buildVerificationEmailHtml({ code, studentName = 'Aluno(a)', tenantName = 'Rit', purpose = 'login' }) {
-  const firstName = String(studentName || 'Aluno(a)').trim().split(/\s+/)[0] || 'Aluno(a)';
-  const gym = String(tenantName || 'Rit').trim() || 'Rit';
+  const firstName = escapeHtml(String(studentName || 'Aluno(a)').trim().split(/\s+/)[0] || 'Aluno(a)');
+  const gym = escapeHtml(String(tenantName || 'Rit').trim() || 'Rit');
+  const safeCode = escapeHtml(code);
   const title = purpose === 'register'
     ? 'Confirme seu cadastro'
     : purpose === 'reset'
@@ -181,7 +192,7 @@ function buildVerificationEmailHtml({ code, studentName = 'Aluno(a)', tenantName
       Olá, <strong style="color:#ffffff;">${firstName}</strong>! Digite o código de 6 dígitos abaixo no aplicativo para continuar:
     </p>
     <div style="background:#0c0e12;border:1px solid #323642;border-radius:12px;padding:16px 20px;font-size:32px;font-weight:800;letter-spacing:0.22em;color:#d0ff00;margin-bottom:20px;">
-      ${code}
+      ${safeCode}
     </div>
     <p style="font-size:13px;color:#71717a;margin:0;">
       Este código é válido por 10 minutos. Se você não solicitou este código, ignore esta mensagem.

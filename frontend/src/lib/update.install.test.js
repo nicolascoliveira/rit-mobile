@@ -55,14 +55,14 @@ describe('downloadAndInstall (Android)', () => {
     comeBack()
     await run
     expect(m.calls).toEqual(['install', 'download', 'install'])
-    expect(m.installApk).toHaveBeenLastCalledWith({ fileName: 'opengym-update.apk', sha256: HASH })
+    expect(m.installApk).toHaveBeenLastCalledWith({ fileName: 'rit-update.apk', sha256: HASH })
     expect(m.appListeners).toHaveLength(0)   // the listener is gone again
   })
 
   it('in front all along: downloads and opens the installer straight away', async () => {
     await downloadAndInstall('https://x/a.apk', HASH.toUpperCase())
     expect(m.calls).toEqual(['install', 'download', 'install'])
-    expect(m.installApk).toHaveBeenLastCalledWith({ fileName: 'opengym-update.apk', sha256: HASH })
+    expect(m.installApk).toHaveBeenLastCalledWith({ fileName: 'rit-update.apk', sha256: HASH })
   })
 
   it('an APK already downloaded and matching is installed again without a second download', async () => {
@@ -113,7 +113,7 @@ describe('whenInForeground', () => {
 describe('forgetDownloadedUpdate', () => {
   it('deletes the update APK from the cache, and is quiet when there is none', async () => {
     await forgetDownloadedUpdate()
-    expect(m.deleteFile).toHaveBeenCalledWith({ path: 'opengym-update.apk', directory: 'CACHE' })
+    expect(m.deleteFile).toHaveBeenCalledWith({ path: 'rit-update.apk', directory: 'CACHE' })
     m.deleteFile = vi.fn(async () => { throw new Error('File does not exist') })
     await expect(forgetDownloadedUpdate()).resolves.toBeUndefined()
   })

@@ -198,8 +198,8 @@ async function offAll(removeWritten, toast) {
 function WorksWith({ platform, nav }) {
   const store = platform === 'ios' ? 'Apple Health' : platform === 'android' ? 'Health Connect' : null
   return <Section title={t('Works with')} footer={store
-    ? t('No extra connection needed: they write to {0}, and openGym reads from there.', store)
-    : t('No extra connection needed: they write to Apple Health or Health Connect, and the openGym phone app reads from there.')}>
+    ? t('No extra connection needed: they write to {0}, and Rit reads from there.', store)
+    : t('No extra connection needed: they write to Apple Health or Health Connect, and the Rit phone app reads from there.')}>
     <div className="intg-chips">
       {WORKS_WITH.map(w => <button key={w.name} className="btn xs intg-chip" onClick={() => worksWithSheet(w, platform, nav)}>
         <Icon name={w.glyph} /><span translate="no">{w.name}</span>

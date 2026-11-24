@@ -9,6 +9,9 @@
   --fg: var(--label);
   --muted: var(--label-2);
   --accent: var(--acc);
+  --fs-caption2: 0.875rem;
+  --fs-caption: 0.875rem;
+  --fs-footnote: 0.875rem;
   --b2b-input-bg: #101013;
   --b2b-input-border: rgba(255, 255, 255, 0.16);
   --b2b-input-border-hover: rgba(255, 255, 255, 0.3);
@@ -1806,9 +1809,9 @@ textarea.field {
   .b2b-table-stack td::before {
     content: attr(data-label);
     flex-shrink: 0;
-    font-size: 11.5px;
+    font-size: 14px;
     font-weight: 700;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
     color: var(--label-2);
     text-align: left;
@@ -1983,7 +1986,7 @@ textarea.field {
 @media (max-width: 380px) {
   /* Telas bem estreitas: o selo vira só o ícone para os três botões caberem. */
   .portal-topbar-pill {
-    font-size: 11.5px;
+    font-size: 14px;
     padding-left: 8px;
     padding-right: 8px;
   }
@@ -2099,16 +2102,16 @@ textarea.field {
 
 .b2b-day-owner {
   position: absolute;
-  top: -6px;
-  right: -4px;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
+  top: -7px;
+  right: -5px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
   border-radius: 99px;
   font-style: normal;
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 800;
-  line-height: 16px;
+  line-height: 20px;
   text-align: center;
   background: var(--surface-3, var(--surface-2));
   color: var(--label);

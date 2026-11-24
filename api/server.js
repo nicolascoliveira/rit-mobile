@@ -88,10 +88,12 @@ import {
   enqueueMobileNotificationSqlite,
   listMobileNotificationsSqlite,
   deleteMobileNotificationsSqlite,
+  checkOtpSendQuotaSqlite,
   createAuthVerificationSqlite,
   getAuthVerificationSqlite,
   incrementAuthVerificationAttemptsSqlite,
   deleteAuthVerificationSqlite,
+  purgeUserPrivacyRecordsSqlite,
   isSqliteUniqueConstraintError
 } from './sqlite.js';
 
@@ -718,6 +720,13 @@ function requireAdmin(req, res) {
   if (!isAdmin(user)) { audit(req, 'admin.denied', { ok: false, user }); json(res, 403, { error: 'forbidden' }); return null; }
   return user;
 }
+const isSuperAdminUser = u => !!u && (u.saasRole === 'superadmin' || (isAdmin(u) && (!u.tenantId || ADMIN_UIDS.includes(u.id))));
+const adminCanAccessUser = (admin, target) => Boolean(
+  admin && target && (isSuperAdminUser(admin) || ((target.tenantId || 'default') === (admin.tenantId || 'default') && target.saasRole !== 'superadmin'))
+);
+const adminCanAccessInvite = (admin, inv) => Boolean(
+  admin && inv && (isSuperAdminUser(admin) || ((inv.tenantId || 'default') === (admin.tenantId || 'default')))
+);
 function requireOwner(req, res) {
   const user = requireAdmin(req, res); if (!user) return null;
   if (!isOwner(user)) { audit(req, 'admin.denied', { ok: false, user }); json(res, 403, { error: 'only the owner can do this' }); return null; }
@@ -779,7 +788,7 @@ const SIGN_IN_ROUTES = new Set([
   'POST /api/auth/verification/send',
   'POST /api/device-link/options', 'POST /api/device-link/verify',
   'POST /api/saas/auth/login', 'POST /api/saas/auth/demo-login', 'POST /api/saas/demo/seed',
-  'POST /api/saas/auth/setup-admin', 'POST /api/saas/auth/register'
+  'POST /api/saas/auth/setup-admin', 'POST /api/saas/auth/register', 'POST /api/saas/auth/password-reset'
 ]);
 // A verify error as the answer's body: a passkey made at an address that is not ORIGIN/RP_ID gets
 // the same `code` as the origin check's 403, so the app explains both alike.
@@ -1173,13 +1182,14 @@ if (AUDIT_ON) {
 // the whole instance: one client can pause *password* sign-in for everybody for a while, and the
 // per-name pause is what still protects each password.
 const AUTH_BURST = createWindow({ max: 60, windowMs: 60000 });
+const INVITE_PREVIEW_BURST = createWindow({ max: 20, windowMs: 60000 });
 const ADDR_FAILS = createBackoff({ free: 20, baseMs: 30000, maxMs: 15 * 60000, forgetMs: 3600000 });
 const ACCOUNT_FAILS = createBackoff({
   free: 5, baseMs: 60000, maxMs: 3600000, forgetMs: 24 * 3600000,
   // At most one per profile with a password, so this cannot grow without bound.
   keep: k => k.startsWith('acct:') && hasPassword(db.users.find(u => u.id === k.slice(5)))
 });
-setInterval(() => { AUTH_BURST.sweep(); ADDR_FAILS.sweep(); ACCOUNT_FAILS.sweep(); }, 60000).unref();
+setInterval(() => { AUTH_BURST.sweep(); INVITE_PREVIEW_BURST.sweep(); ADDR_FAILS.sweep(); ACCOUNT_FAILS.sweep(); }, 60000).unref();
 
 // Route -> the kind of failure it can count. Every route listed here also spends the burst
 // budget; `null` spends only that.
@@ -1203,6 +1213,7 @@ const THROTTLED = {
   'POST /api/account/delete': null
 };
 THROTTLED['POST /api/saas/auth/login'] = 'password';
+THROTTLED['POST /api/saas/auth/password-reset'] = 'password';
 THROTTLED['POST /api/saas/auth/register'] = 'signup';
 THROTTLED['POST /api/saas/auth/demo-login'] = null;
 THROTTLED['POST /api/saas/billing/webhook'] = null;
@@ -1535,9 +1546,11 @@ function removeAccount(u) {
   try { deleteUserStateSqlite(DATA, u.id); } catch { /* already gone */ }
   try { deleteWatchBoxSqlite(DATA, u.id); } catch { /* never had a watch */ }
   try { deleteMobileNotificationsSqlite(DATA, u.id); } catch { /* never had mobile notifications */ }
+  try { purgeUserPrivacyRecordsSqlite(DATA, { userId: u.id, email: u.email || '', phone: u.phone || '' }); } catch { /* ignore */ }
   stateCache.delete(u.id);
   stateSummaries.delete(u.id);
   evictStudentSummary(u.id);
+  try { coachJobs.clearUser(u.id); } catch { /* nothing stored */ }
   try { coachConfig.clearProfileAuth(u.id); } catch { /* nothing stored */ }
   // Their photos and videos — the one place a profile's folder under uploads/ is removed.
   try { MEDIA.removeUser(u.id); } catch (e) { console.error('media: could not remove uploads of', u.id, e.message); }
@@ -1548,6 +1561,11 @@ function removeAccount(u) {
 
 const MAX_HOMONYM_CANDIDATES = 4;
 const OTP_INVALID_ERR = { error: 'Código de verificação inválido ou expirado.', code: 'otp-invalid' };
+const shouldEchoDevOtp = () => (
+  process.env.NODE_ENV !== 'production' &&
+  !process.env.MERCADO_PAGO_ACCESS_TOKEN &&
+  process.env.ALLOW_DEV_OTP_ECHO !== '0'
+);
 
 async function handleLoginDeviceVerification(req, res, body, user, target) {
   const enforceOtp = body.requireEmailOtp === true || Boolean(body.challengeId) || Boolean(body.otpCode);
@@ -1593,7 +1611,17 @@ async function handleLoginDeviceVerification(req, res, body, user, target) {
 
   const userTenant = user.tenantId || 'default';
   const tenant = userTenant !== 'default' ? getTenant(DATA, userTenant) : null;
-  const cleanedPhone = cleanWhatsAppPhone(body.phone || user.phone || '');
+  const cleanedPhone = cleanWhatsAppPhone(user.phone || '');
+  const quota = checkOtpSendQuotaSqlite(DATA, { email: userEmail, phone: cleanedPhone, purpose: 'login' });
+  if (!quota.ok) {
+    json(
+      res,
+      429,
+      { error: 'Muitas solicitações de código. Aguarde alguns minutos.', code: 'otp-rate-limited', retryAfter: quota.retryAfterSec },
+      { 'Retry-After': String(quota.retryAfterSec) }
+    );
+    return { proceed: false };
+  }
   const challengeId = crypto.randomBytes(16).toString('base64url');
   const otpCode = generateOtpCode();
   const codeHash = hashOtpCode(otpCode, SECRET, challengeId);
@@ -1632,7 +1660,7 @@ async function handleLoginDeviceVerification(req, res, body, user, target) {
     maskedPhone: delivery.maskedPhone,
     hasPhone: delivery.hasPhone,
     emailConfigured: delivery.emailConfigured,
-    ...(process.env.NODE_ENV !== 'production' ? { devOtpCode: otpCode } : {})
+    ...(shouldEchoDevOtp() ? { devOtpCode: otpCode } : {})
   });
   return { proceed: false };
 }
@@ -2059,7 +2087,7 @@ const passwordRoutes = {
     const admin = requireAdmin(req, res); if (!admin) return;
     const body = await readBody(req);
     const u = db.users.find(x => x.id === body.id);
-    if (!u) return json(res, 404, { error: 'no such user' });
+    if (!u || !adminCanAccessUser(admin, u)) return json(res, 404, { error: 'no such user' });
     if (isAdmin(u)) return json(res, 400, { error: 'an admin sets their own password in Settings' });
     if (nameTaken(u.name, u.id, userTenantOf(u))) return json(res, 409, { error: 'another profile already signs in with this name', code: 'name-taken' });
     const code = makeResetCode();
@@ -2115,6 +2143,10 @@ const passwordRoutes = {
       strikeAddress(req, 'password');
       audit(req, 'auth.password.reset', { ok: false, msg: 'reset-invalid' });
       return invalid();
+    }
+    if (user && (user.saasRole === 'superadmin' || (isOtpChallenge && isAdmin(user) && db.users.some(x => x.saasRole === 'superadmin')))) {
+      audit(req, 'auth.password.reset', { ok: false, user, msg: 'superadmin-reset-blocked' });
+      return json(res, 403, { error: 'Contas de Super Administrador exigem redefinição via console seguro do servidor.', code: 'superadmin-reset-blocked' });
     }
     if (user.disabled) {
       audit(req, 'auth.password.reset', { ok: false, user, msg: 'account-disabled' });
@@ -3265,6 +3297,14 @@ const routes = {
         return { kind: 'conflict', curRev, cur };
       }
       delete body.state.active;
+      if (user.saasRole === 'student' || user.role === 'student') {
+        if (cur && Object.prototype.hasOwnProperty.call(cur, 'videoReviews')) {
+          body.state.videoReviews = cur.videoReviews;
+        }
+        if (cur && Object.prototype.hasOwnProperty.call(cur, 'assessments')) {
+          body.state.assessments = cur.assessments;
+        }
+      }
       const storedReset = Number(cur?.resetAt) || 0;
       if (storedReset > (Number(body.state.resetAt) || 0)) {
         body.state.resetAt = cur.resetAt;
@@ -3459,8 +3499,8 @@ const routes = {
   /* ---------- admin dashboard ---------- */
   // One row per user, cheap enough for a personal instance (reads each state file once).
   'GET /api/admin/users': async (req, res) => {
-    if (!requireAdmin(req, res)) return;
-    const users = db.users.map(u => {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    const users = db.users.filter(u => adminCanAccessUser(admin, u)).map(u => {
       const S = readState(u.id) || {};
       const workouts = records(S.workouts);
       const last = workouts[workouts.length - 1];
@@ -3482,10 +3522,10 @@ const routes = {
 
   // Drill-down: full workout history + body-weight log for one user.
   'GET /api/admin/user': async (req, res) => {
-    if (!requireAdmin(req, res)) return;
+    const admin = requireAdmin(req, res); if (!admin) return;
     const id = new URL(req.url, 'http://x').searchParams.get('id');
     const u = db.users.find(x => x.id === id);
-    if (!u) return json(res, 404, { error: 'no such user' });
+    if (!u || !adminCanAccessUser(admin, u)) return json(res, 404, { error: 'no such user' });
     const S = readState(u.id) || {};
     json(res, 200, {
       user: {
@@ -3516,7 +3556,7 @@ const routes = {
     const admin = requireAdmin(req, res); if (!admin) return;
     const body = await readBody(req);
     const u = db.users.find(x => x.id === body.id);
-    if (!u) return json(res, 404, { error: 'no such user' });
+    if (!u || !adminCanAccessUser(admin, u)) return json(res, 404, { error: 'no such user' });
     if (u.id === admin.id) return json(res, 400, { error: 'you are signed in: add a passkey in Settings instead', code: 'self' });
     if (isOwner(u)) return json(res, 403, { error: 'the owner recovers with the server command (recover.js)', code: 'owner' });
     if (isAdmin(u) && !isOwner(admin)) { audit(req, 'admin.denied', { ok: false, user: admin, target: u, msg: 'recovery' }); return json(res, 403, { error: 'only the owner can make a recovery code for an admin' }); }
@@ -3529,7 +3569,7 @@ const routes = {
     const admin = requireAdmin(req, res); if (!admin) return;
     const body = await readBody(req);
     const u = db.users.find(x => x.id === body.id);
-    if (!u) return json(res, 404, { error: 'no such user' });
+    if (!u || !adminCanAccessUser(admin, u)) return json(res, 404, { error: 'no such user' });
     if (isAdmin(u)) return json(res, 400, { error: 'cannot disable an admin' });
     u.disabled = !!body.disabled;
     if (u.disabled) presence.delete(u.id);   // drop them off "training now" at once
@@ -3550,7 +3590,7 @@ const routes = {
     const admin = requireAdmin(req, res); if (!admin) return;
     const body = await readBody(req);
     const u = db.users.find(x => x.id === body.id);
-    if (!u) return json(res, 404, { error: 'no such user' });
+    if (!u || !adminCanAccessUser(admin, u)) return json(res, 404, { error: 'no such user' });
     if (u.id === admin.id) return json(res, 400, { error: 'you cannot delete your own account' });
     if (isAdmin(u) && db.users.filter(isAdmin).length <= 1) return json(res, 400, { error: 'cannot delete the last admin' });
     if (isOwner(u)) return json(res, 400, { error: 'the owner cannot be deleted; hand the role to another admin first' });
@@ -3596,9 +3636,9 @@ const routes = {
   },
 
   'GET /api/admin/invites': async (req, res) => {
-    if (!requireAdmin(req, res)) return;
+    const admin = requireAdmin(req, res); if (!admin) return;
     // resolve usedBy uid → name for display
-    const invites = db.invites.map(i => ({
+    const invites = db.invites.filter(i => adminCanAccessInvite(admin, i)).map(i => ({
       ...i, usedByName: i.usedBy ? (db.users.find(u => u.id === i.usedBy) || {}).name || null : null
     }));
     json(res, 200, { invites, invite_only: INVITE_ONLY });
@@ -3613,7 +3653,13 @@ const routes = {
     // code is good, so the code itself has to be the thing that isn't worth guessing. Codes already
     // in db.json keep working — validation is an exact string compare, never a length or format check.
     do { code = crypto.randomBytes(8).toString('hex').toUpperCase(); } while (db.invites.some(i => i.code === code));
-    const invite = { code, note: text(body.note).slice(0, 60), createdBy: admin.id, created: new Date().toISOString() };
+    const invite = {
+      code,
+      note: text(body.note).slice(0, 60),
+      ...(admin.tenantId ? { tenantId: admin.tenantId } : {}),
+      createdBy: admin.id,
+      created: new Date().toISOString()
+    };
     db.invites.push(invite);
     saveDb();
     audit(req, 'admin.invite.create', { user: admin, msg: code });
@@ -3624,7 +3670,7 @@ const routes = {
     const admin = requireAdmin(req, res); if (!admin) return;
     const body = await readBody(req);
     const inv = db.invites.find(i => i.code === text(body.code).toUpperCase());
-    if (!inv) return json(res, 404, { error: 'no such code' });
+    if (!inv || !adminCanAccessInvite(admin, inv)) return json(res, 404, { error: 'no such code' });
     if (inv.usedBy) return json(res, 400, { error: 'already used, cannot revoke' });
     db.invites = db.invites.filter(i => i.code !== inv.code);
     saveDb();
@@ -3638,12 +3684,16 @@ const routes = {
   // timestamp, because two events can share a millisecond. auditKeep() runs on read as well as
   // on the hourly compaction, so nothing past its retention is ever served.
   'GET /api/admin/audit': async (req, res) => {
-    if (!requireAdmin(req, res)) return;
+    const admin = requireAdmin(req, res); if (!admin) return;
     const q = new URL(req.url, 'http://x').searchParams;
     const limit = Math.max(1, Math.min(200, +q.get('limit') || 100));
     const before = +q.get('before') || Infinity;
     const cat = q.get('cat') || '';
     let rows = auditKeep(auditLines()).reverse();
+    if (!isSuperAdminUser(admin)) {
+      const scopeTid = admin.tenantId || 'default';
+      rows = rows.filter(r => r && (r.tid || 'default') === scopeTid);
+    }
     if (cat === 'fail') rows = rows.filter(r => !r.ok);
     else if (cat) rows = rows.filter(r => String(r.ev).startsWith(cat + '.'));
     const page = rows.filter(r => r.id < before).slice(0, limit);
@@ -3673,7 +3723,7 @@ const routes = {
   // Routes live in coach/routes.js and are handed the helpers above rather than importing
   // them: they are closures over db and SECRET, and passing them in keeps that module free of
   // a cycle. Every one of them is inert while the feature is unconfigured.
-  ...coachRoutes({ json, readBody, readSession, requireAdmin }),
+  ...coachRoutes({ json, readBody, readSession, requireAdmin, dataDir: DATA }),
 
   /* ---------- integrations ---------- */
   // integrations/routes.js, handed the same helpers. With INTEGRATIONS unset they answer an empty
@@ -3921,6 +3971,10 @@ const server = http.createServer(async (req, res) => {
   }
   // After the origin check, so a forged request spends nobody's budget. The password routes only
   // (see the sign-in throttle above).
+  if (key === 'GET /api/invite/preview') {
+    const wait = INVITE_PREVIEW_BURST.take(limitAddress(req));
+    if (wait) return tooMany(res, wait);
+  }
   if (key in THROTTLED) {
     const addr = limitAddress(req);
     const kind = THROTTLED[key];

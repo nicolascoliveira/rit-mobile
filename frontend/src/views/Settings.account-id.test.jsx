@@ -68,8 +68,8 @@ const idRow = el => [...el.querySelectorAll('.lrow')].find(r => r.querySelector(
 
 let writeText
 beforeEach(() => {
-  mocks.S = { unit: 'kg', restSec: 90, restPauseSec: 15, sound: false, effort: 'none', gifSize: 'full', workouts: [], routines: [], exWeights: {} }
-  mocks.user = { id: ID, name: 'andi' }
+  mocks.S = { unit: 'kg', restSec: 90, restPauseSec: 15, sound: false, effort: 'none', gifSize: 'full', workouts: [], routines: [], exWeights: {}, lang: 'en', langAuto: false }
+  mocks.user = { id: ID, name: 'andi', admin: true }
   mocks.MOBILE = false
   mocks.toast.mockClear()
   writeText = vi.fn(() => Promise.resolve())
@@ -78,7 +78,7 @@ beforeEach(() => {
 afterEach(() => { act(() => { mounted.splice(0).forEach(({ root, host }) => { root.unmount(); host.remove() }) }) })
 
 describe('Settings → Account ID', () => {
-  it('a signed-in browser shows the id under Account, and a tap copies it', async () => {
+  it('a signed-in admin browser shows the id under Account, and a tap copies it', async () => {
     const page = mount(<Settings page="account" />)
     const row = idRow(section(page, 'Account'))
     expect(row).toBeTruthy()
@@ -89,10 +89,17 @@ describe('Settings → Account ID', () => {
     expect(mocks.toast).toHaveBeenCalledWith('Account ID copied')
   })
 
-  it('a paired phone shows it in the Server & sync block', () => {
+  it('a paired admin phone shows it in the Conta e sincronização block', () => {
     mocks.MOBILE = true
     const page = mount(<Settings page="account" />)
-    expect(idRow(section(page, 'Server & sync')).querySelector('.acct-id').textContent).toBe(ID)
+    expect(idRow(section(page, 'Conta e sincronização')).querySelector('.acct-id').textContent).toBe(ID)
+  })
+
+  it('a non-admin student and a guest see no Account ID row', () => {
+    mocks.user = { id: ID, name: 'andi', admin: false }
+    expect(idRow(mount(<Settings page="account" />))).toBeUndefined()
+    mocks.user = null
+    expect(idRow(mount(<Settings page="account" />))).toBeUndefined()
   })
 
   it('a clipboard that refuses says nothing, and the id stays on screen', async () => {
