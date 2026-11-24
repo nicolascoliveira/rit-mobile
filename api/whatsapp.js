@@ -15,7 +15,7 @@
 import fs from 'node:fs';
 import dns from 'node:dns';
 import crypto from 'node:crypto';
-import { Agent as UndiciAgent } from 'undici';
+import { Agent as UndiciAgent, fetch as undiciFetch } from 'undici';
 import { getTenant, resolveTenantEvolutionSettings } from './tenants.js';
 import {
   getSqliteInstance,
@@ -476,7 +476,8 @@ async function fetchEvolutionJson(
     if (!hostCheck.isPlatform) {
       fetchOpts.dispatcher = EVOLUTION_EXTERNAL_DISPATCHER;
     }
-    const res = await fetch(fullUrl, fetchOpts);
+    const doFetch = fetchOpts.dispatcher ? undiciFetch : fetch;
+    const res = await doFetch(fullUrl, fetchOpts);
     clearTimeout(timer);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {

@@ -1,5 +1,5 @@
 # Multi-stage build for the Rit B2B SaaS Management Portal (Super Admin + Gyms)
-FROM --platform=$BUILDPLATFORM node:22.23.4-alpine AS build
+FROM --platform=$BUILDPLATFORM node:26.13.1-alpine AS build
 
 WORKDIR /app/portal
 COPY portal/package.json portal/package-lock.json* ./
