@@ -1,6 +1,6 @@
 import { MOBILE } from './mobile.js'
 
-export const RIT_STUDENT_SERVER = 'https://app.treinerit.duckdns.org'
+export const RIT_STUDENT_SERVER = 'https://app.treinerit.com.br'
 const NATIVE_MODE_KEY = 'rit_native_mode'
 const ADMIN_TOKEN_KEY = 'rit_admin_token'
 const DEVICE_ID_KEY = 'rit_device_id'
@@ -119,7 +119,7 @@ export function parseRitDeepLink(rawUrl) {
 
 export function buildAndroidAppIntentUrl(searchStr = '') {
   const rawSearch = typeof searchStr === 'string' ? searchStr : (typeof window !== 'undefined' ? window.location.search : '')
-  const fallback = typeof window !== 'undefined' ? window.location.href : 'https://app.treinerit.duckdns.org'
+  const fallback = typeof window !== 'undefined' ? window.location.href : 'https://app.treinerit.com.br'
   const cleanQuery = rawSearch.startsWith('?') ? rawSearch : (rawSearch ? `?${rawSearch}` : '')
   return `intent://cadastro${cleanQuery}#Intent;scheme=rit;package=br.com.treinerit.app;S.browser_fallback_url=${encodeURIComponent(fallback)};end`
 }

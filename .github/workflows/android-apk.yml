@@ -14,7 +14,7 @@ on:
       api_base:
         description: URL base da API do Rit Painel no APK
         required: false
-        default: https://painel.treinerit.duckdns.org
+        default: https://painel.treinerit.com.br
         type: string
       publish_release:
         description: Publicar APK na aba GitHub Releases
@@ -76,8 +76,8 @@ jobs:
       - name: Gerar bundle mobile unificado (Rit Aluno + Rit Painel) e cap sync
         working-directory: frontend
         env:
-          VITE_PORTAL_API_BASE: ${{ inputs.api_base || 'https://painel.treinerit.duckdns.org' }}
-          VITE_STUDENT_APP_URL: https://app.treinerit.duckdns.org
+          VITE_PORTAL_API_BASE: ${{ inputs.api_base || 'https://painel.treinerit.com.br' }}
+          VITE_STUDENT_APP_URL: https://app.treinerit.com.br
         run: |
           npm run build:mobile:unified
           test -f android/app/src/main/assets/public/index.html
@@ -97,7 +97,7 @@ jobs:
       - name: Assinar e preparar APK instalável
         env:
           INPUT_VARIANT: ${{ inputs.variant || 'release' }}
-          INPUT_API_BASE: ${{ inputs.api_base || 'https://painel.treinerit.duckdns.org' }}
+          INPUT_API_BASE: ${{ inputs.api_base || 'https://painel.treinerit.com.br' }}
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -160,7 +160,7 @@ jobs:
             echo "- Tamanho: $(numfmt --to=iec "$(stat -c %s "$OUT_DIR/$DEST_NAME")")"
             echo "- Assinatura: \`$SIGNED_MODE\`"
             printf -- '- API do Painel: `%s`\n' "$INPUT_API_BASE"
-            echo "- App do Aluno: \`https://app.treinerit.duckdns.org\`"
+            echo "- App do Aluno: \`https://app.treinerit.com.br\`"
             if [ "$SIGNED_MODE" = "preview-keystore" ]; then
               echo ""
               echo "> Este APK foi assinado com uma chave temporária de preview (instalável direto no Android). Para atualizações contínuas ou publicação na Google Play, configure os 4 Secrets no repositório: \`ANDROID_KEYSTORE_BASE64\`, \`ANDROID_KEYSTORE_PASSWORD\`, \`ANDROID_KEY_ALIAS\` e \`ANDROID_KEY_PASSWORD\`."

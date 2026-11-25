@@ -181,7 +181,7 @@ export function getStudentAppUrl(tenantSlug) {
 
   let base = configured;
   if (!base && isNativePortalApp()) {
-    base = 'https://app.treinerit.duckdns.org';
+    base = 'https://app.treinerit.com.br';
   }
   if (!base && typeof window !== 'undefined') {
     const host = window.location.hostname || 'localhost';

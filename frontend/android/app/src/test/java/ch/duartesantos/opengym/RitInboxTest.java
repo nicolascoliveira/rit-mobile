@@ -8,12 +8,12 @@ public class RitInboxTest {
     @Test
     public void buildsPendingUrlCleanly() {
         assertEquals(
-                "https://app.treinerit.duckdns.org/api/notifications/pending?since=42&limit=20",
-                RitInbox.buildPendingUrl("https://app.treinerit.duckdns.org/", 42L, 20)
+                "https://app.treinerit.com.br/api/notifications/pending?since=42&limit=20",
+                RitInbox.buildPendingUrl("https://app.treinerit.com.br/", 42L, 20)
         );
         assertEquals(
-                "https://app.treinerit.duckdns.org/api/notifications/pending?since=0&limit=50",
-                RitInbox.buildPendingUrl("https://app.treinerit.duckdns.org", -5L, 999)
+                "https://app.treinerit.com.br/api/notifications/pending?since=0&limit=50",
+                RitInbox.buildPendingUrl("https://app.treinerit.com.br", -5L, 999)
         );
     }
 
