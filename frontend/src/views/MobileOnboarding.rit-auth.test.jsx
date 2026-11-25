@@ -289,4 +289,29 @@ describe('MobileOnboarding & web-like mobile password auth', () => {
     )
     expect(close).toHaveBeenCalled()
   })
+
+  it('redirects trainer/staff accounts automatically to Rit Painel when API returns staff-account (403)', async () => {
+    vi.useFakeTimers()
+    const staffErr = Object.assign(
+      new Error('Esta conta é de Professor/Gestão. Redirecionando para o Rit Painel...'),
+      { status: 403, data: { code: 'staff-account', portalUrl: 'https://painel.treinerit.com.br/login' } }
+    )
+    const signInMobileWithPassword = vi.fn().mockRejectedValueOnce(staffErr)
+    useStore.setState({ signInMobileWithPassword })
+    const close = vi.fn()
+
+    act(() => root.render(<MobilePasswordSignInSheet close={close} />))
+    const inputs = host.querySelectorAll('input')
+    type(inputs[0], 'prof@academia.com')
+    type(inputs[1], 'SenhaProf12345!')
+    await act(async () => { buttonByText('Sign in').click() })
+
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('Professor/Gestão')
+    expect(useUI.getState().toastMsg).toContain('Rit Painel')
+    expect(h.openPortalNativeApp).not.toHaveBeenCalled()
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(650) })
+    expect(close).toHaveBeenCalled()
+    expect(h.openPortalNativeApp).toHaveBeenCalledWith('/login')
+  })
 })

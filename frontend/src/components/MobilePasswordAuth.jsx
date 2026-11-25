@@ -9,6 +9,7 @@ import { t } from '../lib/i18n.js'
 import { MIN_PASSWORD, looksLikeEmail, looksLikePhone, formatPhoneInput, passwordError, describeOtpChannel } from './PasswordAuth.jsx'
 import {
   rememberStudentNativeMode,
+  openPortalNativeApp,
   RIT_STUDENT_SERVER,
   getOrCreateDeviceId,
   getTrustedDeviceToken
@@ -273,7 +274,15 @@ export function MobilePasswordSignInSheet({
         close?.()
         useUI.getState().toast(t('Welcome back, {0}', u?.name || n))
       } catch (e) {
-        setErr(passwordError(e))
+        const msg = passwordError(e)
+        setErr(msg)
+        if (e?.data?.code === 'staff-account') {
+          useUI.getState().toast(msg)
+          setTimeout(() => {
+            close?.()
+            openPortalNativeApp('/login')
+          }, 600)
+        }
       } finally {
         setBusy(false)
       }
@@ -320,7 +329,15 @@ export function MobilePasswordSignInSheet({
       close?.()
       useUI.getState().toast(t('Welcome back, {0}', res?.name || n))
     } catch (e) {
-      setErr(passwordError(e))
+      const msg = passwordError(e)
+      setErr(msg)
+      if (e?.data?.code === 'staff-account') {
+        useUI.getState().toast(msg)
+        setTimeout(() => {
+          close?.()
+          openPortalNativeApp('/login')
+        }, 600)
+      }
     } finally {
       setBusy(false)
     }
@@ -784,7 +801,15 @@ export function MobileRegisterSheet({
         close?.()
         useUI.getState().toast(t('Welcome, {0}', u?.name || n))
       } catch (e) {
-        setErr(passwordError(e))
+        const msg = passwordError(e)
+        setErr(msg)
+        if (e?.data?.code === 'staff-account') {
+          useUI.getState().toast(msg)
+          setTimeout(() => {
+            close?.()
+            openPortalNativeApp('/login')
+          }, 600)
+        }
       } finally {
         setBusy(false)
       }

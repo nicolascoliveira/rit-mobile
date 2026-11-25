@@ -702,4 +702,41 @@ test('Etapa 7 HTTP security: SaaS auth CSRF + Bearer non-bypass, prod localhost 
   });
   assert.equal(ironScopedOk.status, 200);
   assert.equal(ironScopedOk.body.user.tenantId, 'iron');
+
+  // 5. Staff/B2B accounts (trainer, gym_owner, superadmin) are blocked from student app login (/api/login/password) and /api/me
+  const trainerWrongPw = await rawCall('POST', '/api/login/password', {
+    ip: '203.0.113.222',
+    headers: { Origin: 'https://app.example.test', 'Sec-Fetch-Site': 'same-origin' },
+    body: { identifier: 'carlos@alpha.example', password: 'WrongPasswordAttempt2026!' }
+  });
+  assert.equal(trainerWrongPw.status, 401);
+  assert.equal(trainerWrongPw.body.code, 'bad-credentials');
+
+  const trainerStudentLogin = await rawCall('POST', '/api/login/password', {
+    ip: '203.0.113.223',
+    headers: { Origin: 'https://app.example.test', 'Sec-Fetch-Site': 'same-origin' },
+    body: { identifier: 'carlos@alpha.example', password: 'CarlosAlphaPassword2026!' }
+  });
+  assert.equal(trainerStudentLogin.status, 403);
+  assert.equal(trainerStudentLogin.body.code, 'staff-account');
+  assert.equal(trainerStudentLogin.body.portalUrl, 'https://painel.example.test/login');
+  assert.equal(trainerStudentLogin.headers.get('set-cookie'), null);
+  assert.equal(trainerStudentLogin.body.token, undefined);
+
+  const superStudentLogin = await rawCall('POST', '/api/login/password', {
+    ip: '203.0.113.224',
+    headers: { Origin: 'https://app.example.test', 'Sec-Fetch-Site': 'same-origin' },
+    body: { identifier: 'root@rit.example.test', password: 'SuperAdminPassword2026!' }
+  });
+  assert.equal(superStudentLogin.status, 403);
+  assert.equal(superStudentLogin.body.code, 'staff-account');
+  assert.equal(superStudentLogin.headers.get('set-cookie'), null);
+
+  // Even with a valid B2B Bearer token, GET /api/me refuses staff accounts in the student app
+  const trainerMeBlocked = await rawCall('GET', '/api/me', {
+    ip: '203.0.113.225',
+    headers: { Authorization: `Bearer ${alphaEmailOk.body.token}` }
+  });
+  assert.equal(trainerMeBlocked.status, 403);
+  assert.equal(trainerMeBlocked.body.code, 'staff-account');
 });

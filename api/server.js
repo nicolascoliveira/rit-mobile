@@ -1379,6 +1379,20 @@ const publicUser = u => ({
   ...(u.saasRole ? { saasRole: u.saasRole } : {}),
   ...(u.tenantId ? { tenantId: u.tenantId } : {})
 });
+const STAFF_SAAS_ROLES = new Set(['trainer', 'gym_manager', 'gym_owner', 'superadmin']);
+const isStaffPortalAccount = u => Boolean(u && (u.role === 'trainer' || STAFF_SAAS_ROLES.has(u.saasRole)));
+function staffAccountPortalUrl() {
+  const base = (process.env.PORTAL_URL || process.env.VITE_PORTAL_URL || 'https://painel.treinerit.com.br').trim().replace(/\/+$/, '');
+  return `${base}/login`;
+}
+function staffAccountBlockedPayload(user) {
+  return {
+    error: 'Esta conta é de Professor/Gestão. Redirecionando para o Rit Painel...',
+    code: 'staff-account',
+    portalUrl: staffAccountPortalUrl(),
+    ...(user?.tenantId ? { tenantId: user.tenantId } : {})
+  };
+}
 const POLICY_ERRORS = {
   'too-short': `the password needs at least ${MIN_LENGTH} characters`,
   'too-long': `the password can have at most ${MAX_LENGTH} characters`,
@@ -1742,6 +1756,11 @@ const passwordRoutes = {
     if (user.tenantId && user.saasRole !== 'superadmin' && isTenantSuspended(DATA, user.tenantId)) {
       check.void();
       return json(res, 403, { error: 'O acesso desta academia está suspenso no momento.' });
+    }
+    if (isStaffPortalAccount(user)) {
+      check.void();
+      audit(req, 'auth.password.fail', { ok: false, user, msg: 'staff-account-blocked' });
+      return json(res, 403, staffAccountBlockedPayload(user));
     }
     check.ok();
     // A hash made with older parameters is replaced now, while the password is at hand.
@@ -2151,6 +2170,10 @@ const passwordRoutes = {
     if (user.disabled) {
       audit(req, 'auth.password.reset', { ok: false, user, msg: 'account-disabled' });
       return json(res, 403, { error: 'this account has been disabled', code: 'disabled' });
+    }
+    if (isStaffPortalAccount(user)) {
+      audit(req, 'auth.password.reset', { ok: false, user, msg: 'staff-account-blocked' });
+      return json(res, 403, staffAccountBlockedPayload(user));
     }
     // The code is good and stays good until a password is actually set with it.
     const problem = passwordProblem(body.next, user.name);
@@ -2740,6 +2763,10 @@ const routes = {
     const s = sessionOf(req);
     if (!s) return json(res, 401, { error: 'not signed in' });
     const { user } = s;
+    if (isStaffPortalAccount(user)) {
+      audit(req, 'auth.me.blocked', { ok: false, user, msg: 'staff-account-blocked' });
+      return json(res, 403, staffAccountBlockedPayload(user), s.bearer ? {} : { 'Set-Cookie': clearCookie });
+    }
     const renew = s.bearer && s.kind !== 'c' && s.exp - Date.now() < SESSION_DAYS * 86400000 / 2;
     json(res, 200, { user: publicUser(user), ...(renew ? { token: makeSession(user) } : {}) });
   },
@@ -2979,6 +3006,10 @@ const routes = {
     if (user.tenantId && user.saasRole !== 'superadmin' && isTenantSuspended(DATA, user.tenantId)) {
       audit(req, 'auth.login.fail', { ok: false, user, msg: 'tenant-suspended' });
       return json(res, 403, { error: 'O acesso desta academia está suspenso no momento.' });
+    }
+    if (isStaffPortalAccount(user)) {
+      audit(req, 'auth.login.fail', { ok: false, user, msg: 'staff-account-blocked' });
+      return json(res, 403, staffAccountBlockedPayload(user));
     }
     audit(req, 'auth.login.ok', { user });
     json(res, 200, { user: publicUser(user) }, { 'Set-Cookie': sessionCookie(user) });

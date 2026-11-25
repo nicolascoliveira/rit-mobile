@@ -13,7 +13,7 @@ import { useUI } from '../store/useUI.js'
 import { t } from '../lib/i18n.js'
 import { dateLocale } from '../lib/i18n-core.js'
 import { api, webauthnOK, passkeyAssertion, passwordLogin, passwordRegister, passwordResetRedeem, sendVerificationCode } from '../lib/api.js'
-import { getOrCreateDeviceId, getTrustedDeviceToken } from '../lib/rit-native.js'
+import { getOrCreateDeviceId, getTrustedDeviceToken, redirectStaffToPortal } from '../lib/rit-native.js'
 import { askAddDeviceData } from '../sheets.jsx'
 import Icon from './Icon.jsx'
 import { Row, Button } from './ui.jsx'
@@ -107,6 +107,7 @@ export function passwordError(e) {
     case 'whatsapp-unavailable': return 'WhatsApp indisponível no momento. Use o envio por e-mail.'
     case 'email-unavailable': return 'Não foi possível enviar por e-mail agora. Tente receber pelo WhatsApp.'
     case 'disabled': return t('This account has been disabled.')
+    case 'staff-account': return 'Esta conta é de Professor/Gestão. Redirecionando para o Rit Painel...'
     case 'busy': return t('The server is busy. Try again in a moment.')
   }
   return e?.message || t('Sign-in failed')
@@ -236,7 +237,12 @@ export function PasswordSignInSheet({ close, onPasskey, requireEmailOtp = false,
         }
         await signedIn(u, close)
       } catch (e) {
-        setErr(passwordError(e))
+        const msg = passwordError(e)
+        setErr(msg)
+        if (e?.data?.code === 'staff-account') {
+          toast(msg)
+          setTimeout(() => redirectStaffToPortal(e.data), 600)
+        }
       } finally {
         setBusy(false)
       }
@@ -280,7 +286,14 @@ export function PasswordSignInSheet({ close, onPasskey, requireEmailOtp = false,
       }
       await signedIn(res, close)
     }
-    catch (e) { setErr(passwordError(e)) }
+    catch (e) {
+      const msg = passwordError(e)
+      setErr(msg)
+      if (e?.data?.code === 'staff-account') {
+        toast(msg)
+        setTimeout(() => redirectStaffToPortal(e.data), 600)
+      }
+    }
     finally { setBusy(false) }
   }
 
@@ -606,7 +619,12 @@ export function PasswordRegisterForm({
         if (hasData(useStore.getState().S)) { await st.pushState(); toast(t('Profile created, and this device’s data moved into it')) }
         else { await st.pullState(); toast(t('Welcome, {0}', u.name)) }
       } catch (e) {
-        setErr(passwordError(e))
+        const msg = passwordError(e)
+        setErr(msg)
+        if (e?.data?.code === 'staff-account') {
+          toast(msg)
+          setTimeout(() => redirectStaffToPortal(e.data), 600)
+        }
       } finally {
         setBusy(false)
       }

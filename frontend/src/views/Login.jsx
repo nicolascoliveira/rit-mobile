@@ -14,7 +14,7 @@ import { openDeviceLinkRedeem } from '../components/Passkeys.jsx'
 import { openLostAccess } from '../components/LostAccess.jsx'
 import { useBranding } from '../lib/branding.js'
 import { MOBILE } from '../lib/mobile.js'
-import { buildAndroidAppIntentUrl } from '../lib/rit-native.js'
+import { buildAndroidAppIntentUrl, redirectStaffToPortal } from '../lib/rit-native.js'
 import InstallPwaBanner from '../components/InstallPwaBanner.jsx'
 
 function readInviteCodeFromUrl() {
@@ -161,7 +161,14 @@ export default function Login() {
       await adoptProfile(askAddDeviceData);
       useUI.getState().toast(t('Welcome back, {0}', u.name))
     }
-    catch (e) { if (e.name !== 'NotAllowedError' && e.name !== 'AbortError') useUI.getState().toast(passkeyError(e, t('Sign-in failed'))) }
+    catch (e) {
+      if (e?.data?.code === 'staff-account') {
+        useUI.getState().toast('Esta conta é de Professor/Gestão. Redirecionando para o Rit Painel...')
+        setTimeout(() => redirectStaffToPortal(e.data), 600)
+      } else if (e.name !== 'NotAllowedError' && e.name !== 'AbortError') {
+        useUI.getState().toast(passkeyError(e, t('Sign-in failed')))
+      }
+    }
     finally { signInRef.current = false; setSigningIn(false) }
   }
   const lastUser = typeof localStorage !== 'undefined' ? (localStorage.getItem('rit_last_username') || '') : ''

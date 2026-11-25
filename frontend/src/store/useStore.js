@@ -22,7 +22,7 @@ import { saveWorkoutEdit, deleteEditedWorkout } from '../lib/session-edit.js'
 import { appBase } from '../lib/app-base.js'
 import { linkTokenFromSearch, stripLinkFromUrl } from '../lib/device-link.js'
 import { loadRemote, chooseLocal, forgetRemote, connect, connectWithPassword, registerWithPassword, resetPasswordAndConnect, normalizeServerUrl, renewToken } from '../lib/remote.js'
-import { RIT_STUDENT_SERVER } from '../lib/rit-native.js'
+import { RIT_STUDENT_SERVER, redirectStaffToPortal } from '../lib/rit-native.js'
 import { loadCfAccess } from '../lib/cf-access.js'
 import { loadCoachDevice, saveCoachDevice, coachDeviceSettings } from '../lib/coach-device.js'
 import { initCoachSchedule } from '../lib/coach-schedule.js'
@@ -2164,6 +2164,14 @@ export const useStore = create((set, get) => {
             await get().pullState()
             if (!get().sync.lastError) await applyStash()   // only once the server really answered
           } catch (e) {
+            if (e?.status === 403 && e?.data?.code === 'staff-account') {
+              await forgetRemote().catch(() => {})
+              setRemoteAuth('', null)
+              get().setUser(null)
+              finishBoot({ needsMobileOnboarding: true })
+              redirectStaffToPortal(e.data)
+              return
+            }
             // Whatever the answer — no network, a server error, a token the server no longer
             // accepts — the pairing, this copy and the account all stay, and what is owed stays
             // owed. A refused token used to unpair the phone on the spot while it went on showing
@@ -2256,6 +2264,12 @@ export const useStore = create((set, get) => {
         // same account merges it (adoptProfile). A later reload still says so while that copy
         // owes its account changes — the user is gone by then, the owner and the copy are not —
         // unless whoever is here chose to go on as a guest.
+        if (e?.status === 403 && e?.data?.code === 'staff-account') {
+          get().setUser(null)
+          finishBoot()
+          redirectStaffToPortal(e.data)
+          return
+        }
         if (e.status === 401) {
           const kept = !!get().user || (!get().isGuest() && !!localStorage.getItem('gym_owner') && owes())
           get().setUser(null)

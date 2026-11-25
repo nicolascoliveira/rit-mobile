@@ -1,6 +1,7 @@
 import { MOBILE } from './mobile.js'
 
 export const RIT_STUDENT_SERVER = 'https://app.treinerit.com.br'
+export const RIT_PORTAL_URL = 'https://painel.treinerit.com.br'
 const NATIVE_MODE_KEY = 'rit_native_mode'
 const ADMIN_TOKEN_KEY = 'rit_admin_token'
 const DEVICE_ID_KEY = 'rit_device_id'
@@ -190,6 +191,33 @@ export function openPortalNativeApp(route = '/login') {
   } catch { /* ignore */ }
   const clean = String(route || '/login').startsWith('/') ? String(route || '/login') : `/${route}`
   window.location.assign(`./portal/index.html#${clean}`)
+}
+
+export function resolvePortalLoginUrl(portalUrl = '') {
+  const raw = String(portalUrl || '').trim()
+  if (/^https?:\/\//i.test(raw)) {
+    return raw.replace(/\/+$/, '')
+  }
+  if (typeof window !== 'undefined' && window.location?.hostname) {
+    const host = window.location.hostname
+    const proto = window.location.protocol || 'https:'
+    if (/^app\./i.test(host)) {
+      return `${proto}//${host.replace(/^app\./i, 'painel.')}/login`
+    }
+    if (host === 'treinerit.com.br' || host === 'www.treinerit.com.br') {
+      return `${proto}//painel.treinerit.com.br/login`
+    }
+  }
+  return `${RIT_PORTAL_URL}/login`
+}
+
+export function redirectStaffToPortal(errData = null) {
+  if (typeof window === 'undefined') return
+  if (MOBILE || window.Capacitor?.isNativePlatform?.()) {
+    openPortalNativeApp('/login')
+    return
+  }
+  window.location.assign(resolvePortalLoginUrl(errData?.portalUrl))
 }
 
 export function shouldAutoOpenPortal() {
